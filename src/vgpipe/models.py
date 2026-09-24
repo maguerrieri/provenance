@@ -242,6 +242,13 @@ class Source(BaseModel):
         return self.verification.support in ("topic_only", "contradicts", "superseded")
 
     @property
+    def contradicts(self) -> bool:
+        """The verifier said this page argues against the claim, not merely that it does not
+        support it. `topic_only` and `superseded` take a source's support away, and another
+        source can supply it. This is evidence against, which no other source outvotes."""
+        return self.verification.support == "contradicts"
+
+    @property
     def awaits_verdict(self) -> bool:
         """The claim waits on this source's verdict: none is recorded, and the source is not
         one the judgment pass never covers (NOT_JUDGED), where waiting would wait forever.
@@ -318,6 +325,13 @@ class Claim(BaseModel):
         # It outranks `not_found` too: an absence claim needs no citation, but one it does
         # carry is shown to the reviewer, and a broken one must not hide under a muted badge.
         if any(st in MECHANICAL_FAILURES for st in sts):
+            return "human_review"
+        # A verifier judged the record to argue against the claim. A supporting source beside
+        # it does not settle that: two pieces of the claim's own evidence disagree, and only a
+        # human can say which is right. So it outranks the verified and paywall branches alike,
+        # `pending` (no verdict still to come can clear it) and `not_found` (a contradicted
+        # absence claim says the record it could not find is there), as a failed citation does.
+        if any(s.contradicts for s in self.sources):
             return "human_review"
         if self.confidence == "not_found":
             return "not_found"
