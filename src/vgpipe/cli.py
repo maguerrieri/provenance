@@ -1338,24 +1338,31 @@ def source_note(host: str, note: str, access: str = "", verified: str = ""):
 def source_import_curl(path: Path, name: str = "", write: bool = True):
     """Turn a browser 'copy as cURL' into a registry entry, minus credentials.
 
-    Cookies and auth headers in the paste are your live session. They are dropped here and
-    never written to disk — and if the endpoint only works with them, it is a manual
-    retrieval, not a pipeline capability. Record it as `access: manual` in that case.
+    Cookies, auth and session headers in the paste are your live session. They are dropped
+    here and never written to disk, and so is any header not known to be safe (each is
+    named, to add back by hand if it is not a credential). `--user`, a login in the URL, or
+    a curl option the importer doesn't know refuses the import. If the endpoint only works
+    with a credential, it is a manual retrieval, not a pipeline capability: record it as
+    `access: manual`.
     """
     from . import access
 
     try:
         parsed = access.parse_curl(path.read_text())
     except (OSError, ValueError) as e:
-        con.print(f"[red]{e}[/]")
+        con.print(f"[red]{escape(str(e))}[/]")
         raise typer.Exit(1) from None
 
     entry = parsed["entry"]
     entry["name"] = name or entry["name"]
     dropped = parsed["dropped_credentials"]
     if dropped:
-        con.print(f"[yellow]dropped credentials:[/] {', '.join(dropped)} — confirm the "
+        con.print(f"[yellow]dropped credentials:[/] {escape(', '.join(dropped))} — confirm the "
                   f"endpoint still works without them before relying on it")
+    unknown = parsed["dropped_headers"]
+    if unknown:
+        con.print(f"[yellow]dropped headers not known to be safe:[/] {escape(', '.join(unknown))}"
+                  f" — if the endpoint needs one and it is not a credential, add it by hand")
 
     dest = access.REGISTRY / f"{entry['host']}.yaml"
     text = yaml.safe_dump(entry, sort_keys=False, allow_unicode=True, width=100)
