@@ -622,7 +622,9 @@ def test_every_field_the_hand_off_prints_moves_the_token():
         claim_type="adversarial", required_sources=2)
     judged = "a" * 12
     token, printed = judgments.context_token(handed, judged), _printed(handed)
-    left_out = {"question_id", "sid", "status", "unjudgeable"}
+    # The ids judge takes as arguments, and the statuses. A sibling's sid is in the token: a
+    # query citation's covers the figure it asserts, which nothing else printed does.
+    left_out = {"question_id", "status", "unjudgeable"}
     paths = [p for p in _leaves(handed) if p != ("sources", 0, "sid")]  # the one judge is given
     for path in paths:
         other = _changed(handed, path)
@@ -727,6 +729,22 @@ def test_a_token_names_the_source_it_was_printed_beside(tmp_path):
                     "--data", run)
     assert code == 1 and "different hand-off" in out, out
     assert _shards(run) == {}
+
+
+def test_a_second_citation_of_one_source_is_judged_as_the_first(tmp_path):
+    """`vg judge` finds a source by its sid, so a claim citing one url and snippet twice has one
+    verdict, on the first. The hand-off says so on the second, rather than printing a context
+    beside a token that names the first block."""
+    s = _source()
+    run = _run(tmp_path, s, _source(publisher="Bay Courier Weekly"))
+    code, out = _vg("handoff", "q1", "--data", run)
+    assert code == 0, out
+    assert f"[2/2] sid {s.sid}  nothing to judge yet" in out, out
+    assert "the same source id as [1/2], where it is judged" in out, out
+    assert out.count("  context:\n") == 1, out
+    [(token, _)] = _handed_from(out).values()
+    code, out = _vg("judge", "q1", s.sid, "supports", "--context", token, "--data", run)
+    assert code == 0 and "supports recorded for q1" in out, out
 
 
 def test_text_moved_across_a_field_boundary_changes_the_token(tmp_path):

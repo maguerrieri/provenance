@@ -819,13 +819,14 @@ class Handoff:
     sources: tuple[HandedSource, ...]
 
 
-# What the token leaves out of the hand-off, by name; everything else is in it. The ids: `vg judge`
-# takes the question id and the judged source's sid as arguments and checks them itself, and
-# every sid is a hash of its citation, whose printed fields are in the token. The status and the
-# reason a source has nothing to judge are the pipeline's account of the source, not evidence;
-# whether it has a context to judge is in the token, as its `context`. The reason also names the
-# cache root as spelled, so one database under two spellings would read as two.
-_NOT_HASHED = {Handoff: {"question_id"}, HandedSource: {"sid", "status", "unjudgeable"}}
+# What the token leaves out of the hand-off, by name; everything else is in it. The ids `vg judge`
+# takes as arguments and checks itself: the question id here, and the judged source's sid in
+# `context_token()`. The other sources' sids are in it: a query citation's covers the figure it
+# asserts, which nothing else printed does. The status and the reason a source has nothing to
+# judge are the pipeline's account of the source, not evidence; whether it has a context to
+# judge is in the token, as its `context`. The reason also names the cache root as spelled, so
+# one database under two spellings would read as two.
+_NOT_HASHED = {Handoff: {"question_id"}, HandedSource: {"status", "unjudgeable"}}
 
 
 def _hashed(value):
@@ -841,9 +842,9 @@ def _hashed(value):
 
 def context_token(handed: Handoff, sid: str) -> str:
     """A short fingerprint of the hand-off a verifier was given to judge source `sid` from: all
-    of `handed` but what `_NOT_HASHED` names, and which source's block it was printed beside
-    (`[n/N]`). "" when the hand-off has nothing to judge on that source. `vg judge --context`
-    must hand it back.
+    of `handed` but what `_NOT_HASHED` names and that source's own sid, and which source's block
+    it was printed beside (`[n/N]`). "" when the hand-off has nothing to judge on that source.
+    `vg judge --context` must hand it back.
 
     `vg judge` reads the claim file as it is when judge runs, and nothing from the verifier said
     what it had read. So a re-verify landing while a verifier worked (another run re-fetched the
@@ -869,8 +870,10 @@ def context_token(handed: Handoff, sid: str) -> str:
     n = next((n for n, s in enumerate(handed.sources, 1) if s.sid == sid), None)
     if n is None or handed.sources[n - 1].context is None:
         return ""
-    shown = json.dumps({"handoff": _hashed(handed), "judged": n}, sort_keys=True,
-                       ensure_ascii=True, allow_nan=False, separators=(",", ":"))
+    hashed = _hashed(handed)
+    del hashed["sources"][n - 1]["sid"]   # the argument `vg judge` found this block by
+    shown = json.dumps({"handoff": hashed, "judged": n}, sort_keys=True, ensure_ascii=True,
+                       allow_nan=False, separators=(",", ":"))
     return hashlib.sha256(shown.encode("ascii")).hexdigest()[:16]
 
 
