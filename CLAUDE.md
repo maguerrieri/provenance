@@ -597,11 +597,13 @@ So `verdicts_for()` compares each verdict's `claim_fingerprint` (the hash of the
 answer `vg judge` stamps; why that identity is under #30 above) with the claim's
 `Claim.fingerprint`. One that differs is stale,
 exactly like a verdict on a re-fetched page: not applied, reported by `vg verify`, `vg build`
-and `vg judgments`, counted in the gate, and replaced by the next `vg judge`. A stale
-`contradicts` holds nothing: it reads `unreviewed` like any stale verdict, so a corrected claim
-waits on a verdict about its new answer (`pending`), not on one about the old answer. The check
-sits in `verdicts_for()`, not `is_stale()`, because that is where the claim is in hand and every
-reader of verdicts goes through it. The same comparison catches a verdict filed under another
+and `vg judgments`, counted in the gate, and replaced by the next `vg judge`. That covers the
+sources the claim still cites: there a stale `contradicts` reads `unreviewed` like any stale
+verdict, so a corrected claim waits on a verdict about its new answer (`pending`), not on one
+about the old answer. A `contradicts` on a source the claim no longer cites matches none of its
+sources, so this rule never reaches it: #73's dropped-contradiction gate decides that one,
+whatever its fingerprint. The check sits in `verdicts_for()`, not `is_stale()`, because that is
+where the claim is in hand and every reader of verdicts goes through it. The same comparison catches a verdict filed under another
 claim's id: it judged that claim's answer, whatever the sid says. Between twins (two claims
 that ask and answer the same thing) it cannot tell, and needn't: a verdict on the same snippet
 judged the same words against the same page.
