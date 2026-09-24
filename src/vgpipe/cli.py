@@ -6,6 +6,7 @@ import json
 import re
 import shlex
 import sys
+import unicodedata
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1057,13 +1058,15 @@ def _run_args(data: Path, cache: Path | None) -> str:
         f" --cache {shlex.quote(str(cache))}" if cache is not None else "")
 
 
-def _apply_archive_rows(data: Path, sources, cache_root: Path) -> None:
+def _apply_archive_rows(data: Path, sources, cache_root: Path, *,
+                        records: dict[str, dict] | None = None) -> None:
     """Put the run's snapshots on the sources that are `verified_via_archive`, whose context and
     verdict both come from one. Only there, and the records read only if there is one: no other
-    row depends on them, and a damaged records file should not stop every verdict in the run."""
+    row depends on them, and a damaged records file should not stop every verdict in the run.
+    Pass `records` already read, to have a damaged file stop the command before anything else."""
     rows = [s for s in sources if s.verification.status == "verified_via_archive"]
     if rows:
-        records = _archive_records(data)
+        records = _archive_records(data) if records is None else records
         for s in rows:
             apply_archive(s, records, cache_root)
 
@@ -1103,10 +1106,21 @@ def _unjudgeable(s, cache_root: Path, *, seen, last_run) -> str:
     return why or _rebuild_problem(s, cache_root)
 
 
-def _one_line(text: str) -> str:
-    """Agent-authored text on one line, so it cannot print a line that reads as `vg handoff`'s
-    own framing (a fake source header, a fake context)."""
-    return text.replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n")
+# Control, format, surrogate and line/paragraph-separator characters: what can move the cursor,
+# erase a line, reorder text or start a new line in a reader that is not this terminal.
+_UNPRINTABLE = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
+
+
+def _printable(text: str) -> str:
+    """`text` with every character in `_UNPRINTABLE` but a tab shown as an escape (`\\x1b`,
+    `\\u2028`), so agent- or page-authored text prints on the line it is given. Splitting on
+    `\\n` alone left an ANSI erase-line or a U+2028 to fake a line of `vg handoff`'s own
+    framing, and a lone surrogate (which json.loads keeps) made the print raise. Backslashes
+    are left alone: the text a verifier compares, snippet against context, must read as written."""
+    return "".join(ch if ch == "\t" or unicodedata.category(ch) not in _UNPRINTABLE
+                   else (f"\\x{ord(ch):02x}" if ord(ch) < 0x100 else
+                         f"\\u{ord(ch):04x}" if ord(ch) < 0x10000 else f"\\U{ord(ch):08x}")
+                   for ch in text)
 
 
 @app.command()
@@ -1130,8 +1144,8 @@ def handoff(question_id: str, data: Path = DATA, cache: Path = None):
         con.print(Text(text, style=style), soft_wrap=True)
 
     line(f"{claim.question_id} ({claim.claim_type}, needs {claim.required_sources} "
-         f"source(s)): {_one_line(claim.question)}", "bold")
-    line(f"claim: {_one_line(claim.answer)}")
+         f"source(s)): {_printable(claim.question)}", "bold")
+    line(f"claim: {_printable(claim.answer)}")
     judgeable = 0
     for n, s in enumerate(claim.sources, 1):
         v = s.verification
@@ -1140,20 +1154,21 @@ def handoff(question_id: str, data: Path = DATA, cache: Path = None):
         line("")
         line(f"[{n}/{len(claim.sources)}] sid {s.sid}  "
              + (f"context token {token}" if token else "nothing to judge yet"), "bold")
-        byline = _one_line(" · ".join((s.publisher, s.author, s.date or "undated")))
+        byline = _printable(" · ".join((s.publisher, s.author, s.date or "undated")))
         line(f"  {byline} · {s.source_type}")
         line(f"  {s.url}" + (f"  (page {s.page})" if s.page else ""))
         line(f"  status: {v.status}")
-        line(f"  snippet: {_one_line(s.snippet)}")
+        line(f"  snippet: {_printable(s.snippet)}")
         if not token:
-            line(f"  {_one_line(why or 'it has no context')}", "yellow")
+            line(f"  {_printable(why or 'it has no context')}", "yellow")
             continue
         judgeable += 1
         # Every line of it prefixed, so page text can't end the block early and go on to print
-        # what reads as this command's own output.
+        # what reads as this command's own output. splitlines(), not split("\n"): a \r, \x85
+        # or U+2028 is a line break to some reader, and each one starts a prefixed line here.
         line("  context:")
-        for text in v.context.removesuffix("\n").split("\n"):
-            line(f"  | {text}")
+        for text in v.context.splitlines():
+            line(f"  | {_printable(text)}")
     line("")
     if not judgeable:
         line("Nothing in this claim can be judged yet.", "yellow")
@@ -1316,12 +1331,9 @@ def show_judgments(data: Path = DATA, question_id: str = "",
                   f"`vg remap` left behind. Nothing reads it, and it holds at most an older copy "
                   f"of the run's verdicts: delete it, and never restore from it.[/]")
     selected = [c for c in claims if not question_id or c.question_id == question_id]
-    for c in selected:
-        for s in c.sources:
-            # Only an archive row's verdict and context depend on the records, and checking a
-            # snapshot reads it (and at times the live page) from the cache: skip the rest.
-            if s.verification.status == "verified_via_archive":
-                apply_archive(s, records, cache_root)
+    # Checking a snapshot reads it (and at times the live page) from the cache: archive rows only.
+    _apply_archive_rows(data, [s for c in selected for s in c.sources], cache_root,
+                        records=records)
     unread = [q for q in skipped if not question_id or q == question_id]
     if not selected and not unread:
         # Nothing to count would print a green "0 of 0" — the done signal — for a typo'd
@@ -1360,11 +1372,14 @@ def show_judgments(data: Path = DATA, question_id: str = "",
         stale += len(judgments.merge(rows))
         for s, j, why in rows:
             # Asked of the claim file, before build's rebuild below, since that is what
-            # `vg judge` reads: the same answer `vg handoff` gives.
-            refused = _unjudgeable(s, cache_root, seen=s.verification.context_page,
-                                   last_run=s.verification.query_run)
-            drawn = (s.verification.context, s.verification.context_offset,
-                     s.verification.matched_offset)
+            # `vg judge` reads: the same answer `vg handoff` gives. Only where the answer is used
+            # (no verdict applied, a status with a context), since it rebuilds a copy and re-runs
+            # a query citation's query.
+            filed = s.verification
+            refused = (_unjudgeable(s, cache_root, seen=filed.context_page,
+                                    last_run=filed.query_run)
+                       if filed.support == "unreviewed" and filed.status in GOOD else "")
+            drawn = (filed.context, filed.context_offset, filed.matched_offset)
             revalidate_from_cache(s, cache_root)
             # Revalidation redrew a page citation's excerpt: it drops any verdict on the one
             # `vg verify` wrote, stale or not, so one recorded now would be dropped too.

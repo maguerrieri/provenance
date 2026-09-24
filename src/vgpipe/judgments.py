@@ -770,24 +770,29 @@ def unjudgeable_page(source, seen, cache_root: Path) -> str:
 
 
 def context_token(claim, source) -> str:
-    """A short fingerprint of what a verifier is handed for `source`: the claim's question and
-    answer, and the source's context window. "" for a source with no context. `vg handoff`
-    prints it with each source, and `vg judge --context` must hand it back.
+    """A short fingerprint of what `vg handoff` shows a verifier for `source`: the claim's
+    question and answer, the source's citation (url, publisher, author, date, source type,
+    page, snippet) and its context window. Everything it prints for the verifier to judge from,
+    that is, but the status. "" for a source with no context. `vg judge --context` must hand
+    it back.
 
     `vg judge` reads the claim file as it is when judge runs, and nothing from the verifier
     said what it had read. So a re-verify landing while a verifier worked (another run
     re-fetched the page, and this one rebuilt the context from the new copy) left judge a copy
     it could stamp and a context no verifier had seen, and the row rendered green on it. A retry
-    that rewrote only the answer did the same with a claim no verifier had seen. The token is
-    how the verifier says which one it read. Longer than a sid, so the two are not mistaken
-    for each other."""
+    that rewrote only the answer, or only a filing's date, keeps the sid and the context, and
+    did the same with a claim no verifier had seen: `superseded` turns on exactly that date.
+    The token is how the verifier says which one it read. Longer than a sid, so the two are not
+    mistaken for each other. A field added to the hand-off belongs here too."""
     context = source.verification.context
     if not context:
         return ""
+    shown = (claim.question, claim.answer, source.url, source.publisher, source.author,
+             source.date or "", source.source_type, str(source.page or ""), source.snippet,
+             context)
     # surrogatepass: a claim file is read with json.loads, which keeps a lone surrogate that
     # strict UTF-8 would refuse to encode, and a crash here would stop every verdict on it.
-    parts = "\x00".join((claim.question, claim.answer, context)).encode("utf-8", "surrogatepass")
-    return hashlib.sha256(parts).hexdigest()[:16]
+    return hashlib.sha256("\x00".join(shown).encode("utf-8", "surrogatepass")).hexdigest()[:16]
 
 
 def wrong_context(claim, source, token: str, *, required: bool, handoff: str) -> str:
@@ -809,10 +814,10 @@ def wrong_context(claim, source, token: str, *, required: bool, handoff: str) ->
         return (f"a verdict on a page citation must name the context it judged: pass --context "
                 f"with the context token `{handoff}` printed beside this source")
     if token != context_token(claim, source):
-        return (f"you were handed a different claim or context (token {token}) from the one "
-                f"this source has now: it has changed since, so your verdict is about text the "
-                f"pipeline no longer shows. Run `{handoff}` again, read what it prints, and judge "
-                f"that")
+        return (f"you were handed a different claim, citation or context (token {token}) from "
+                f"the one this source has now: it has changed since, so your verdict is about "
+                f"text the pipeline no longer shows. Run `{handoff}` again, read what it prints, "
+                f"and judge that")
     return ""
 
 
