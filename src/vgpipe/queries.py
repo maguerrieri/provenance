@@ -174,40 +174,64 @@ class QueryResult:
 
 
 def _contributor_total(root: Path, *, filer_id: str, contributor: str,
-                       contributor_first: str = "") -> QueryResult:
+                       contributor_first: str = "", form_type: str = "A") -> QueryResult:
     """Total itemized contributions from one contributor to one filer.
 
     For an INDIVIDUAL pass `contributor_first` too: CTRIB_NAML holds only the surname, so a
     common surname alone summed unrelated donors into one six-figure contributor who does not
     exist. Organizations keep their whole name in CTRIB_NAML, so they need only `contributor`.
+
+    `form_type` defaults to A (monetary contributions received), as `filer_total` does. The
+    receipts table holds every receipt schedule, so without it an in-kind item (C) was summed
+    as a gift, and a vendor's refund or a bank's interest (I) made a business that gave nothing
+    a contributor. Pass another schedule to count that one, or "" for every schedule.
     """
     from . import calaccess
 
     con = calaccess.connect(root)
-    extra = " AND UPPER(TRIM(r.CTRIB_NAML)) = UPPER(TRIM(?))"
-    args: list[Any] = [str(filer_id), contributor]
+    who = " AND UPPER(TRIM(r.CTRIB_NAML)) = UPPER(TRIM(?))"
+    who_args: list[Any] = [contributor]
     if contributor_first:
-        extra += " AND UPPER(TRIM(COALESCE(r.CTRIB_NAMF,''))) = UPPER(TRIM(?))"
-        args.append(contributor_first)
-    inner = DEDUPED_RECEIPTS.format(extra=extra)
+        who += " AND UPPER(TRIM(COALESCE(r.CTRIB_NAMF,''))) = UPPER(TRIM(?))"
+        who_args.append(contributor_first)
+    schedule = " AND UPPER(TRIM(r.FORM_TYPE)) = UPPER(TRIM(?))" if form_type else ""
+    schedule_args = [form_type] if form_type else []
+    label = f"schedule-{form_type}" if form_type else "every-schedule"
+    args: list[Any] = [str(filer_id)] + who_args + schedule_args
+    inner = DEDUPED_RECEIPTS.format(extra=who + schedule)
     row = con.execute(f"SELECT SUM(CAST(d.AMOUNT AS REAL)) amt, COUNT(*) n FROM ({inner}) d",
                       args).fetchone()
     n = int(row["n"] or 0)
     if n == 0:
         # A zero here is ambiguous and dangerous: it reads as "this donor gave nothing" when
         # it usually means the name was typed slightly differently ("… PAC" vs "… PAC SCC").
-        # Never let a miss masquerade as a finding.
-        near = [" ".join(x for x in (r["nf"], r["nm"]) if x) for r in con.execute("""
+        # Never let a miss masquerade as a finding. Names come from the schedule searched: a
+        # near-match on another one is a receipt, not the contributor that was meant.
+        near = [" ".join(x for x in (r["nf"], r["nm"]) if x) for r in con.execute(f"""
             SELECT DISTINCT r.CTRIB_NAML nm, r.CTRIB_NAMF nf FROM RCPT_LATEST r
             JOIN FILER_FILING f ON f.FILING_ID = r.FILING_ID
-            WHERE f.FILER_ID = ? AND UPPER(r.CTRIB_NAML) LIKE UPPER(?)
+            WHERE f.FILER_ID = ? AND UPPER(r.CTRIB_NAML) LIKE UPPER(?){schedule}
             LIMIT 6
-        """, (str(filer_id), f"%{contributor.split()[0]}%" if contributor.split() else "%"))]
+        """, [str(filer_id), f"%{contributor.split()[0]}%" if contributor.split() else "%"]
+             + schedule_args)]
+        detail = f"0 itemized {label} gift(s)"
+        if form_type:
+            # The name matched, on a schedule this did not count: say where, rather than
+            # leave "no match" to send the researcher off retyping a name that was right.
+            elsewhere = con.execute(f"""
+                SELECT d.FORM_TYPE ft, COUNT(*) n
+                FROM ({DEDUPED_RECEIPTS.format(extra=who)}) d
+                GROUP BY UPPER(TRIM(d.FORM_TYPE)) ORDER BY n DESC
+            """, [str(filer_id)] + who_args).fetchall()
+            if elsewhere:
+                detail += (f"; {sum(r['n'] for r in elsewhere)} on other schedules, not counted"
+                           " as contributions")
+                near = [f"form_type={(r['ft'] or '').strip()} ({r['n']} receipt(s))"
+                        for r in elsewhere] + near
         con.close()
-        return QueryResult(value=None, rows=0, found=False, suggestions=near,
-                           detail="0 itemized gift(s)")
+        return QueryResult(value=None, rows=0, found=False, suggestions=near, detail=detail)
 
-    detail = f"{n} itemized gift(s)"
+    detail = f"{n} itemized {label} gift(s)"
     if not contributor_first:
         people = con.execute(f"""
             SELECT COUNT(DISTINCT UPPER(TRIM(COALESCE(d.CTRIB_NAMF,'')))) c FROM ({inner}) d
@@ -246,28 +270,35 @@ def _filer_total(root: Path, *, filer_id: str, form_type: str = "A") -> QueryRes
                        detail=f"{n} itemized schedule-{form_type} gift(s)")
 
 
-def _top_contributor(root: Path, *, filer_id: str) -> QueryResult:
+def _top_contributor(root: Path, *, filer_id: str, form_type: str = "A") -> QueryResult:
     """The single largest contributor to a filer, by itemized total.
 
     Grouped by last AND first name: CTRIB_NAML is the surname for individuals, so grouping on
     it alone merged every unrelated donor sharing one, reporting a top contributor who does not
     exist.
+
+    `form_type` defaults to A (monetary contributions received), as `filer_total` does. Ranked
+    over every receipt schedule, a vendor's refund or a bank's interest (I) could name a
+    business that gave nothing "the largest contributor", and an in-kind item (C) could decide
+    between two donors. Pass another schedule to rank by that one, or "" for every schedule.
     """
     from . import calaccess
 
     con = calaccess.connect(root)
-    inner = DEDUPED_RECEIPTS.format(extra="")
+    schedule = " AND UPPER(TRIM(r.FORM_TYPE)) = UPPER(TRIM(?))" if form_type else ""
+    label = f"schedule-{form_type}" if form_type else "every-schedule"
+    inner = DEDUPED_RECEIPTS.format(extra=schedule)
     rows = con.execute(f"""
         SELECT d.CTRIB_NAML nm, d.CTRIB_NAMF nf, SUM(CAST(d.AMOUNT AS REAL)) amt,
                COUNT(*) n
         FROM ({inner}) d
         GROUP BY UPPER(TRIM(d.CTRIB_NAML)), UPPER(TRIM(COALESCE(d.CTRIB_NAMF,'')))
         ORDER BY amt DESC LIMIT 4
-    """, (str(filer_id),)).fetchall()
+    """, [str(filer_id)] + ([form_type] if form_type else [])).fetchall()
     row = rows[0] if rows else None
     con.close()
     if row is None:
-        return _no_rows(f"no contributions found for filer {filer_id}")
+        return _no_rows(f"no {label} contributions found for filer {filer_id}")
     top = float(row["amt"] or 0)
     tied = [r for r in rows if abs(float(r["amt"] or 0) - top) < TOLERANCE]
     names = [" ".join(x for x in (r["nf"], r["nm"]) if x).strip() for r in tied]
@@ -275,10 +306,10 @@ def _top_contributor(root: Path, *, filer_id: str) -> QueryResult:
         # ORDER BY ... LIMIT 1 makes an arbitrary pick among equals, and a verifier rightly
         # rejected a "largest contributor" that was really a two-way tie. Return the tie.
         return QueryResult(value=" | ".join(sorted(names)), rows=len(tied),
-                           detail=f"{len(tied)}-WAY TIE at ${top:,.0f} — not a single largest "
-                                  "contributor; do not word this as one")
+                           detail=f"{len(tied)}-WAY TIE at ${top:,.0f} in {label} gifts — not "
+                                  "a single largest contributor; do not word this as one")
     return QueryResult(value=names[0], rows=int(row["n"] or 0),
-                       detail=f"${top:,.0f} across {row['n']} gift(s)")
+                       detail=f"${top:,.0f} across {row['n']} {label} gift(s)")
 
 
 def _ie_total(root: Path, *, candidate_last: str, first: str = "", stance: str = "",
@@ -405,15 +436,19 @@ class Query(NamedTuple):
 
 
 REGISTRY: dict[str, Query] = {
+    # v2 of contributor_total and top_contributor: schedule A only by default, as filer_total
+    # already was. v1 summed every receipt schedule, refunds and interest included.
     "calaccess.contributor_total": Query(
         _contributor_total, ("filer_id", "contributor"),
-        "contributions from one contributor (add contributor_first for an individual)", 1),
+        "contributions from one contributor (add contributor_first for an individual; "
+        "schedule A unless form_type says otherwise)", 2),
     "calaccess.filer_total": Query(
         _filer_total, ("filer_id",),
         "total itemized contributions received by a filer", 1),
     "calaccess.top_contributor": Query(
         _top_contributor, ("filer_id",),
-        "the largest contributor to a filer, by itemized total", 1),
+        "the largest contributor to a filer, by itemized total (schedule A unless form_type "
+        "says otherwise)", 2),
     "calaccess.ie_total": Query(
         _ie_total, ("candidate_last", "first"),
         "late independent expenditures naming a candidate; pass stance and since/until", 2),

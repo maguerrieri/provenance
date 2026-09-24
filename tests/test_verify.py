@@ -1728,8 +1728,9 @@ def test_an_amendment_that_restates_no_receipts_does_not_erase_them(tmp_path):
     got = calaccess.contributions_to(root, "9990015")
     assert sorted(c.amount for c in got) == [11875.0, 26450.0], (
         "an amendment that only fixed an address erased the filing's receipts")
+    # Form 401's payments received are not Form 460 schedule A, the default, so name them
     total = queries.run("calaccess.contributor_total",
-                        {"filer_id": "9990015",
+                        {"filer_id": "9990015", "form_type": "F401A",
                          "contributor": "Neighbors for Clean Water, Yes on Measure A"}, root)
     assert total.found and total.value == 26450.0
 
@@ -9058,9 +9059,9 @@ _NOT_A_DEFINITION = {
 
 # name -> (version, fingerprint). See test_a_query_definition_cannot_change_unnoticed.
 QUERY_DEFINITIONS = {
-    "calaccess.contributor_total": (1, "c889da009c9c"),
+    "calaccess.contributor_total": (2, "6d0d35903252"),
     "calaccess.filer_total": (1, "bff2b989d16e"),
-    "calaccess.top_contributor": (1, "21d238e9e26b"),
+    "calaccess.top_contributor": (2, "a147103289f0"),
     "calaccess.ie_total": (2, "2f8f610a5a0f"),
 }
 
