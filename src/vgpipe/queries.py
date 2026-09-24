@@ -143,7 +143,7 @@ def amount_sql(col: str) -> str:
 # the text kept "300,000", and the stated $300 was lost with it. A dedup has to read a value
 # the way the sum does.
 DEDUPED_RECEIPTS = f"""
-    SELECT MAX(x.AMOUNT) AS AMOUNT, MAX(x.AMT) AS AMT, x.CTRIB_NAML, x.CTRIB_NAMF, x.RCPT_DATE,
+    SELECT MAX(x.AMOUNT) AS AMOUNT, x.AMT, x.CTRIB_NAML, x.CTRIB_NAMF, x.RCPT_DATE,
            -- The group's provenance. A collapsed row still has to name a filing a human can
            -- open, or the listing loses its exit to a citation and every figure taken from it
            -- becomes uncitable. The EARLIEST filing is the one the gift was first reported on.
@@ -217,9 +217,13 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
         extra += " AND UPPER(TRIM(COALESCE(r.CTRIB_NAMF,''))) = UPPER(TRIM(?))"
         args.append(contributor_first)
     inner = DEDUPED_RECEIPTS.format(extra=extra)
-    row = con.execute(f"SELECT SUM(d.AMT) amt, COUNT(d.AMT) n, COUNT(*) gifts FROM ({inner}) d",
-                      args).fetchone()
-    n, gifts = int(row["n"] or 0), int(row["gifts"] or 0)
+    # One pass: the dedup is the expensive part, and the first-name count needs it too.
+    row = con.execute(f"""
+        SELECT SUM(d.AMT) amt, COUNT(d.AMT) n, COUNT(*) gifts,
+               COUNT(DISTINCT UPPER(TRIM(COALESCE(d.CTRIB_NAMF,'')))) people
+        FROM ({inner}) d
+    """, args).fetchone()
+    n, gifts, people = int(row["n"] or 0), int(row["gifts"] or 0), int(row["people"] or 0)
     if gifts == 0:
         # A zero here is ambiguous and dangerous: it reads as "this donor gave nothing" when
         # it usually means the name was typed slightly differently ("… PAC" vs "… PAC SCC").
@@ -234,19 +238,12 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
         return QueryResult(value=None, rows=0, found=False, suggestions=near,
                            detail="0 itemized gift(s)")
 
-    if not contributor_first:
-        people = con.execute(f"""
-            SELECT COUNT(DISTINCT UPPER(TRIM(COALESCE(d.CTRIB_NAMF,'')))) c FROM ({inner}) d
-        """, args).fetchone()["c"]
-        if people and people > 1:
-            # Summing several people under one surname is how a nonexistent contributor
-            # appeared.
-            con.close()
-            return QueryResult(value=None, rows=gifts, found=False,
-                               detail=f"{gifts} itemized gift(s) across {people} DIFFERENT first "
-                                      "names — this is not one contributor; pass "
-                                      "contributor_first")
     con.close()
+    if not contributor_first and people > 1:
+        # Summing several people under one surname is how a nonexistent contributor appeared.
+        return QueryResult(value=None, rows=gifts, found=False,
+                           detail=f"{gifts} itemized gift(s) across {people} DIFFERENT first "
+                                  "names — this is not one contributor; pass contributor_first")
     left_out = _unread(gifts - n)
     if n == 0:
         # The name matched, but no gift states an amount: unknown money, never "$0.00".
@@ -291,35 +288,44 @@ def _top_contributor(root: Path, *, filer_id: str) -> QueryResult:
 
     con = calaccess.connect(root)
     inner = DEDUPED_RECEIPTS.format(extra="")
-    # Only gifts with an amount are ranked. Read as 0.0, a contributor whose gifts all had
-    # blank amounts tied one whose stated total was $0. The rest are counted and named: an
-    # unknown amount could change who is largest, and the reader has to be told.
+    # Only gifts with an amount are ranked: read as 0.0, a contributor whose gifts all had blank
+    # amounts tied one whose stated total was $0. The rest are counted, by a window over every
+    # contributor taken before the LIMIT, so the dedup runs once. A contributor with no readable
+    # gift sums to NULL, which sorts last and is never ranked.
     rows = con.execute(f"""
-        SELECT d.CTRIB_NAML nm, d.CTRIB_NAMF nf, SUM(d.AMT) amt, COUNT(*) n
+        SELECT d.CTRIB_NAML nm, d.CTRIB_NAMF nf, SUM(d.AMT) amt, COUNT(d.AMT) n,
+               SUM(COUNT(*) - COUNT(d.AMT)) OVER () unread
         FROM ({inner}) d
-        WHERE d.AMT IS NOT NULL
         GROUP BY UPPER(TRIM(d.CTRIB_NAML)), UPPER(TRIM(COALESCE(d.CTRIB_NAMF,'')))
         ORDER BY amt DESC LIMIT 4
     """, (str(filer_id),)).fetchall()
-    unread = con.execute(f"SELECT COUNT(*) c FROM ({inner}) d WHERE d.AMT IS NULL",
-                         (str(filer_id),)).fetchone()["c"]
-    row = rows[0] if rows else None
     con.close()
+    unread = int(rows[0]["unread"] or 0) if rows else 0
+    rows = [r for r in rows if r["amt"] is not None]
+    row = rows[0] if rows else None
     if row is None:
         return _no_rows(f"no contributions {'counted' if unread else 'found'} for filer "
                         f"{filer_id}{_unread(unread)}")
-    left_out = _unread(unread, " to this filer")
     top = float(row["amt"] or 0)
     tied = [r for r in rows if abs(float(r["amt"] or 0) - top) < TOLERANCE]
     names = [" ".join(x for x in (r["nf"], r["nm"]) if x).strip() for r in tied]
+    if unread:
+        # A total can say "the stated gifts come to X" and name what it left out. A rank
+        # cannot: a gift of unknown size could make anyone largest, so while one exists no
+        # contributor is established as the largest. The stated leader is named as a lead to
+        # check by hand, not a finding.
+        lead = (names[0] if len(tied) == 1
+                else f"a {len(tied)}-way tie ({' | '.join(sorted(names))})")
+        return _no_rows(f"{lead} leads the stated amounts at ${top:,.0f}, but no largest "
+                        f"contributor can be named{_unread(unread, ' to this filer')}")
     if len(tied) > 1:
         # ORDER BY ... LIMIT 1 makes an arbitrary pick among equals, and a verifier rightly
         # rejected a "largest contributor" that was really a two-way tie. Return the tie.
         return QueryResult(value=" | ".join(sorted(names)), rows=len(tied),
                            detail=f"{len(tied)}-WAY TIE at ${top:,.0f} — not a single largest "
-                                  f"contributor; do not word this as one{left_out}")
+                                  "contributor; do not word this as one")
     return QueryResult(value=names[0], rows=int(row["n"] or 0),
-                       detail=f"${top:,.0f} across {row['n']} gift(s){left_out}")
+                       detail=f"${top:,.0f} across {row['n']} gift(s)")
 
 
 def _ie_total(root: Path, *, candidate_last: str, first: str = "", stance: str = "",

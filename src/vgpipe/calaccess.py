@@ -542,7 +542,7 @@ def shown_date(iso: str | None, filed: str) -> str:
 def contributions_to(root: Path, filer_id: str, *, top: int = 25,
                      since: str = "") -> list[Contribution]:
     """Largest contributions received by a filer, on or after `since` if given (YYYY-MM-DD,
-    YYYY-MM or YYYY)."""
+    YYYY-MM or YYYY), then every one with no readable amount, whatever `top` says."""
     # Must use the same dedup as queries.contributor_total, or the listing and the citable
     # figure disagree — and they did. Filers restate one gift under several FILING_IDs while
     # keeping the TRAN_ID stable, so a raw listing showed one donor's single gift four times
@@ -561,23 +561,28 @@ def contributions_to(root: Path, filer_id: str, *, top: int = 25,
         # A gift with no usable date cannot be placed either side of `since`, so it stays in,
         # with its date showing as it was filed: dropping it would be a missing donation.
         where = f"WHERE ({window}) OR NOT {real_date_sql('CTRIB_DATE')}"
+    # Amounts are read as the queries read them (AMT), so the listing and a citable total agree
+    # on which gifts have one. A gift with none cannot be ranked, but it is exactly what a
+    # total names as "not counted", so it is listed after the top `top` rather than cut by the
+    # LIMIT: the researcher needs its filing to check it by hand. NULL sorts last in DESC.
     q = f"""
-        SELECT * FROM (
-            SELECT d.FILING_ID, ? AS FILER_ID, d.CTRIB_NAML, d.CTRIB_NAMF, d.CTRIB_EMP,
-                   d.CTRIB_OCC, d.AMOUNT, d.AMT, {iso_date_sql("d.RCPT_DATE")} AS CTRIB_DATE,
-                   TRIM(COALESCE(d.RCPT_DATE, '')) AS FILED_DATE,
-                   d.FILINGS
-            FROM ({inner}) d)
-        {where}
+        WITH g AS (
+            SELECT * FROM (
+                SELECT d.FILING_ID, ? AS FILER_ID, d.CTRIB_NAML, d.CTRIB_NAMF, d.CTRIB_EMP,
+                       d.CTRIB_OCC, d.AMOUNT, d.AMT, {iso_date_sql("d.RCPT_DATE")} AS CTRIB_DATE,
+                       TRIM(COALESCE(d.RCPT_DATE, '')) AS FILED_DATE,
+                       d.FILINGS
+                FROM ({inner}) d)
+            {where})
+        SELECT * FROM (SELECT * FROM g WHERE AMT IS NOT NULL ORDER BY AMT DESC LIMIT ?)
+        UNION ALL
+        SELECT * FROM g WHERE AMT IS NULL
         ORDER BY AMT DESC
-        LIMIT ?
     """
     out = []
     for r in con.execute(q, args + [top]):
         name = " ".join(x for x in (r["CTRIB_NAMF"], r["CTRIB_NAML"]) if x).strip()
-        # Read as the queries read it, so the listing and a citable total agree on which gifts
-        # have an amount. A blank here was listed as $0, which reads as a stated zero; an
-        # amount that did not read sorts after every stated one (NULL is last in DESC).
+        # A blank here was listed as $0, which reads as a stated zero.
         out.append(Contribution(filing_id=str(r["FILING_ID"]),
                                 filings=int(r["FILINGS"] or 1), filer_id=r["FILER_ID"],
                                 contributor=name, employer=r["CTRIB_EMP"] or "",
