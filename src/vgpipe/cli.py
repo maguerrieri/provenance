@@ -610,11 +610,12 @@ def _settle(claims: list[Claim], data: Path, cache_root: Path,
     archive row's verdict is checked against its snapshot and so is its context; then
     the recorded verdicts, each checked against the page it judged; revalidation checks every
     row against the cache, a verified_via_archive one against that snapshot; corroboration
-    counts the sources revalidation left standing; and check_inputs() reads every input's
-    finished status. Conflicts come last, since a `contradicts` verdict is one. Run out of
-    order, a step reads what the claim file said instead — q36 once rendered verified on an
-    input build downgraded two steps later. Build and status both call this so the order lives
-    in one place.
+    counts the sources revalidation left standing; conflicts come after the verdicts, since a
+    `contradicts` verdict is one; and check_inputs() reads every input's finished status. The
+    conflicts are settled before that first status read, because two of their kinds decide the
+    status and the list is what explains it. Run out of order, a step reads what the claim
+    file said instead — q36 once rendered verified on an input build downgraded two steps
+    later. Build and status both call this so the order lives in one place.
     """
     from . import judgments
     from .conflicts import detect
@@ -630,10 +631,10 @@ def _settle(claims: list[Claim], data: Path, cache_root: Path,
         for s in c.sources:
             revalidate_from_cache(s, cache_root, rules=rules)   # a status the pipeline didn't produce won't render green
         check_corroboration(c)
+    detect(claims)   # lists `contradicts` verdicts, so only the recorded ones
     for cycle in check_inputs(claims):   # a conclusion is not verified while an input isn't
         con.print(f"[yellow]derives_from cycle: {', '.join(sorted(cycle, key=qid_sort_key))} — "
                   f"none of these can be verified until one stops deriving from the others[/]")
-    detect(claims)   # lists `contradicts` verdicts, so only the recorded ones
     return stale, recorded
 
 
