@@ -331,7 +331,16 @@ class Claim(BaseModel):
         # human can say which is right. So it outranks the verified and paywall branches alike,
         # `pending` (no verdict still to come can clear it) and `not_found` (a contradicted
         # absence claim says the record it could not find is there), as a failed citation does.
-        if any(s.contradicts for s in self.sources):
+        #
+        # The same goes for an answer whose dollar figures or years are none of those its
+        # snippets state (`conflicts.unsourced_figures()`): the claim asserts a figure its
+        # quoted evidence does not carry, and no verdict still to come changes the snippets.
+        # Worked out here, not read from `conflicts`, so a status read before `detect()` still
+        # sees it. Sources disagreeing with each other stay a flag: measured on real runs, that
+        # detector fired mostly on sound claims whose sources describe different things.
+        from .conflicts import unsourced_figures
+
+        if any(s.contradicts for s in self.sources) or unsourced_figures(self):
             return "human_review"
         if self.confidence == "not_found":
             return "not_found"

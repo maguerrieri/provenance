@@ -61,6 +61,26 @@ def year_values(text: str) -> set[str]:
     return {m.group(0) for m in YEAR.finditer(text)}
 
 
+def unsourced_figures(c: Claim) -> list[str]:
+    """Conflict kind (2): the answer states a dollar figure or a year, its snippets state some,
+    and none of the answer's is among them. The answer asserts what none of its evidence says.
+
+    `Claim.status` sends such a claim to review, and `detect()` lists it, both from this one
+    function, so the status and the conflicts section cannot disagree about it. Why this kind
+    gates and (1) does not: CLAUDE.md, "The judgment pass is not advisory"."""
+    snip = " ".join(s.snippet for s in c.sources)
+    found = []
+    a_money, s_money = money_values(c.answer), money_values(snip)
+    if a_money and s_money and not (a_money & s_money):
+        found.append(f"dollar figure in the answer ({_amounts(a_money)}) does not appear in any "
+                     f"cited snippet ({_amounts(s_money)})")
+    a_year, s_year = year_values(c.answer), year_values(snip)
+    if a_year and s_year and not (a_year & s_year):
+        found.append(f"year in the answer ({', '.join(sorted(a_year))}) does not appear in any "
+                     f"cited snippet ({', '.join(sorted(s_year))})")
+    return found
+
+
 def detect(claims: list[Claim]) -> list[Claim]:
     """Flag four kinds of conflict:
     1. sources within one claim disagreeing with each other;
@@ -72,6 +92,9 @@ def detect(claims: list[Claim]) -> list[Claim]:
     numbers for the same settlement is a finding, not noise to average away — and it is
     invisible to (2), which passes as long as the answer matches *one* of them. (4) is the
     same finding made by the judgment pass rather than by comparing figures.
+
+    (2) and (4) also send the claim to review (`Claim.status`); (1) and (3) are flags for the
+    reviewer. Why the line falls there: CLAUDE.md, "The judgment pass is not advisory".
 
     (4) reads the support verdicts, so run this after they are settled (`cli._settle()` does):
     on a claim file as loaded, `support` is whatever the file says, recorded or not.
@@ -110,16 +133,7 @@ def detect(claims: list[Claim]) -> list[Claim]:
                             f"vs {pub_b} ({', '.join(sorted(vals_b))})")
 
         # (2) the answer against its own citations
-        a_money, s_money = money_values(c.answer), money_values(snip)
-        if a_money and s_money and not (a_money & s_money):
-            c.conflicts.append(
-                f"dollar figure in the answer ({_amounts(a_money)}) does not appear in any "
-                f"cited snippet ({_amounts(s_money)})")
-        a_year, s_year = year_values(c.answer), year_values(snip)
-        if a_year and s_year and not (a_year & s_year):
-            c.conflicts.append(
-                f"year in the answer ({', '.join(sorted(a_year))}) does not appear in any "
-                f"cited snippet ({', '.join(sorted(s_year))})")
+        c.conflicts += unsourced_figures(c)
 
     by_money: dict[float, set[str]] = defaultdict(set)
     for c in claims:
