@@ -69,6 +69,35 @@ So: a source judged `topic_only`/`contradicts`/`superseded` is not usable eviden
 not count toward corroboration, and a claim whose every source was rejected is
 `human_review`.
 
+**`contradicts` sends its claim to review, whatever the other sources say.** Leaving it out of
+the count was not enough. A source judged `contradicts` beside one judged `supports` left one
+document against the one required, so the claim rendered `verified`. Beside a paywalled source
+it rendered the yellow flag. Both sit outside the review filter, and only a red badge on one
+source said the record argued against the claim. `topic_only` and `superseded` say a page does
+not support the claim, and another source can supply what it lacks. `contradicts` says the page
+argues against the claim, and a source that agrees does not outvote it. Two pieces of a claim's
+own evidence disagree, which `conflicts.py` treats as a finding, not noise to average away.
+
+- **The status.** Any `contradicts` makes the claim `human_review`. It is one check, ahead of
+  the verified and paywall branches both, so the two cannot come to disagree about it. It
+  outranks `pending` as a failed citation does, since no verdict still to come can clear it.
+  It outranks `not_found` too: a contradicted absence claim says the record it could not find
+  is there.
+- **The conflicts section as well.** The status is what every triage surface reads: the
+  counts, the review filter, `vg status`, and `derives_from`, so a conclusion drawn from the
+  claim goes to review with it. A line in the conflicts section reaches none of those. It does
+  say why the claim is in review, and it does so where the review app says to resolve things
+  first. So the choice was both, and each contradicting source is listed there with the
+  verifier's note.
+- **`topic_only` and `superseded` are unchanged.** They leave the count, and send the claim to
+  review only when every source is rejected.
+
+`detect()` reads verdicts now, so it runs at the end of `_settle()`. `vg build` and `vg status`
+used to run it first, on claim files loaded with their machine fields trusted. There `support`
+is whatever the file says. A `contradicts` typed into a claim file would have been listed, and
+a recorded one missed. Anything that reads a verdict runs after `judgments.merge()` has applied
+the recorded ones.
+
 Verdicts live in `data/judgments/`, one shard per question keyed by source id — **never in
 the claim file**.
 `vg verify` reloads claims with `strip_machine_fields()` on (that is what stops a researcher
@@ -147,7 +176,8 @@ one level deep, so a claim could read an input whose own inputs had not been che
 Now `check_inputs()` runs last and walks `derives_from` inputs-first, so a downgrade reaches
 every claim built on it. A cycle is reported and its members marked unmet, not looped. The
 order lives in one place, `cli._settle()`, which `vg build` and `vg status` both call: a new
-command that reads `c.status` should call it too, rather than repeat the sequence.
+command that reads `c.status` should call it too, rather than repeat the sequence. Conflict
+detection comes after all of it, since a `contradicts` verdict is a conflict.
 
 **A mechanical failure outranks `pending`.** `pending` means a verdict could still clear the
 claim. No verdict can clear a claim with a failed citation, and the verifier does not judge a
@@ -156,7 +186,8 @@ quote that isn't on the page, so a claim whose only source was `snippet_not_foun
 the claim `human_review`, with or without verdicts, whatever its other sources say. That
 includes a paywalled one: `could_not_verify_paywall` is a yellow badge outside the review
 filter, and a broken citation must not hide behind it. It outranks `not_found` for the same
-reason: an absence claim needs no citation, but a broken one it carries is still shown.
+reason: an absence claim needs no citation, but a broken one it carries is still shown. A
+`contradicts` verdict outranks both the same way (see "The judgment pass is not advisory").
 
 ## Matching is literal first, normalized second — never silently
 
@@ -199,13 +230,14 @@ badge. That is failing it by another name, and it pushes researchers to swap in 
 
 So a paywalled row is outside the judgment pass (`models.NOT_JUDGED`, read by
 `Source.awaits_verdict`). Its claim rolls up to the yellow paywall flag unless something
-outranks it: a failed citation, a readable source still waiting on its verdict, or one `vg
-verify` has not reached (`pending`, even if a verdict landed on it by sid). Past those,
+outranks it: a failed citation, a `contradicts` verdict, a readable source still waiting on
+its verdict, or one `vg verify` has not reached (`pending`, even if a verdict landed on it by
+sid). Past those,
 the paywall branch applies the all-verified branch's rules, with the flag standing in for green.
 Only `corroboration_ok: true` earns the flag, unchecked corroboration is `pending`, and failed
 corroboration is `human_review`. The flag is not a pass, and it sits outside the review filter,
 so an adversarial claim one document short must not hide behind it. A source the verifier
-rejected is left out of the count, as it is beside a verified one.
+judged `topic_only` or `superseded` is left out of the count, as it is beside a verified one.
 
 The route to a verdict is the snapshot. Once `vg verify` or `vg archive` confirms the quote in
 the run's own snapshot, the row is `verified_via_archive`, its context is that snapshot, and it
