@@ -9060,10 +9060,10 @@ _NOT_A_DEFINITION = {
 
 # name -> (version, fingerprint). See test_a_query_definition_cannot_change_unnoticed.
 QUERY_DEFINITIONS = {
-    "calaccess.contributor_total": (3, "7d52e580f659"),
-    "calaccess.filer_total": (2, "099ca010e4b9"),
-    "calaccess.top_contributor": (3, "4889bffdd2c7"),
-    "calaccess.ie_total": (2, "afdceec1888d"),
+    "calaccess.contributor_total": (3, "44d418110ae4"),
+    "calaccess.filer_total": (2, "f2f6a3a95145"),
+    "calaccess.top_contributor": (3, "609033c19f24"),
+    "calaccess.ie_total": (2, "188111489385"),
 }
 
 

@@ -238,6 +238,44 @@ def test_a_surname_is_not_one_contributor_across_forms_either(tmp_path):
                ).value == 3000.0
 
 
+@pytest.mark.parametrize("last, first", [
+    ("Marwick, Odile", ""),     # "LAST, FIRST" in one field
+    ("Marwick", ""),            # a bare surname could be hers
+    ("Marwick", "Odile J"),     # a middle initial
+])
+def test_a_late_name_filed_another_way_still_counts_against_her(tmp_path, last, first):
+    """A name the ranking could not place was a new giver holding only the late amount, and a
+    $2,500 gift that could lift her past the PAC let the ranking stand."""
+    root = build(tmp_path, ON_SCHEDULE_A, late=s497("L-1", last, first, "2500"))
+
+    got = run(root, "top_contributor")
+    assert not got.found and "Odile Marwick ($3,000 on schedule-A, $2,500 late)" in got.note, (
+        got.note)
+    her = run(root, "contributor_total", contributor="Marwick", contributor_first="Odile")
+    assert not her.found and "late-report entry" in her.note, her.note
+
+
+def test_one_giver_filed_two_ways_is_not_two_people(tmp_path):
+    """Schedule A files her whole name in the last-name field, the late report splits it."""
+    root = build(tmp_path, rcpt("A-1", "Odile Marwick", "", "3000", "A"),
+                 late=s497("L-1", "Marwick", "Odile", "400"))
+
+    got = run(root, "contributor_total", contributor="Odile Marwick")
+    assert not got.found and "DIFFERENT first names" not in got.note, got.note
+    assert "late-report entry" in got.note
+    a = run(root, "contributor_total", contributor="Odile Marwick", form_type="A")
+    assert a.value == 3000.0, a.note
+
+
+def test_an_amount_with_a_dollar_sign_is_not_a_zero(tmp_path):
+    """CAST reads "$5,000" as 0.0, which paired it with a schedule-A row of "0"."""
+    root = build(tmp_path, ON_SCHEDULE_A
+                 + rcpt("A-9", "Saltmarsh", "Tobiah", "0", "A", date="10/2/2026"),
+                 late=s497("P-9", "Saltmarsh", "Tobiah", "$5,000"))
+
+    assert not run(root, "filer_total").found
+
+
 def test_contributions_the_filer_made_are_not_late_contributions_to_it(tmp_path):
     """Form 497 Part 2 lists the filer's own late contributions to others."""
     root = build(tmp_path, ON_SCHEDULE_A,

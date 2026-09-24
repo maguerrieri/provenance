@@ -216,79 +216,82 @@ def _other_schedules(con: Any, filer_id: str, form_type: str, who: str = "",
 # told apart from two gifts. A key that fails there double-counts silently; here it only refuses.
 #
 # An entry counts as restated, and is not pending, when:
-# - a schedule-A row carries the same transaction: the cross-form key DEDUPED_RECEIPTS collapses
-#   on (TRAN_ID base, name, date, amount), all four equal; or
+# - a schedule-A row carries the same transaction: TRAN_ID base, name, date and amount, all four
+#   equal (the cross-form key DEDUPED_RECEIPTS collapses on); or
 # - a Form 460 the filer has filed covers its dates, since that 460 had to restate it.
-# Everything else that is uncertain leaves the entry pending: a date or amount that cannot be
-# read, or a contributor name spelled another way (matched as `name_match_sql` matches one).
-def _pending_late(con: Any, filer_id: str, last: str = "", first: str | None = None, *,
-                  with_497: bool = True) -> list[dict[str, Any]]:
-    """The late-report entries for a filer that no schedule A restates yet (see above),
-    optionally for one contributor: `last`, and `first` unless it is None. Form 497 is read
-    only `with_497` (calaccess.late_reports_loaded).
+# Everything uncertain leaves it pending, or widens what it could change: a date or amount that
+# cannot be read, and a name that could be a contributor's (`_could_be`).
+def _pending_late(con: Any, filer_id: str, *, with_497: bool = True) -> list[dict[str, Any]]:
+    """The late-report entries for a filer that no schedule A restates yet (see above). Form 497
+    is read only `with_497` (calaccess.late_reports_loaded).
 
-    One per transaction as the cross-form key groups it, so an entry restated in an amendment
-    counts once (the *_LATEST views) and one on both late forms under one TRAN_ID base counts
-    once. One on both under different bases counts twice, which only makes a refusal likelier.
+    One per transaction as the cross-form key tells them apart, so an entry restated in an
+    amendment counts once (the *_LATEST views) and one on both late forms under one TRAN_ID base
+    counts once. One on both under different bases counts twice, which only makes a refusal
+    likelier.
     """
+    from . import calaccess
+
     tables = {r[0] for r in con.execute("SELECT name FROM main.sqlite_master WHERE type = 'table'")}
-
-    def who(last_col: str, first_col: str) -> tuple[str, list[str]]:
-        # Every spelling a filer might use, as for a candidate: a late report with the whole
-        # name in the last-name field is still this contributor's gift.
-        if not last:
-            return "", []
-        return (f" AND {name_match_sql(last_col, first_col, first or '')}",
-                name_args(last, first or ""))
-
-    rcpt_who, rcpt_args = who("r.CTRIB_NAML", "r.CTRIB_NAMF")
     parts = [f"""
-        SELECT r.FILING_ID, {tran_base_sql("r.TRAN_ID")} AS tbase, r.CTRIB_NAML AS naml,
-               r.CTRIB_NAMF AS namf, r.AMOUNT AS amount, UPPER(TRIM(r.FORM_TYPE)) AS form,
-               {iso_date_sql("r.RCPT_DATE")} AS d, '' AS until
+        SELECT r.FILING_ID AS filing_id, {tran_base_sql("r.TRAN_ID")} AS tbase,
+               r.CTRIB_NAML AS naml, r.CTRIB_NAMF AS namf, r.AMOUNT AS amount,
+               UPPER(TRIM(r.FORM_TYPE)) AS form, {iso_date_sql("r.RCPT_DATE")} AS d, '' AS until
         FROM RCPT_LATEST r JOIN FILER_FILING f ON f.FILING_ID = r.FILING_ID
-        WHERE f.FILER_ID = ? AND UPPER(TRIM(r.FORM_TYPE)) IN ('A', 'F496P3'){rcpt_who}"""]
-    args: list[Any] = [str(filer_id), *rcpt_args]
+        WHERE f.FILER_ID = ? AND UPPER(TRIM(r.FORM_TYPE)) = 'F496P3'"""]
+    args: list[Any] = [str(filer_id)]
     if with_497 and "S497_CD" in tables:
         # DATE_THRU ends an entry covering a range of dates. Not every export need carry it,
         # and without it an entry is its CTRIB_DATE.
         s497_cols = {r[1] for r in con.execute('PRAGMA main.table_info("S497_CD")')}
         until = iso_date_sql("s.DATE_THRU") if "DATE_THRU" in s497_cols else "''"
-        s497_who, s497_args = who("s.ENTY_NAML", "s.ENTY_NAMF")
         parts.append(f"""
         SELECT s.FILING_ID, {tran_base_sql("s.TRAN_ID")}, s.ENTY_NAML, s.ENTY_NAMF, s.AMOUNT,
                UPPER(TRIM(s.FORM_TYPE)), {iso_date_sql("s.CTRIB_DATE")}, {until}
         FROM S497_LATEST s JOIN FILER_FILING f ON f.FILING_ID = s.FILING_ID
-        WHERE f.FILER_ID = ? AND UPPER(TRIM(s.FORM_TYPE)) = 'F497P1'{s497_who}""")
-        args += [str(filer_id), *s497_args]
-    # A blank amount is money nobody stated, not $0: grouped by CAST it would pair with a
-    # schedule-A row reading "0" and pass as restated.
-    amount_key = ("CASE WHEN TRIM(COALESCE(x.amount, '')) GLOB '*[0-9]*' "
-                  "THEN CAST(x.amount AS REAL) ELSE 'none:' || TRIM(COALESCE(x.amount, '')) END")
-    entries = [dict(r) for r in con.execute(f"""
-        SELECT g.* FROM (
-            SELECT UPPER(TRIM(x.naml)) AS kl, UPPER(TRIM(COALESCE(x.namf, ''))) AS kf,
-                   MAX(x.naml) AS naml, MAX(x.namf) AS namf, MAX(x.amount) AS amount, x.d AS d,
-                   MAX(x.until) AS until, MIN(CAST(x.FILING_ID AS INTEGER)) AS filing_id,
-                   GROUP_CONCAT(DISTINCT x.form) AS forms, MAX(x.form = 'A') AS restated
-            FROM ({" UNION ALL ".join(parts)}) x
-            GROUP BY x.tbase, kl, kf, x.d, {amount_key}) g
-        WHERE NOT g.restated
-        ORDER BY g.d, g.filing_id
-    """, args)]
-    if not entries:
+        WHERE f.FILER_ID = ? AND UPPER(TRIM(s.FORM_TYPE)) = 'F497P1'""")
+        args.append(str(filer_id))
+    rows = [dict(r) for r in con.execute(" UNION ALL ".join(parts), args)]
+    if not rows:
         return []
-    # The filer's Form 460 periods, read once. A period that cannot be read covers nothing.
+
+    # Schedule-A rows that could be one of these transactions: only under their TRAN_ID bases.
+    restated = set()
+    bases = sorted({str(r["tbase"]) for r in rows})
+    for i in range(0, len(bases), 500):
+        chunk = bases[i:i + 500]
+        restated |= {_transaction(a) for a in con.execute(f"""
+            SELECT * FROM (
+                SELECT {tran_base_sql("r.TRAN_ID")} AS tbase, r.CTRIB_NAML AS naml,
+                       r.CTRIB_NAMF AS namf, r.AMOUNT AS amount,
+                       {iso_date_sql("r.RCPT_DATE")} AS d
+                FROM RCPT_LATEST r JOIN FILER_FILING f ON f.FILING_ID = r.FILING_ID
+                WHERE f.FILER_ID = ? AND UPPER(TRIM(r.FORM_TYPE)) = 'A')
+            WHERE tbase IN ({", ".join("?" * len(chunk))})
+        """, [str(filer_id), *chunk])}
+
+    entries: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for r in rows:
+        key = _transaction(r)
+        if key in restated:
+            continue
+        e = entries.setdefault(key, {**r, "forms": set(), "filing_id": int(r["filing_id"])})
+        e["forms"].add(r["form"])
+        e["filing_id"] = min(e["filing_id"], int(r["filing_id"]))
+        e["until"] = max(e["until"] or "", r["until"] or "")
+    # The filer's Form 460 periods. A period that cannot be read covers nothing.
     periods = []
     cover_cols = ({r[1] for r in con.execute(
         'PRAGMA main.table_info("CVR_CAMPAIGN_DISCLOSURE_CD")')}
         if "CVR_CAMPAIGN_DISCLOSURE_CD" in tables else set())
     if {"FILING_ID", "FORM_TYPE", "FROM_DATE", "THRU_DATE"} <= cover_cols:
-        periods = [(pf, pt) for pf, pt in con.execute(f"""
-            SELECT {iso_date_sql("c.FROM_DATE")}, {iso_date_sql("c.THRU_DATE")}
-            FROM CVR_LATEST c JOIN FILER_FILING f ON f.FILING_ID = c.FILING_ID
-            WHERE f.FILER_ID = ? AND UPPER(TRIM(c.FORM_TYPE)) = 'F460'
-        """, [str(filer_id)]) if _real_day(pf) and _real_day(pt)]
+        periods = con.execute(f"""
+            SELECT pf, pt FROM (
+                SELECT {iso_date_sql("c.FROM_DATE")} AS pf, {iso_date_sql("c.THRU_DATE")} AS pt
+                FROM CVR_LATEST c JOIN FILER_FILING f ON f.FILING_ID = c.FILING_ID
+                WHERE f.FILER_ID = ? AND UPPER(TRIM(c.FORM_TYPE)) = 'F460')
+            WHERE {real_date_sql("pf")} AND {real_date_sql("pt")}
+        """, [str(filer_id)]).fetchall()
 
     def covered(e: dict[str, Any]) -> bool:
         # One 460 has to cover the whole entry, CTRIB_DATE through DATE_THRU.
@@ -296,13 +299,25 @@ def _pending_late(con: Any, filer_id: str, last: str = "", first: str | None = N
         return (_real_day(start) and _real_day(end)
                 and any(pf <= start <= pt and pf <= end <= pt for pf, pt in periods))
 
-    return [e for e in entries if not covered(e)]
+    return sorted((e for e in entries.values() if not covered(e)),
+                  key=lambda e: (e["d"], e["filing_id"]))
+
+
+def _transaction(r: Any) -> tuple[Any, ...]:
+    """The cross-form key of a receipt row: TRAN_ID base, name, date and amount. A blank or
+    unreadable amount keys as its text, so it never pairs with a stated 0 ("1,000" is not 1)."""
+    amount = _plain_amount(r["amount"])
+    return (str(r["tbase"]), str(r["naml"] or "").strip().upper(),
+            str(r["namf"] or "").strip().upper(), r["d"],
+            amount if amount is not None else f"text:{str(r['amount'] or '').strip()}")
 
 
 def _real_day(iso: Any) -> bool:
     """Whether an `iso_date_sql()` value is a real calendar day, as `real_date_sql()` asks."""
+    from . import calaccess
+
     try:
-        return bool(re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", iso or "")) and bool(
+        return bool(calaccess.ISO_DAY.fullmatch(iso or "")) and bool(
             datetime.date.fromisoformat(iso))
     except ValueError:
         return False
@@ -311,16 +326,32 @@ def _real_day(iso: Any) -> bool:
 _PLAIN_AMOUNT = re.compile(r"-?(?=[0-9.]*[0-9])[0-9]*\.?[0-9]*")
 
 
-def _late_amount(entry: dict[str, Any]) -> float | None:
-    """A late entry's amount, or None when it states none a reader could add up. A blank is
-    money nobody stated, not $0, and CAST reads "1,000" as 1.0."""
-    text = str(entry["amount"] or "").strip()
+def _plain_amount(value: Any) -> float | None:
+    """An amount as a number, or None when it states none a reader could add up. A blank is
+    money nobody stated, not $0, and CAST reads "1,000" as 1.0 and "$5,000" as 0.0."""
+    text = str(value or "").strip()
     return float(text) if _PLAIN_AMOUNT.fullmatch(text) else None
 
 
+def _name_words(last: Any, first: Any = "") -> frozenset[str]:
+    """A name as the set of its words, case and punctuation aside, so the spellings filers use
+    for one name read alike: split, whole in the last-name field, or "LAST, FIRST"."""
+    return frozenset(re.findall(r"[^\W_]+", f"{first or ''} {last or ''}".upper()))
+
+
+def _could_be(a: frozenset[str], b: frozenset[str]) -> bool:
+    """Whether two names could be one giver: one's words all in the other's. A middle
+    initial, a bare surname, a short form of an organization's name, or no name at all could
+    each be the same giver. Used only to widen what a late entry could change, never to add it
+    to a total, so a false match makes a query refuse and a missed one lets a short figure
+    through. A name spelled differently, not merely filed differently, is still missed."""
+    return a <= b or b <= a
+
+
 def _late_reports(con: Any, filer_id: str, form_type: str, gated: bool, last: str = "",
-                  first: str | None = None) -> tuple[list[dict[str, Any]], bool]:
-    """(the pending late entries a result leaves out, whether Form 497 was checked).
+                  first: str = "") -> tuple[list[dict[str, Any]], bool]:
+    """(the pending late entries a result leaves out, whether Form 497 was checked), for one
+    contributor when `last` is given.
 
     For schedule A, every pending entry. For every schedule (""), the Form 497 entries only:
     that sum already holds the Form 496 Part 3 rows. For any other schedule, none. `gated` is
@@ -338,9 +369,12 @@ def _late_reports(con: Any, filer_id: str, form_type: str, gated: bool, last: st
     if gated and not loaded:
         con.close()
         raise calaccess.DegradedDatabase(calaccess.LATE_FALLBACK)
-    late = _pending_late(con, filer_id, last, first, with_497=loaded)
+    late = _pending_late(con, filer_id, with_497=loaded)
+    if last:
+        who = _name_words(last, first)
+        late = [e for e in late if _could_be(_name_words(e["naml"], e["namf"]), who)]
     if not schedule:
-        late = [e for e in late if "F496P3" not in str(e["forms"]).split(",")]
+        late = [e for e in late if "F496P3" not in e["forms"]]
     return late, loaded
 
 
@@ -348,15 +382,15 @@ def _late_note(entries: list[dict[str, Any]], checked_497: bool = True, then: st
     """How a detail names the late entries left out, `then` following them. Display only."""
     note = ""
     if entries:
-        amounts = [_late_amount(e) for e in entries]
+        amounts = [_plain_amount(e["amount"]) for e in entries]
         stated = sum(a for a in amounts if a is not None)
         unread = sum(a is None for a in amounts)
-        ids = sorted({str(e["filing_id"]) for e in entries}, key=int)
+        ids = sorted({e["filing_id"] for e in entries})
         note = (f"{len(entries)} late-report entr{'y' if len(entries) == 1 else 'ies'} "
                 f"(${stated:,.2f}"
                 + (f"; {unread} with no readable amount" if unread else "")
-                + f"; filing {', '.join(ids[:4])}{', ...' if len(ids) > 4 else ''}) not yet "
-                "restated on a Form 460 schedule A" + then)
+                + f"; filing {', '.join(map(str, ids[:4]))}{', ...' if len(ids) > 4 else ''})"
+                " not yet restated on a Form 460 schedule A" + then)
     if not checked_497:
         note += ("; " if note else "") + ("Form 497 late reports not checked: this database "
                                           "cannot read them (uv run vg calaccess build)")
@@ -402,7 +436,7 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
                          f"not {form_type!r}")
     con = calaccess.connect(root)
     late, checked_497 = _late_reports(con, filer_id, form_type, gated, contributor,
-                                      contributor_first if contributor_first else None)
+                                      contributor_first)
     who = " AND UPPER(TRIM(r.CTRIB_NAML)) = UPPER(TRIM(?))"
     who_args: list[Any] = [contributor]
     if contributor_first:
@@ -441,11 +475,16 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
 
     detail = f"{n} itemized {label} gift(s)"
     if not contributor_first:
-        # A late gift counts here: a surname shared with another giver is ambiguous whichever
-        # form that giver is on, and the detail would otherwise put their gift under it.
-        people = len({r[0] for r in con.execute(f"""
+        firsts = [r[0] for r in con.execute(f"""
             SELECT DISTINCT UPPER(TRIM(COALESCE(d.CTRIB_NAMF,''))) FROM ({inner}) d
-        """, args)} | {e["kf"] for e in late})
+        """, args)]
+        # A late giver counts too, when their name could be nobody's here: a surname shared
+        # with another giver is ambiguous whichever form that giver is on, and the detail would
+        # otherwise put their gift under it. One name filed another way is still one giver.
+        known = [_name_words(contributor, f) for f in firsts]
+        givers = {_name_words(e["naml"], e["namf"]) for e in late}
+        others = {w for w in givers if not any(_could_be(w, k) for k in known)}
+        people = len(firsts) + len(others)
         if people > 1:
             # Summing several people under one surname is how a nonexistent contributor
             # appeared.
@@ -541,7 +580,10 @@ def _top_contributor(root: Path, *, filer_id: str,
         FROM ({inner}) d
         GROUP BY UPPER(TRIM(d.CTRIB_NAML)), UPPER(TRIM(COALESCE(d.CTRIB_NAMF,'')))
     """
-    rows = con.execute(f"{group} ORDER BY amt DESC LIMIT 4", args).fetchall()
+    # Every contributor's total only when a late entry has to be weighed against them.
+    groups = con.execute(f"{group} ORDER BY amt DESC" + ("" if late else " LIMIT 4"),
+                         args).fetchall()
+    rows = groups[:4]
     row = rows[0] if rows else None
     if row is None:
         note = _late_note(late, checked_497)
@@ -558,8 +600,7 @@ def _top_contributor(root: Path, *, filer_id: str,
     names = [" ".join(x for x in (r["nf"], r["nm"]) if x).strip() for r in tied]
     contenders = []
     if late:
-        contenders = _could_change_ranking(con.execute(group, args).fetchall(), tied, top,
-                                           late, label)
+        contenders = _could_change_ranking(groups, tied, top, late, label)
     con.close()
     if contenders and gated:
         return _no_rows(f"{' | '.join(sorted(names))} lead{'s' if len(tied) == 1 else ''} "
@@ -580,37 +621,29 @@ def _top_contributor(root: Path, *, filer_id: str,
                        detail=f"${top:,.0f} across {row['n']} {label} gift(s){note}")
 
 
-def _spellings(last: str, first: str) -> set[str]:
-    """The ways a name can be filed, as `name_match_sql` matches them: split, or whole in the
-    last-name field in either order."""
-    return {last} if not first else {f"{first} {last}", f"{last} {first}"}
-
-
 def _could_change_ranking(groups: list[Any], tied: list[Any], top: float,
                           late: list[dict[str, Any]], label: str) -> list[str]:
     """Who the pending late entries could put at the top, described; empty if nobody.
 
     Every contributor could end anywhere from their total plus every negative pending amount
     to it plus every positive one, as if no entry were a copy of another, and an unreadable
-    amount could be anything. A late entry whose name matches several contributors' spellings
-    counts for each. Each only widens a range, which only makes the answer refuse more often.
-    The answer stands if nobody outside the leaders could come within a cent of the lowest a
-    leader could fall to, and no leader of a tie could move.
+    amount could be anything. A late entry counts for every contributor it could be
+    (`_could_be`), and for a new one when it could be nobody here. Each of these only widens a
+    range, which only makes the answer refuse more often. The answer stands if nobody outside
+    the leaders could come within a cent of the lowest a leader could fall to, and no leader of
+    a tie could move.
     """
     scheduled = {(g["kl"], g["kf"]): float(g["amt"] or 0) for g in groups}
     names = {(g["kl"], g["kf"]): " ".join(x for x in (g["nf"], g["nm"]) if x).strip()
              for g in groups}
-    by_spelling: dict[str, set[tuple[str, str]]] = {}
-    for key in scheduled:
-        for sp in _spellings(*key):
-            by_spelling.setdefault(sp, set()).add(key)
+    words = {(g["kl"], g["kf"]): _name_words(g["nm"], g["nf"]) for g in groups}
     lo = dict(scheduled)
     hi = dict(scheduled)
-    owed: dict[tuple[str, str], list[float | None]] = {}
+    owed: dict[Any, list[float | None]] = {}
     for e in late:
-        key = (e["kl"], e["kf"])
-        matched = set().union(*(by_spelling.get(sp, set()) for sp in _spellings(*key))) or {key}
-        a = _late_amount(e)
+        mine = _name_words(e["naml"], e["namf"])
+        matched = [k for k, w in words.items() if _could_be(mine, w)] or [("", mine)]
+        a = _plain_amount(e["amount"])
         for k in matched:
             names.setdefault(k, " ".join(x for x in (e["namf"], e["naml"]) if x).strip())
             lo.setdefault(k, 0.0)
@@ -626,11 +659,12 @@ def _could_change_ranking(groups: list[Any], tied: list[Any], top: float,
     elif could:
         could += [k for k in leaders if lo[k] <= top - TOLERANCE]
 
-    def described(k: tuple[str, str]) -> str:
-        amounts = owed.get(k)
+    def described(k: Any) -> str:
+        amounts = owed.get(k) or []
         late_part = ("no late gift" if not amounts else "a late amount nobody stated"
-                     if None in amounts else f"${sum(a for a in amounts if a is not None):,.0f} late")
-        return f"{names[k]} (${scheduled.get(k, 0.0):,.0f} on {label}, {late_part})"
+                     if None in amounts else f"${sum(a or 0.0 for a in amounts):,.0f} late")
+        return (f"{names[k] or 'an unnamed giver'} (${scheduled.get(k, 0.0):,.0f} on {label}, "
+                f"{late_part})")
 
     return [described(k) for k in sorted(could, key=lambda k: -hi[k])]
 
