@@ -1199,7 +1199,8 @@ def handoff(question_id: str, data: Path = DATA, cache: Path = None):
             continue
         judgeable += 1
         if s.query is not None:   # the token names the run too, so show which it was
-            line(f"  query run: {_printable(judgments.describe_run(s.query.name, v.query_run))}")
+            line(f"  query run: {s.query.name} "
+                 f"{_printable(judgments.describe_run(s.query.name, v.query_run))}")
         # Every line of it prefixed, so page text can't end the block early and go on to print
         # what reads as this command's own output. splitlines(), not split("\n"): a \r, \x85
         # or U+2028 is a line break to some reader, and each one starts a prefixed line here.
@@ -1286,7 +1287,11 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
         if why := judgments.unjudgeable_query(source.query, source.verification.query_run,
                                               cache_root):
             _refuse(f"not recorded: {why}")
-        query_ver, export = judgments.query_stamp(cache_root, source.query)
+        # The run the check just matched, which the token names too, not a second read of the
+        # registry and database: a rebuild landing between the two would stamp an export the
+        # verifier's context never came from.
+        run = source.verification.query_run
+        query_ver, export = run.version, run.export_date
     # A context build would not keep, the claim file's own copy notwithstanding: a verdict on it
     # would outlive the next `vg verify` and apply to the context that one gives.
     if why := _rebuild_problem(source, cache_root):

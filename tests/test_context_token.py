@@ -473,3 +473,59 @@ def test_a_query_context_nothing_says_was_run_gets_no_token(total):
                                             cache_root=root)
         tokens.add(judgments.context_token(claim, s))
     assert len(tokens) == 4 and "" not in tokens
+
+
+def test_a_query_outside_calaccess_is_handed_off_and_judged(tmp_path, monkeypatch):
+    """A query with no dataset has no export: the hand-off names its run without one, and the
+    token it prints is the one judge records with."""
+    monkeypatch.setitem(queries.REGISTRY, "test.total", queries.Query(
+        lambda root, **kw: queries.QueryResult(value=4321.0), ("filer_id",), "test", 1))
+    s = _source(query=QueryCitation(name="test.total", params={"filer_id": "7"},
+                                    expected="4321"))
+    run, root = _query_run(tmp_path, s)
+    code, out = _vg("handoff", "q1", "--data", run, "--cache", root)
+    assert code == 0 and f"  query run: test.total v1 under {root}\n" in out, out
+    [(token, _)] = _handed_from(out).values()
+    code, out = _vg("judge", "q1", s.sid, "supports", "--context", token, "--data", run,
+                    "--cache", root)
+    assert code == 0, out
+    assert judgments.load(run, "q1")[s.sid].export_date == ""
+
+
+def test_the_same_root_spelled_another_way_keeps_the_token(tmp_path, total, monkeypatch):
+    """The token takes the root as the run check compares it, resolved: a re-verify that
+    names the same database by a relative path instead of an absolute one is the same run, and
+    the verdict on it records."""
+    s = total.source
+    run, root = _query_run(tmp_path, s)               # recorded absolute
+    [(token, _)] = _handed_under(run, root).values()
+    monkeypatch.chdir(tmp_path)
+    assert _vg("verify", "--data", "run", "--cache", "root")[0] == 0
+    assert _claim(run).sources[0].verification.query_run.cache_root == "root"
+    assert _handed_under("run", "root") == _handed_under(run, root)
+    code, out = _vg("judge", "q1", s.sid, "supports", "--context", token, "--data", "run",
+                    "--cache", "root")
+    assert code == 0, out
+
+
+def test_a_query_verdict_is_stamped_with_the_run_it_was_checked_against(tmp_path, total,
+                                                                        monkeypatch):
+    """judge checks the claim file's run against the registry and the database, then stamps.
+    It used to read the database a second time for the stamp, so a rebuild landing between the
+    two stamped an export the verifier's context never came from."""
+    from vgpipe import calaccess
+
+    s = total.source
+    run, root = _query_run(tmp_path, s)
+    [(token, _)] = _handed_under(run, root).values()
+    reads = []
+
+    def export_info(root):   # the run check reads the old export; a rebuild lands after it
+        reads.append(root)
+        return {"export_date": "2030-01-02" if len(reads) == 1 else "2030-02-03"}
+
+    monkeypatch.setattr(calaccess, "export_info", export_info)
+    code, out = _vg("judge", "q1", s.sid, "supports", "--context", token, "--data", run,
+                    "--cache", root)
+    assert code == 0, out
+    assert judgments.load(run, "q1")[s.sid].export_date == "2030-01-02"
