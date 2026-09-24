@@ -497,7 +497,8 @@ context the verifier read, was on no disk. So the verifier says it:
 - `vg handoff <qid>` prints the claim and each source's context with a context token
   (`judgments.context_token()`), from one read of the claim file `vg judge` checks. The token
   is a short hash of everything the hand-off shows the verifier to judge from except the status:
-  the claim's question and answer, the citation's fields and the context. The claim and the
+  the claim's question and answer, the citation's fields, the context, and for a query citation
+  the run that produced it (`query_run`: version, export date, cache root). The claim and the
   citation are in it because a retry that rewrites only the answer, or only a filing's date,
   keeps the sid and the context, and `superseded` turns on that date. A field added to the
   hand-off goes into the token too. The verifier runs the command itself, so no transcription
@@ -508,10 +509,12 @@ context the verifier read, was on no disk. So the verifier says it:
   prints as an escape (`cli._printable()`). Split on `\n` alone, an ANSI erase-line or a U+2028
   in page text faked a source header, and a lone surrogate in a claim made the print raise, so
   no verdict could be recorded on it at all.
-- `vg judge --context <token>` is required for a page citation, and checked whenever it is
-  given. A query citation needs none yet: it is tied to its run (`unjudgeable_query()`), though
-  only to the run on disk when judge runs. The token is checked last, so a wrong verdict, id,
-  sid or copy is still what a refusal names first.
+- `vg judge --context <token>` is required for every verdict. A query citation once needed
+  none, on the grounds that `unjudgeable_query()` already ties it to its run. It does, but only
+  to the run on disk when judge runs: a re-verify under a bumped definition rewrote that run,
+  the check then agreed with the registry, and a verdict about the old calculation was stamped
+  as current. The token is checked last, so a wrong verdict, id, sid or copy is still what a
+  refusal names first.
 - A mismatch writes nothing and prints the `vg handoff` command to re-read, with the run's
   `--data` and `--cache` (without them it reads the default run, whose `q1` is another claim).
   It never prints the current token (see "Agent-supplied input can refuse, never grant" above).
@@ -524,9 +527,16 @@ passed the copy check, and build dropped its verdict only until the next `vg ver
 the file; after that the verdict applied to a context nobody had read. That source is now
 refused by judge, gets no token, and counts as blocked on `vg verify`, not as waiting.
 
-Only the text is hashed, not the copy. Two copies of a page that give the same context get the
-same token, which is right: the verdict is about those words, and the copy the stamp names is
-the one cached now, which gives them.
+For a page, only the text is hashed, not the copy. Two copies of a page that give the same
+context get the same token, which is right: the verdict is about those words, and the copy the
+stamp names is the one cached now, which gives them. For a query citation the run is hashed
+too, and that is not a contradiction: its verdict is about the calculation, not only the words
+it printed. A re-run under a new definition, export or cache root that returns the same value
+and note prints a context identical to the old one, so a token over the text alone could not
+tell the two runs apart. Hash what the verdict is about, which is not always what the verifier
+reads. The root is hashed as the claim file spells it, never resolved: resolving reads the
+working directory, which can differ between `vg handoff` and `vg judge`. A query context with no
+recorded run gets no token at all, since nothing says which calculation printed it.
 
 `vg judgments` asks the same question `vg judge` does before counting a source as waiting
 (`judgments.unjudgeable_page()`, the page counterpart of `unjudgeable_query()`): a source
@@ -1092,11 +1102,14 @@ What the figure was checked against is stamped too, machine-owned inside `verifi
 (`vg calaccess build` records it), and the cache root. The review page prints all three, and
 the command beside them carries `--cache`, so it reads the database the figure was verified
 against rather than whatever `--data` resolves to. `vg judge` records a verdict only when the
-question's claim file carries a `query_run` matching the current definition, export and root —
-the verifier judged that run's context, and stamping today's version over an older run's
-output would make a verdict about the old calculation read as current. Otherwise it refuses and
-says to re-verify, and `vg judgments` lists such a row as blocked (`run vg verify`) rather than
-counting it in the gate, which judging could then never close.
+question's claim file carries a `query_run` matching the current definition, export and root,
+and the context token names that run — the verifier judged one run's context, and stamping
+today's version over an older run's output would make a verdict about the old calculation read
+as current. The file's run alone is not enough: it is the run on disk when judge runs, and a
+re-verify while the verifier worked replaces it (see "Tie a verdict to the context it was
+handed"). Otherwise it refuses and says to re-verify, and `vg judgments` lists such a row as
+blocked (`run vg verify`) rather than counting it in the gate, which judging could then never
+close.
 
 That check reads a claim file, and sits on the trusted side deliberately: it can only refuse.
 A forged `query_run` gets past it to exactly the stamp `vg judge` wrote before the check
