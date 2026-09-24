@@ -137,6 +137,15 @@ def _vg(*args) -> tuple[int, str]:
     return res.exit_code, re.sub(r"\x1b\[[0-9;]*m", "", res.output)
 
 
+def _handed(data, qid: str, sid: str) -> list[str]:
+    """`--context` and the token `vg handoff` prints beside `sid`, as a verifier passes it on."""
+    code, out = _vg("handoff", qid, "--data", data)
+    assert code == 0, out
+    token = re.search(rf"sid {re.escape(sid)}\s+context token (\w+)", out)
+    assert token, out
+    return ["--context", token.group(1)]
+
+
 def _paywalled_run(tmp_path: Path, *, snapshot: bool) -> tuple[Path, Source]:
     """A run whose one source is gated live, verified offline as `vg verify` leaves it. With
     `snapshot`, the run's archive records hold a capture that contains the quote."""
@@ -211,7 +220,7 @@ def test_a_paywalled_source_is_judged_through_its_snapshot(tmp_path):
     assert _gate(data) == (1, 1, 0)
 
     code, out = _vg("judge", "q1", s.sid, "supports", "--note", "the snapshot quotes the vote",
-                    "--data", data)
+                    "--data", data, *_handed(data, "q1", s.sid))
     assert code == 0, out
     assert _gate(data) == (0, 1, 0)
     assert _built(data)["status"] == "verified"

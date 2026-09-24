@@ -79,8 +79,18 @@ def _verify(run: Path) -> str:
     return out
 
 
+def _handed(data, qid: str, sid: str) -> list[str]:
+    """`--context` and the token `vg handoff` prints beside `sid`, as a verifier passes it on."""
+    code, out = _vg("handoff", qid, "--data", data)
+    assert code == 0, out
+    token = re.search(rf"sid {re.escape(sid)}\s+context token (\w+)", out)
+    assert token, out
+    return ["--context", token.group(1)]
+
+
 def _judge(run: Path, qid: str, s: Source, verdict: str, note: str = "") -> None:
-    code, out = _vg("judge", qid, s.sid, verdict, "--data", run, "--note", note or verdict)
+    code, out = _vg("judge", qid, s.sid, verdict, "--data", run, "--note", note or verdict,
+                    *_handed(run, qid, s.sid))
     assert code == 0, out
 
 

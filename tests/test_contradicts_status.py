@@ -154,6 +154,15 @@ def _vg(*args) -> tuple[int, str]:
     return res.exit_code, re.sub(r"\x1b\[[0-9;]*m", "", res.output)
 
 
+def _handed(data, qid: str, sid: str) -> list[str]:
+    """`--context` and the token `vg handoff` prints beside `sid`, as a verifier passes it on."""
+    code, out = _vg("handoff", qid, "--data", data)
+    assert code == 0, out
+    token = re.search(rf"sid {re.escape(sid)}\s+context token (\w+)", out)
+    assert token, out
+    return ["--context", token.group(1)]
+
+
 def _built(data: Path) -> dict:
     code, out = _vg("build", "--data", data)
     assert code == 0, out
@@ -187,7 +196,8 @@ def test_build_and_status_list_a_recorded_contradiction_and_only_that(tmp_path):
 
     for sid, verdict, note in ((ledger.sid, "supports", "states the vote"),
                                (weekly.sid, "contradicts", "says the vote went the other way")):
-        code, out = _vg("judge", "q1", sid, verdict, "--note", note, "--data", data)
+        code, out = _vg("judge", "q1", sid, verdict, "--note", note, "--data", data,
+                        *_handed(data, "q1", sid))
         assert code == 0, out
     built = _built(data)
     assert built["corroboration_ok"] is True

@@ -207,6 +207,15 @@ def _vg(*args) -> tuple[int, str]:
     return res.exit_code, re.sub(r"\x1b\[[0-9;]*m", "", res.output)
 
 
+def _handed(data, qid: str, sid: str) -> list[str]:
+    """`--context` and the token `vg handoff` prints beside `sid`, as a verifier passes it on."""
+    code, out = _vg("handoff", qid, "--data", data)
+    assert code == 0, out
+    token = re.search(rf"sid {re.escape(sid)}\s+context token (\w+)", out)
+    assert token, out
+    return ["--context", token.group(1)]
+
+
 def test_build_and_status_hold_it_and_a_claim_built_on_it(tmp_path):
     data = tmp_path / "data"
     _cache(data, LEDGER)
@@ -224,7 +233,8 @@ def test_build_and_status_hold_it_and_a_claim_built_on_it(tmp_path):
     code, out = _vg("verify", "--data", data)
     assert code == 0, out
     for qid, sid in (("q1", base.sid), ("q2", built_on.sid)):
-        code, out = _vg("judge", qid, sid, "supports", "--note", "states it", "--data", data)
+        code, out = _vg("judge", qid, sid, "supports", "--note", "states it", "--data", data,
+                        *_handed(data, qid, sid))
         assert code == 0, out
 
     code, out = _vg("build", "--data", data)

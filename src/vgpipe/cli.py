@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import sys
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -1024,9 +1025,99 @@ def run_query(name: str = typer.Argument(""), param: list[str] = None, data: Pat
               soft_wrap=True)
 
 
+def _claim_or_exit(data: Path, question_id: str, needed: str) -> tuple[Claim, list[Claim]]:
+    """The claim with exactly this question id, loaded as `vg judge` reads it (trusted), and
+    every readable claim; or stop, naming why. `needed` finishes the sentence for a claim that
+    could not be read: what that leaves unknown."""
+    skipped: list[str] = []
+    claims = _load_or_exit(data / "claims", trust_machine_fields=True, skipped=skipped)
+    claim = next((c for c in claims if c.question_id == question_id), None)
+    if claim is not None:
+        return claim, claims
+    qid = escape(question_id)
+    if question_id in skipped:
+        con.print(f"[red]claim {qid} could not be read, {needed} — fix it first[/]")
+        raise typer.Exit(1)
+    # q07 for q7, Q7 for q7: the same question to a reader, a different shard to the code.
+    # On a case-insensitive disk Q7.json even IS q7.json, which `vg judgments` then misses.
+    near = [c.question_id for c in claims
+            if qid_sort_key(c.question_id.lower()) == qid_sort_key(question_id.lower())]
+    con.print(f"[red]no {'readable ' if skipped else ''}claim has question id {qid} in "
+              f"{escape(str(data / 'claims'))}"
+              + (f" — did you mean {escape(', '.join(near))}?" if near else "")
+              + (f" {len(skipped)} could not be read ({escape(', '.join(skipped))}), and it may "
+                 f"be one of those: fix them first." if skipped else "") + "[/]")
+    raise typer.Exit(1)
+
+
 @app.command()
-def judge(question_id: str, sid: str, verdict: str, note: str = "", data: Path = DATA,
-          cache: Path = None):
+def handoff(question_id: str, data: Path = DATA, cache: Path = None):
+    """Print what a verifier judges for one claim: the claim, and each source's context with
+    the context token `vg judge --context` must hand back.
+
+    Context and token come from one read of the claim file, the one `vg judge` checks, so the
+    token names exactly the text printed above it. A source `vg judge` would refuse now gets its
+    reason instead of a token. Read-only.
+    """
+    from . import judgments
+
+    cache_root = _verdict_cache_root(data, cache)
+    claim, _ = _claim_or_exit(data, question_id, "so what it cites cannot be shown")
+    if any(s.verification.status == "verified_via_archive" for s in claim.sources):
+        records = _archive_records(data)   # as `vg judge` does: only archive rows need them
+        for s in claim.sources:
+            if s.verification.status == "verified_via_archive":
+                apply_archive(s, records, cache_root)
+
+    def line(text: str, style: str = "") -> None:
+        # Everything here is agent- or page-authored: as Text, so no bracket reads as markup,
+        # and unwrapped, so a line break is the page's and never the terminal's.
+        con.print(Text(text, style=style), soft_wrap=True)
+
+    line(f"{claim.question_id} ({claim.claim_type}, needs {claim.required_sources} "
+         f"source(s)): {claim.question}", "bold")
+    line(f"claim: {claim.answer}")
+    judgeable = 0
+    for n, s in enumerate(claim.sources, 1):
+        v = s.verification
+        if v.status not in GOOD:
+            # judge's own refusal for it reads "run `vg verify`", which a failed citation
+            # doesn't need: it has no context because its checks failed.
+            why = (f"its citation has no confirmed context ({v.status}: {v.reason or 'no reason'})"
+                   f" — that is the retry loop's, `vg archive`'s or `vg verify`'s to fix")
+        elif s.query is None:
+            why = judgments.unjudgeable_page(s, v.context_page, cache_root)
+        else:
+            why = judgments.unjudgeable_query(s.query, v.query_run, cache_root)
+        token = "" if why else judgments.context_token(v.context)
+        line("")
+        line(f"[{n}/{len(claim.sources)}] sid {s.sid}  "
+             + (f"context token {token}" if token else "nothing to judge yet"), "bold")
+        line(f"  {s.publisher} · {s.author} · {s.date or 'undated'} · {s.source_type}")
+        line(f"  {s.url}" + (f"  (page {s.page})" if s.page else ""))
+        line(f"  status: {v.status}")
+        line(f"  snippet: {s.snippet}")
+        if not token:
+            line(f"  {why or 'it has no context'}", "yellow")
+            continue
+        judgeable += 1
+        line("----- context -----")
+        con.print(Text(v.context), soft_wrap=True, end="" if v.context.endswith("\n") else "\n")
+        line("----- end of context -----")
+    line("")
+    if not judgeable:
+        line("Nothing in this claim can be judged yet.", "yellow")
+        return
+    where = f" --data {shlex.quote(str(data))}" + (
+        f" --cache {shlex.quote(str(cache))}" if cache is not None else "")
+    line(f"Record each verdict: uv run vg judge {shlex.quote(claim.question_id)} <sid> "
+         f"supports|topic_only|contradicts|superseded --context <token> --note \"<one line>\""
+         f"{where}")
+
+
+@app.command()
+def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str = "",
+          data: Path = DATA, cache: Path = None):
     """Record a verifier agent's verdict on one source.
 
     Judgments live in data/judgments/, not in the claim file: `vg verify` reloads claims with
@@ -1037,11 +1128,15 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", data: Path =
 
     verdict: supports | topic_only | contradicts | superseded
 
-    Refuses, writing nothing, unless the named claim cites the source and the copy of the page
-    `vg verify` built its context from is still the one cached. A verdict filed anywhere else
-    is read by nothing — `q07` for `q7`, or a sid another claim cites — while the command
-    reported success and the judgment pass looked done; one stamped from another copy describes
-    text the verifier never read.
+    --context is the context token `vg handoff` printed beside the source: required for a page
+    citation, and checked whenever it is given.
+
+    Refuses, writing nothing, unless the named claim cites the source, the copy of the page
+    `vg verify` built its context from is still the one cached, and the context it has now is
+    the one the token names. A verdict filed anywhere else is read by nothing — `q07` for `q7`,
+    or a sid another claim cites — while the command reported success and the judgment pass
+    looked done; one stamped from another copy, or on a context rebuilt since the verifier was
+    handed it, describes text the verifier never read.
 
     The verdict also records the claim's fingerprint (its question and answer as the claim file
     reads now), so a retry that rewrites the claim after this can be told apart from one that
@@ -1062,23 +1157,9 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", data: Path =
         raise typer.Exit(1)
 
     cache_root = _verdict_cache_root(data, cache)
-    skipped: list[str] = []
-    claims = _load_or_exit(data / "claims", trust_machine_fields=True, skipped=skipped)
-    claim = next((c for c in claims if c.question_id == question_id), None)
+    claim, claims = _claim_or_exit(data, question_id,
+                                   f"so whether it cites {escape(sid)} cannot be checked")
     qid = escape(question_id)
-    if claim is None:
-        if question_id in skipped:
-            refuse(f"claim {qid} could not be read, so whether it cites {escape(sid)} cannot be "
-                   f"checked — fix it first")
-        # q07 for q7, Q7 for q7: the same question to a reader, a different shard to the code.
-        # On a case-insensitive disk Q7.json even IS q7.json, which `vg judgments` then misses.
-        near = [c.question_id for c in claims
-                if qid_sort_key(c.question_id.lower()) == qid_sort_key(question_id.lower())]
-        refuse(f"no {'readable ' if skipped else ''}claim has question id {qid} in "
-               f"{escape(str(data / 'claims'))}"
-               + (f" — did you mean {escape(', '.join(near))}?" if near else "")
-               + (f" {len(skipped)} could not be read ({escape(', '.join(skipped))}), and it may "
-                  f"be one of those: fix them first." if skipped else ""))
     source = next((s for s in claim.sources if s.sid == sid), None)
     if source is None:
         citing = [c.question_id for c in claims if any(s.sid == sid for s in c.sources)]
@@ -1115,6 +1196,11 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", data: Path =
                                               cache_root):
             refuse(f"not recorded: {escape(why)}")
         query_ver, export = judgments.query_stamp(cache_root, source.query)
+    # Last, so a wrong id, sid or copy is still what a refusal names first. The copy check above
+    # passes a re-verify that rebuilt the context from a newer cached copy; this is what doesn't.
+    if why := judgments.wrong_context(source, context, question_id,
+                                      required=source.query is None):
+        refuse(f"not recorded: {escape(why)}")
     try:
         # And stamp the claim it judged, so a retry that rewrites the claim later can be seen to
         # have left the verdict about words it no longer says.
