@@ -69,7 +69,8 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
 <div style="margin-top:6px;color:var(--mut)">
 <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>space</kbd> check · <kbd>f</kbd> flag · <kbd>o</kbd> open source · <kbd>a</kbd> open archive · <kbd>c</kbd> copy snippet</div>
 </div>
-<div id="migrated" class="notice hidden"></div>
+<div id="migrated" class="notice hidden"><span id="migrated-text"></span>
+<button id="dismiss">dismiss</button></div>
 
 <div class="counts">
 {% for k, v in status_counts.items() %}<span>{{ k }}: <b>{{ v }}</b></span>{% endfor %}
@@ -173,21 +174,24 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
 <script>
 // Progress lives under STORE:
 //   {v: 2,
-//    checked: {"<fingerprint>": "<question id>/<source id>"},
-//    sources: {"<source id>": {flag, note}}}
-// A check is an attestation that one source, as shown, supports one claim, so it is recorded by
-// the row's fingerprint (report.review_fingerprint), which covers the source, the claim and the
-// evidence the row shows, with the row it was made on beside it. A row reads checked while its
-// fingerprint is recorded. Another question citing the same source has another fingerprint, and
-// so does this row once its claim or evidence changes; a claim renumbered without changing
-// keeps it. A flag or note is a warning about the source, not an attestation, so it stays per
-// source and shows wherever the source is cited.
+//    checked: {"<fingerprint>": "<row key>"},
+//    sources: {"<source id>": {flag, note}},
+//    notice: {cleared, uncited, unreadable}}      (until the reviewer dismisses it)
+// A check is an attestation that one source, as cited and shown, supports one claim, so it is
+// recorded by the row's fingerprint (report.review_fingerprint), which covers exactly that. A
+// row reads checked while its fingerprint is recorded. Another question citing the same source
+// has another fingerprint, and so does this row once its claim or evidence changes; a claim
+// renumbered without changing keeps it. Beside each check is the row showing it (every row has
+// its own key: report.ROW_KEY_RE), so a row whose evidence changed can say so. A flag or note
+// is a warning about the source, not an attestation, so it stays per source and shows wherever
+// the source is cited.
 //
 // KEY holds what earlier versions of this page saved, per source: {"<source id>": {done, flag,
-// note}}. It is only read, to migrate from once, so neither version's tab overwrites the
-// other's progress.
+// note}}. It is only read, to migrate from when STORE is absent, so neither version's tab
+// overwrites the other's progress.
 const KEY = "vgpipe:{{ run_id }}";
 const STORE = KEY + ":v2";
+const UNREADABLE = STORE + ":unreadable";
 const ROW_RE = new RegExp({{ row_key_re|tojson }});
 const FP_RE = /^[0-9a-f]{16}$/;
 const SID_RE = /^[0-9a-f]{12}$/;
@@ -198,55 +202,75 @@ let cur = 0;
 // Progress can come from localStorage or from a file someone hands you, so coerce it into
 // a known shape rather than trusting it: null-prototype objects (a stored `__proto__` key
 // would otherwise pollute every lookup), keys and values whitelisted to the formats above,
-// and annotations reduced to the two fields this app actually uses.
+// and everything else reduced to the fields this app actually uses.
 function annotation(v){
   return {flag: v.flag === true, note: typeof v.note === 'string' ? v.note.slice(0, 4000) : ""};
 }
+function count(n){ return Number.isInteger(n) && n > 0 ? Math.min(n, 1e6) : 0; }
 function entries(v){ return v && typeof v === 'object' ? Object.keys(v).map(k => [k, v[k]]) : []; }
 function sanitizeState(raw){
   const out = {v: 2, checked: Object.create(null), sources: Object.create(null)};
-  if (!raw || typeof raw !== 'object') return {state: out, notice: ""};
-  if (raw.v !== 2) return {state: out, notice: migrate(out, raw)};
+  if (!raw || typeof raw !== 'object') return out;
+  if (raw.v !== 2) return migrate(out, raw);
   for (const [fp, row] of entries(raw.checked)){
     if (FP_RE.test(fp) && typeof row === 'string' && ROW_RE.test(row)) out.checked[fp] = row;
   }
   for (const [sid, v] of entries(raw.sources)){
     if (SID_RE.test(sid) && v && typeof v === 'object') out.sources[sid] = annotation(v);
   }
-  return {state: out, notice: ""};
+  const n = raw.notice;
+  if (n && typeof n === 'object'){
+    const kept = {cleared: count(n.cleared), uncited: count(n.uncited),
+                  unreadable: n.unreadable === true};
+    if (kept.cleared || kept.uncited || kept.unreadable) out.notice = kept;
+  }
+  return out;
 }
 
 // Earlier versions kept one entry per source. Its flag and note carry over as they are. Its
 // tick was shared by every question citing the source and recorded no evidence, so it can't
 // say which claim was checked or against what; applying it to every such row is the false
-// green this version exists to stop. Ticks are dropped, and the page says how many.
+// green this version exists to stop. Ticks are dropped, and the page says how many until the
+// reviewer dismisses it.
 function migrate(out, raw){
   const cited = new Set(srcs.map(el => el.dataset.sid));
-  let here = 0, gone = 0;
+  let cleared = 0, uncited = 0;
   for (const [sid, v] of entries(raw)){
     if (!SID_RE.test(sid) || !v || typeof v !== 'object') continue;
     out.sources[sid] = annotation(v);
-    if (v.done === true) { if (cited.has(sid)) here++; else gone++; }
+    if (v.done === true) { if (cited.has(sid)) cleared++; else uncited++; }
   }
-  if (!here && !gone) return "";
+  if (cleared || uncited) out.notice = {cleared, uncited, unreadable: false};
+  return out;
+}
+
+function noticeText(n){
+  if (n.unreadable) return "The progress saved in this browser could not be read, so this page "
+    + "started over. The unreadable copy is kept in its localStorage under \"" + UNREADABLE + "\".";
   return "This progress was saved by an earlier version of this page, which kept one checkmark "
     + "per source, shared by every question citing it. Those checkmarks can't show which claim "
-    + "was checked, or against which excerpt, so they were cleared: " + here + " on sources "
-    + "cited here (check the rows citing them again) and " + gone + " on sources no longer "
-    + "cited. Flags and notes are unchanged.";
+    + "was checked, or against which excerpt, so they were cleared: " + n.cleared + " on "
+    + "sources cited here (check the rows citing them again) and " + n.uncited + " on sources "
+    + "no longer cited. Flags and notes are unchanged.";
+}
+function showNotice(){
+  document.getElementById('migrated-text').textContent = state.notice ? noticeText(state.notice) : "";
+  document.getElementById('migrated').classList.toggle('hidden', !state.notice);
 }
 
 let state;
-function load(raw){
-  const r = sanitizeState(raw);
-  state = r.state;
-  const n = document.getElementById('migrated');
-  n.textContent = r.notice;
-  n.classList.toggle('hidden', !r.notice);
+function load(raw){ state = sanitizeState(raw); showNotice(); }
+function stored(k){ try { return localStorage.getItem(k); } catch (e) { return null; } }
+function parse(text){ try { return JSON.parse(text); } catch (e) { return undefined; } }
+const kept = stored(STORE);
+if (kept === null) load(parse(stored(KEY)));
+else if (parse(kept) === undefined){
+  // Not a fallback to KEY: that would bring back flags cleared since. The first save replaces
+  // this text, so it is kept where a person can recover it.
+  try { localStorage.setItem(UNREADABLE, kept); } catch (e) {}
+  load({v: 2, notice: {unreadable: true}});
 }
-function read(k){ try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (e) { return null; } }
-const saved = read(STORE);
-load(saved !== null ? saved : read(KEY));
+else load(parse(kept));
 
 function save(){ try { localStorage.setItem(STORE, JSON.stringify(state)); } catch(e){} }
 function ann(el){
@@ -265,6 +289,9 @@ function setChecked(el, on){
 }
 
 function render(){
+  // A check follows its claim, so it names the row showing it now: after a remap, a check made
+  // under the claim's old row key moves to its new one.
+  for (const el of srcs) if (isChecked(el)) state.checked[el.dataset.fp] = el.dataset.key;
   // Rows holding a check on evidence no row shows now: their claim or what they show changed.
   const stale = new Set(Object.keys(state.checked).filter(f => !shown.has(f))
                           .map(f => state.checked[f]));
@@ -357,6 +384,9 @@ document.getElementById('export').addEventListener('click', () => {
   const blob = new Blob([JSON.stringify(state, null, 2)], {type:'application/json'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = 'review-progress.json'; a.click();
+});
+document.getElementById('dismiss').addEventListener('click', () => {
+  delete state.notice; showNotice(); save();
 });
 document.getElementById('import').addEventListener('click', () => document.getElementById('file').click());
 document.getElementById('file').addEventListener('change', async e => {

@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 from selectolax.parser import HTMLParser
 
-from vgpipe.models import Claim, QueryRun, Source
+from vgpipe.models import Claim, QueryCitation, QueryRun, Source
 from vgpipe.report import render, review_fingerprint
 
 HARNESS = Path(__file__).parent / "review_app_harness.js"
@@ -166,60 +166,99 @@ def test_a_renumbered_claim_keeps_its_check_and_flags(tmp_path):
     assert row["checked"] and row["flagged"] and not row["stale"]
 
     # A different claim now on the old id does not inherit it.
-    reused = run(tmp_path, [claim("q18", "The levy failed.", question="Did the levy fail?"),
-                            claim("q20", answer)], storage=before["storage"])
+    other = claim("q18", "The levy failed.", question="Did the levy fail?")
+    reused = run(tmp_path, [other, claim("q20", answer)], storage=before["storage"])
     assert not rows(reused)[f"q18/{sid}"]["checked"] and rows(reused)[f"q20/{sid}"]["checked"]
+
+    # The check now names the row it moved to, so when that row's excerpt later changes, the
+    # warning lands there, not on whatever claim took the old id.
+    changed = cited("In a later session the council approved the levy after a hearing.")
+    later = run(tmp_path, [other, claim("q20", answer, changed)], storage=moved["storage"])
+    assert rows(later)[f"q20/{sid}"]["stale"] and not rows(later)[f"q18/{sid}"]["stale"]
 
 
 def test_one_claim_citing_one_snippet_twice_checks_each_locator(tmp_path):
-    """The same url and snippet cited twice in one claim, on different pages, are two rows with
-    one key. Each check is its own: looking at page 3 is not looking at page 7."""
-    c = claim("q1", "The council approved the levy.", cited(None, page=3), cited(None, page=7))
-    key = f"q1/{c.sources[0].sid}"
-    ticked = run(tmp_path, [c], actions=[{"do": "tick", "row": key, "index": 0, "checked": True}])
-    p3, p7 = rows(ticked)[key]
-    assert p3["checked"] and not p7["checked"] and not ticked["claims"][0]["done"]
+    """The same url and snippet cited twice in one claim, on different pages, are two rows.
+    Each check is its own: looking at page 3 is not looking at page 7."""
+    p3, p7 = cited(page=3), cited(page=7)
+    c = claim("q1", "The council approved the levy.", p3, p7)
+    k3 = f"q1/{p3.sid}"
+    k7 = k3 + "/2"
+    ticked = run(tmp_path, [c], actions=[{"do": "tick", "row": k3, "checked": True}])
+    assert rows(ticked)[k3]["checked"] and not rows(ticked)[k7]["checked"]
+    assert not ticked["claims"][0]["done"]
 
-    both = run(tmp_path, [c], storage=ticked["storage"],
-               actions=[{"do": "tick", "row": key, "index": 1, "checked": True}])
-    assert all(r["checked"] for r in rows(both)[key]) and both["claims"][0]["done"]
+    # When page 3's excerpt changes, the warning is page 3's alone, and checking page 7
+    # doesn't settle it.
+    moved = cited("The minutes record that the council approved the levy in closed session.",
+                  page=3)
+    after = run(tmp_path, [claim("q1", c.answer, moved, cited(page=7))],
+                storage=ticked["storage"], actions=[{"do": "tick", "row": k7, "checked": True}])
+    assert rows(after)[k3]["stale"] and not rows(after)[k3]["checked"]
+    assert rows(after)[k7]["checked"] and not rows(after)[k7]["stale"]
 
 
 def test_the_fingerprint_covers_what_the_row_attests():
-    """Every part the reviewer judged moves the fingerprint: the source, the claim, the
-    highlighted excerpt and page, the snapshot where there is no excerpt, and for a query row
-    the definition and export. Nothing else does, so a check doesn't go stale for no reason."""
+    """Every part the reviewer judged moves the fingerprint: the claim, the citation as asserted
+    and shown, and the evidence (the excerpt; the snapshot where there is none; for a query row,
+    the definition and export). Nothing else does, so a check doesn't go stale for no reason."""
     c = claim("q1", "The council approved the levy.")
+    changed = "In a later session the council approved the levy after a hearing."
 
-    def fp(claim_=c, context="ctx", **kw):
-        s = cited()
+    def fp(claim_=c, source=None, **kw):
+        s = source or cited()
         for k, v in kw.items():
-            if k == "query_run":
-                s.verification.query_run = v
-            else:
-                setattr(s, k, v)
-        return review_fingerprint(claim_, s, context)
+            setattr(s, k, v)
+        return review_fingerprint(claim_, s)
 
     base = fp()
     assert fp() == base, "stable across rebuilds"
-    assert fp(claim("q9", "The council approved the levy.")) == base, "content, not position"
+    assert fp(claim("q9", c.answer)) == base, "content, not position"
     assert fp(claim("q1", "The council rejected the levy.")) != base
     assert fp(claim("q1", c.answer, question="Who voted?")) != base
-    assert fp(context="ctx2") != base
-    assert fp(page=4) != base
-    assert fp(snippet="approved the levy by a vote") != base, "another citation"
+    assert fp(source=cited(changed)) != base, "the excerpt"
+    moved = cited()
+    moved.verification.context_offset = (0, 6)
+    assert fp(source=moved) != base, "the highlight"
+    for field, value in (("page", 4), ("date", "2030-03-04"), ("publisher", "Other Ledger"),
+                         ("author", "B. Writer"), ("secondary_host_ack", "portal is script-only"),
+                         ("snippet", "approved the levy by a vote")):
+        assert fp(**{field: value}) != base, field
+
+    passed = cited()
+    passed.verification.status = "normalized_match"
+    passed.verification.support = "topic_only"
+    assert fp(source=passed) == base, "a pipeline verdict isn't something the reviewer read"
 
     snap = "https://web.archive.org/web/2030/https://ledger.example/levy-vote"
     other = "https://web.archive.org/web/2031/https://ledger.example/levy-vote"
     assert fp(archive_url=snap) == base, "with an excerpt shown, the excerpt is the evidence"
-    assert fp(context="", archive_url=snap) != fp(context="", archive_url=other), \
+    assert fp(source=cited(None), archive_url=snap) != fp(source=cited(None), archive_url=other), \
         "with none, the snapshot is the reviewer's route to the text"
 
+
+def test_a_query_rows_fingerprint_is_its_run_not_its_printout():
+    """A query row is checked by re-running it, so what it attests is the definition and the
+    export the figure came from. The printed command carries the `--cache` path, and the context
+    carries the query's note, a message; neither is evidence."""
+    def row(run: QueryRun, note: str) -> Source:
+        s = cited(None)
+        s.query = QueryCitation(name="contributor_total", expected="1200.00",
+                                params={"committee": "Example Committee"})
+        s.verification.query_run = run
+        s.verification.context = f"contributor_total(committee=Example Committee) = 1200.00  [{note}]"
+        s.verification.context_offset = (0, len("contributor_total"))
+        return s
+
+    c = claim("q1", "The committee raised 1,200 dollars from one donor.")
     v1 = QueryRun(version=1, export_date="2030-01-02", cache_root="data")
-    assert fp(query_run=v1) == fp(query_run=v1.model_copy(update={"cache_root": "/abs/data"})), \
-        "where the database sits is not what was checked"
-    assert fp(query_run=v1) != fp(query_run=v1.model_copy(update={"version": 2}))
-    assert fp(query_run=v1) != fp(query_run=v1.model_copy(update={"export_date": "2030-02-02"}))
+    base = review_fingerprint(c, row(v1, "1 filing"))
+    assert review_fingerprint(c, row(v1, "one filing, deduplicated")) == base
+    assert review_fingerprint(c, row(v1.model_copy(update={"cache_root": "/abs/data"}),
+                                     "1 filing")) == base
+    assert review_fingerprint(c, row(v1.model_copy(update={"version": 2}), "1 filing")) != base
+    assert review_fingerprint(c, row(v1.model_copy(update={"export_date": "2030-02-02"}),
+                                     "1 filing")) != base
 
 
 def test_per_source_progress_is_not_spread_to_every_question(tmp_path):
@@ -245,13 +284,31 @@ def test_per_source_progress_is_not_spread_to_every_question(tmp_path):
     assert new["sources"]["0123456789ab"]["note"] == "since dropped", "kept, though uncited"
     assert loaded["storage"][LEGACY] == legacy, "the old progress is read, never rewritten"
 
-    # Once migrated, the notice doesn't repeat.
-    assert run(tmp_path, claims, storage=loaded["storage"])["notice"] == ""
+    # The notice stays until the reviewer dismisses it: a reload or a second tab still shows it.
+    reloaded = run(tmp_path, claims, storage=loaded["storage"])
+    assert reloaded["notice"] == loaded["notice"]
+    dismissed = run(tmp_path, claims, storage=loaded["storage"], actions=[{"do": "dismiss"}])
+    assert dismissed["notice"] == ""
+    assert run(tmp_path, claims, storage=dismissed["storage"])["notice"] == ""
+    assert all(r["flagged"] for r in rows(dismissed).values()), "the flags are unaffected"
 
     # An exported progress file from before the change is read the same way.
     imported = run(tmp_path, claims, actions=[{"do": "import", "text": legacy}])
     assert not any(r["checked"] for r in imported["rows"])
     assert "cleared: 1 on sources cited here" in imported["notice"]
+
+
+def test_unreadable_progress_is_kept_and_not_replaced_by_older(tmp_path):
+    """Progress that can't be parsed is not a cue to migrate the per-source progress again,
+    which would bring back flags cleared since. The page starts over, says so, and keeps the
+    unreadable text where a person can recover it, since its first save replaces it."""
+    c = claim("q1", "The council approved the levy.")
+    sid = c.sources[0].sid
+    legacy = json.dumps({sid: {"done": False, "flag": True, "note": "cleared long ago"}})
+    result = run(tmp_path, [c], storage={STORE: '{"v": 2, "checked": {', LEGACY: legacy})
+    assert not rows(result)[f"q1/{sid}"]["flagged"]
+    assert "could not be read" in result["notice"] and STORE + ":unreadable" in result["notice"]
+    assert result["storage"][STORE + ":unreadable"] == '{"v": 2, "checked": {'
 
 
 def test_stored_progress_is_sanitized(tmp_path):
@@ -265,6 +322,7 @@ def test_stored_progress_is_sanitized(tmp_path):
                            "1" * 16: f"q1/{sid}", "not a fingerprint": f"q1/{sid}"},
                "sources": {"__proto__": {"flag": True},
                            sid: {"flag": "yes", "note": 7, "extra": "dropped"}},
+               "notice": {"cleared": "<b>9</b>", "uncited": -1, "unreadable": "yes"},
                "extra": {"dropped": True}}
     for result in (run(tmp_path, [c], storage={STORE: json.dumps(hostile)}),
                    run(tmp_path, [c], actions=[{"do": "import", "text": json.dumps(hostile)}])):

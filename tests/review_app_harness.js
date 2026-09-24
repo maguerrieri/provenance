@@ -122,6 +122,8 @@ async function main() {
       doc.dispatch("keydown", doc.body, {key: a.key});
     } else if (a.do === "flag") {
       doc.dispatch("click", row(doc, a.row, a.index).querySelector(".flag"));
+    } else if (a.do === "dismiss") {
+      doc.getElementById("dismiss").click();
     } else if (a.do === "import") {
       const file = doc.getElementById("file");
       file.files = [{text: async () => a.text}];
@@ -148,7 +150,8 @@ async function main() {
       qid: c.dataset.qid, done: c.classList.contains("done"),
     })),
     progress: doc.getElementById("pct").textContent,
-    notice: notice.classList.contains("hidden") ? "" : notice.textContent,
+    notice: notice.classList.contains("hidden") ? ""
+      : doc.getElementById("migrated-text").textContent,
     fileInput: doc.getElementById("file").value,
     alerts,
   }));
