@@ -244,8 +244,8 @@ class Source(BaseModel):
     @property
     def contradicts(self) -> bool:
         """The verifier said this page argues against the claim, not merely that it does not
-        support it. `topic_only` and `superseded` take a source's support away, and another
-        source can supply it. This is evidence against, which no other source outvotes."""
+        support it. Why that alone sends the claim to review: CLAUDE.md, "The judgment pass
+        is not advisory"."""
         return self.verification.support == "contradicts"
 
     @property

@@ -125,6 +125,11 @@ def test_the_contradiction_is_listed_as_a_conflict():
     assert detect([_claim(no_snippet)])[0].conflicts == [
         f"a verifier judged Harbor Weekly ({WEEKLY}) contradicts the claim"]
 
+    unnamed = _weekly(support="contradicts")
+    unnamed.publisher = " "
+    assert detect([_claim(unnamed)])[0].conflicts == [
+        f"a verifier judged {WEEKLY} contradicts the claim"]
+
     for verdict in ("supports", "topic_only", "superseded", "unreviewed"):
         assert detect([_claim(_weekly(support=verdict))])[0].conflicts == [], verdict
 
