@@ -173,6 +173,30 @@ def test_a_verdict_on_a_claim_rewritten_since_the_hand_off_is_refused(tmp_path, 
     assert _shards(run) == {}
 
 
+def test_a_verdict_on_a_claim_type_changed_since_the_hand_off_is_refused(tmp_path):
+    """The hand-off prints the claim type and the number of sources it needs, and the verifier
+    reads an adversarial claim differently: it also weighs whether the sources are independent,
+    in the note the review page shows. A retry that changes only the type keeps the question,
+    answer, citation and context, so a token over those alone let a verdict formed under the
+    old type record."""
+    run, s = _run(tmp_path), _source()
+    code, out = _vg("handoff", "q1", "--data", run)
+    assert code == 0 and "q1 (mechanical, needs 1 source(s)):" in out, out
+    [(token1, context1)] = _handed_from(out).values()
+
+    _edit(run, claim_type="adversarial")
+    code, out = _vg("judge", "q1", s.sid, "supports", "--context", token1, "--data", run)
+    assert code == 1 and "different claim, citation or context" in out, out
+    assert _shards(run) == {}, "refused, writing nothing"
+
+    code, out = _vg("handoff", "q1", "--data", run)
+    assert code == 0 and "q1 (adversarial, needs 2 source(s)):" in out, out
+    [(token2, context2)] = _handed_from(out).values()
+    assert context2 == context1 and token2 != token1, "only the type moved the token"
+    code, out = _vg("judge", "q1", s.sid, "supports", "--context", token2, "--data", run)
+    assert code == 0 and "supports recorded for q1" in out, out
+
+
 def test_a_page_verdict_without_a_token_is_refused(tmp_path):
     """Without the token nothing says which context the verdict is about, so a page verdict
     must carry one. The refusal says what to pass and where it comes from, for this run."""

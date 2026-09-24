@@ -1120,11 +1120,13 @@ def unjudgeable_page(source, seen, cache_root: Path) -> str:
 
 def context_token(claim, source) -> str:
     """A short fingerprint of what `vg handoff` shows a verifier for `source`: the claim's
-    question and answer, the source's citation (url, publisher, author, date, source type,
-    page, snippet) and its context window, and for a query citation the run that produced that
-    context (definition, export and cache root). Everything it prints for the verifier to judge
-    from, that is, but the status. "" for a source with no context, or a query citation with no
-    recorded run. `vg judge --context` must hand it back.
+    question, type, the number of sources that type needs, and answer, the source's citation
+    (url, publisher, author, date, source type, page, snippet) and its context window, and for
+    a query citation the run that produced that context (definition, export and cache root).
+    Everything it prints for the verifier to judge from, that is, but the status (the question
+    id and sid it prints are the `vg judge` arguments, and checked there) and the claim's other
+    sources, which it lists too (#98). "" for a source with no context, or a query citation
+    with no recorded run. `vg judge --context` must hand it back.
 
     `vg judge` reads the claim file as it is when judge runs, and nothing from the verifier
     said what it had read. So a re-verify landing while a verifier worked (another run
@@ -1132,6 +1134,9 @@ def context_token(claim, source) -> str:
     it could stamp and a context no verifier had seen, and the row rendered green on it. A retry
     that rewrote only the answer, or only a filing's date, keeps the sid and the context, and
     did the same with a claim no verifier had seen: `superseded` turns on exactly that date.
+    So did one that changed only the claim type, which sets how the verifier reads the claim:
+    for an adversarial one it also weighs whether the sources are independent, and says which
+    in the note the review page shows beside the verdict.
     A query re-verified under a new definition or export rewrites the run beside a context that
     can read exactly as before, and judge then stamped the new definition on a verdict about the
     old one: the run is in the token because the text alone cannot tell the two apart.
@@ -1140,9 +1145,10 @@ def context_token(claim, source) -> str:
     context = source.verification.context
     if not context:
         return ""
-    shown = (claim.question, claim.answer, source.url, source.publisher, source.author,
-             source.date or "", source.source_type, str(source.page or ""), source.snippet,
-             context)
+    # The number of sources is hashed as printed, not only the type it is derived from today.
+    shown = (claim.question, claim.claim_type, str(claim.required_sources), claim.answer,
+             source.url, source.publisher, source.author, source.date or "", source.source_type,
+             str(source.page or ""), source.snippet, context)
     if source.query is not None:
         run = source.verification.query_run
         if run is None:   # nothing says which calculation printed it, so nothing to name
