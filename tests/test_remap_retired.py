@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -145,12 +146,26 @@ def test_a_backup_an_interrupted_re_home_left_still_stops_every_reader(tmp_path,
         code, out = _vg(*args, "--data", run.relative_to(tmp_path))
         assert code == 1, (args, out)
         assert "was interrupted, and its shards may be half-rewritten" in out, (args, out)
-        assert (f"run `vg judgments --rollback --data {run.resolve()}` from a checkout of "
-                f"commit {judgments.LAST_WITH_ROLLBACK}, which still has it") in out, (args, out)
+        assert (f"run `vg judgments --rollback --data {shlex.quote(str(run.resolve()))}` from "
+                f"a checkout of commit {judgments.LAST_WITH_ROLLBACK}, which still has it"
+                ) in out, (args, out)
         # after the rollback, the migration is still pending, and only that checkout can apply it
         assert "Then, from that checkout, re-run the command that was interrupted" in out, out
         assert "is retired" not in out, (args, out)
     assert _tree(data) == before
+
+
+def test_the_rollback_command_quotes_a_run_path_with_a_space(tmp_path):
+    """The operator pastes the command into another checkout's shell. Unquoted, a space in the
+    run's path split `--data` in two: the old rollback looked in the first half, found no backup
+    and reported nothing to undo, while every reader here kept refusing."""
+    data, run, _ = _legacy_run(tmp_path / "my runs")
+    judgments.backup_dir(run).mkdir()
+    code, out = _vg("judgments", "--data", run)
+    assert code == 1, out
+    cmd = re.search(r"run `(vg judgments --rollback --data .*?)` from a checkout", out)
+    assert cmd, out
+    assert shlex.split(cmd.group(1))[-2:] == ["--data", str(run.resolve())], cmd.group(1)
 
 
 def test_the_commit_named_for_rollback_is_on_main_and_has_it():

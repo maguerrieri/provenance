@@ -19,6 +19,7 @@ import fcntl
 import json
 import os
 import re
+import shlex
 import time
 from contextlib import contextmanager
 from dataclasses import MISSING, asdict, dataclass, fields
@@ -227,7 +228,8 @@ def refuse_if_interrupted(root: Path) -> None:
     contents and others not. Reading that as the verdicts would render whatever is missing as
     unreviewed, which is the silent loss the backup exists to prevent. The command that undoes
     it retired with them, so the message names a commit that still has it, and the run by its
-    absolute path, since the command runs from that other checkout."""
+    absolute path, since the command runs from that other checkout. The path is quoted for the
+    shell: an operator pastes it, and a space in it would split `--data` in two."""
     b = backup_dir(root)
     try:
         b.stat()
@@ -239,11 +241,12 @@ def refuse_if_interrupted(root: Path) -> None:
     raise UnreadableJudgments(
         f"{b} exists, so a re-home of {root / 'judgments'} by the retired `vg remap` or `vg "
         f"judgments --repair` was interrupted, and its shards may be half-rewritten. This "
-        f"version cannot undo it: run `vg judgments --rollback --data {root.resolve()}` from a "
-        f"checkout of commit {LAST_WITH_ROLLBACK}, which still has it. It puts back everything "
-        f"the re-home changed: the verdicts, and the claim files and questions.json if it was "
-        f"`vg remap --apply`. Then, from that checkout, re-run the command that was interrupted "
-        f"to finish it, since this version cannot apply a migration either.")
+        f"version cannot undo it: run `vg judgments --rollback --data "
+        f"{shlex.quote(str(root.resolve()))}` from a checkout of commit {LAST_WITH_ROLLBACK}, "
+        f"which still has it. It puts back everything the re-home changed: the verdicts, and the "
+        f"claim files and questions.json if it was `vg remap --apply`. Then, from that checkout, "
+        f"re-run the command that was interrupted to finish it, since this version cannot apply a "
+        f"migration either.")
 
 
 def load(root: Path, question_id: str) -> dict[str, Judgment]:
