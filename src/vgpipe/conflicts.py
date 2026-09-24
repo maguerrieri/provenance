@@ -56,7 +56,8 @@ def detect(claims: list[Claim]) -> list[Claim]:
     """
     for c in claims:
         c.conflicts = []
-        # (4) Before the snippet test: a query citation's verdict counts, snippet or none.
+        # (4) Before the snippet test below, which skips a claim whose snippets are all empty:
+        # a verdict is listed whatever the snippets hold.
         for s in c.sources:
             if s.contradicts:
                 who = f"{s.publisher.strip()} ({s.url})" if s.publisher.strip() else s.url
