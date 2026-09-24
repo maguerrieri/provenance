@@ -90,9 +90,10 @@ def review_fingerprint(claim: Claim, source: Source) -> str:
 
     It hashes identity, never display: the excerpt's own text and offsets, not the markup around
     them, and not the printed command or the query's note, which move with a `--cache` spelling
-    or a reworded message while the evidence stays put. And it is content, not position, so a
-    claim renumbered by `vg remap` without changing keeps its check, while a reworded one loses
-    it. Pipeline verdicts (status, support) are left out: they don't change what was read.
+    or a reworded message while the evidence stays put. And it is content, not position: the
+    question id is left out, so a claim moved to another id without changing keeps its check,
+    while a reworded one loses it. Pipeline verdicts (status, support) are left out: they don't
+    change what was read.
     """
     v = source.verification
     if source.query is not None:

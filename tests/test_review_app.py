@@ -152,29 +152,30 @@ def test_a_changed_excerpt_clears_the_check(tmp_path):
     assert not rows(dismissed)[key]["checked"] and not rows(dismissed)[key]["stale"]
 
 
-def test_a_renumbered_claim_keeps_its_check_and_flags(tmp_path):
-    """`vg remap` moves a claim to another question id. The claim and its evidence are what the
-    check attested, so an unchanged claim keeps its check wherever it now sits, and a flag
-    stays with its source."""
+def test_a_claim_moved_to_another_id_keeps_its_check_and_flags(tmp_path):
+    """A claim can be moved by hand to another question id: say, one filed under the wrong id.
+    The claim and its evidence are what the check attested, so an unchanged claim keeps its
+    check wherever it now sits, and a flag stays with its source."""
     sid = cited().sid
     answer = "The council approved the levy."
-    before = run(tmp_path, [claim("q18", answer)],
-                 actions=[{"do": "tick", "row": f"q18/{sid}", "checked": True},
-                          {"do": "flag", "row": f"q18/{sid}"}])
-    moved = run(tmp_path, [claim("q20", answer)], storage=before["storage"])
-    row = rows(moved)[f"q20/{sid}"]
+    before = run(tmp_path, [claim("q3", answer)],
+                 actions=[{"do": "tick", "row": f"q3/{sid}", "checked": True},
+                          {"do": "flag", "row": f"q3/{sid}"}])
+    moved = run(tmp_path, [claim("q7", answer)], storage=before["storage"])
+    row = rows(moved)[f"q7/{sid}"]
     assert row["checked"] and row["flagged"] and not row["stale"]
 
-    # A different claim now on the old id does not inherit it.
-    other = claim("q18", "The levy failed.", question="Did the levy fail?")
-    reused = run(tmp_path, [other, claim("q20", answer)], storage=before["storage"])
-    assert not rows(reused)[f"q18/{sid}"]["checked"] and rows(reused)[f"q20/{sid}"]["checked"]
+    # A different claim on the old id does not inherit it. Question ids are never reused, but
+    # nothing enforces that, so the page doesn't rely on it.
+    other = claim("q3", "The levy failed.", question="Did the levy fail?")
+    reused = run(tmp_path, [other, claim("q7", answer)], storage=before["storage"])
+    assert not rows(reused)[f"q3/{sid}"]["checked"] and rows(reused)[f"q7/{sid}"]["checked"]
 
     # The check now names the row it moved to, so when that row's excerpt later changes, the
-    # warning lands there, not on whatever claim took the old id.
+    # warning lands there, not on whatever claim sits on the old id.
     changed = cited("In a later session the council approved the levy after a hearing.")
-    later = run(tmp_path, [other, claim("q20", answer, changed)], storage=moved["storage"])
-    assert rows(later)[f"q20/{sid}"]["stale"] and not rows(later)[f"q18/{sid}"]["stale"]
+    later = run(tmp_path, [other, claim("q7", answer, changed)], storage=moved["storage"])
+    assert rows(later)[f"q7/{sid}"]["stale"] and not rows(later)[f"q3/{sid}"]["stale"]
 
 
 def test_one_claim_citing_one_snippet_twice_checks_each_locator(tmp_path):

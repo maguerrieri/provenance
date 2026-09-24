@@ -630,8 +630,8 @@ tells the reviewer it is stale (#122).
 The review app used to key its "verified by me" check by source id. A source id covers the
 url and snippet, so two questions citing one snippet shared a check: ticking it under one
 marked it under the other, and could mark that claim done, though nobody had read the source
-against it. That is the pooling `rehome()` was fixed for ("A verdict is per question"), one
-layer later, at the layer meant to be last.
+against it. That is the pooling the verdict layer refuses ("A verdict is per question, not per
+source"), one layer later, at the layer meant to be last.
 
 So a check is recorded by what it attests, `report.review_fingerprint()`: the claim, the
 citation as the researcher asserted it and the row shows it (source id, publisher, author,
@@ -642,11 +642,11 @@ the source has another fingerprint, and a re-fetch, new snapshot, moved highligh
 claim gives this row a new one, so it reads unchecked and says why. Two rules came out of
 getting there:
 - **Hash what was attested, not where it was shown.** The first cut keyed checks by row
-  (`<question id>/<source id>`), and `vg remap` renumbering a claim then lost every check and
+  (`<question id>/<source id>`), so a claim moved to another question id lost every check and
   flag on it. The row key now only says which row a check was made on, so the "changed since"
   warning lands on the right row. It is unique per row (a second citation of one source in one
-  claim gets `/2`), and `render()` re-points a check to the row showing it now, since a check
-  that followed a renumbered claim still named the old row.
+  claim gets `/2`), and the page's `render()` re-points a check to the row showing it now,
+  since a check that followed a moved claim still named the old row.
 - **Hash identity, not display.** The printed query command carries the `--cache` path, the
   query's context carries its note (a message), and the excerpt's markup is ours. Hashing any of
   them cleared every check when the build was invoked differently or a message was reworded,
