@@ -1520,6 +1520,14 @@ them. Record the base SHA when you branch, and reset or rebase onto that SHA, no
 name. Before pushing a stacked branch, check that `git diff origin/<parent> HEAD --stat`
 names only your files.
 
+**A clean merge can delete what your code still uses.** When another branch deletes a helper
+or an import that your branch calls but never edits, git takes the deletion without a conflict.
+`vg clear-contradiction` hit this against #101's removal of the re-home: its archive helpers
+and `judgments.py`'s `import shutil` would have merged away, and only the one test that fails a
+clearance on purpose reached the missing import. So when a sibling branch deletes code near
+yours, merge it into a scratch worktree (`git worktree add --detach`, outside `data/`) and run
+the suite. Then move anything yours still needs into your own diff.
+
 ## A typer default is not a value when a test calls the command
 
 Tests call commands as plain functions (`cli.show_judgments(data=...)`), not through typer. A
