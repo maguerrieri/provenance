@@ -1080,10 +1080,12 @@ judgment pass exists.
 DESC LIMIT 4`, so five givers at the contribution limit came back as a four-way tie naming
 whichever four SQLite picked. Nothing ordered equal totals, the value reproduced for as long as
 SQLite kept its pick, and a citation naming four of the five verified. The tie is now everyone
-within half a cent of the top, in name order, however many. A large tie is listed whole, not
-refused: the whole set is true and reproduces, and the detail already says it is no single
-largest contributor. Wherever a query picks "the top", select on the value, not a row count, and
-order equal values by something stable.
+within half a cent of the top, however many, sorted by name as displayed and ignoring case (a
+group's displayed spelling is whichever of its rows SQLite reads, so a case-sensitive sort could
+reorder it). A large tie is listed whole, not refused: the whole set is true and reproduces, and
+the detail already says it is no single largest contributor. Wherever a query picks "the top",
+select on the value, not a row count, and order equal values by something stable. A set is not
+stable: iterating one orders by hash, which changes from one process to the next.
 
 ## A receipt is not a contribution
 
