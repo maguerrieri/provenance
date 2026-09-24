@@ -73,6 +73,24 @@ def test_the_exemption_covers_the_paywalled_source_and_nothing_beside_it():
     assert rejected.status == "could_not_verify_paywall"
 
 
+def test_a_paywalled_claim_short_of_corroboration_goes_to_review_not_yellow():
+    """The flag does not stand in for corroboration. An adversarial claim needs two independent
+    documents whatever their status; with every source verified, one short is `human_review`,
+    and the paywall must not move it behind a yellow badge outside the review filter."""
+    alone = _claim(_source(), claim_type="adversarial")
+    assert alone.corroboration_ok is False
+    assert alone.status == "human_review"
+
+    other = _source(url=READABLE, status="verified", support="supports")
+    other.publisher = "Harbor Weekly"
+    two = _claim(other, _source(), claim_type="adversarial")
+    assert two.corroboration_ok is True
+    assert two.status == "could_not_verify_paywall"
+
+    other.publisher = "Daily Ledger"   # one outlet twice: not independent
+    assert _claim(other, _source(), claim_type="adversarial").status == "human_review"
+
+
 def test_the_statuses_outside_the_judgment_pass_are_exactly_the_usable_ones_without_context():
     """`vg judgments` gates on GOOD: a verifier can judge only a row with confirmed context.
     A usable status outside GOOD has none, so the roll-up must not wait on its verdict, and a

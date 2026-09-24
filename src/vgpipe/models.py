@@ -342,7 +342,9 @@ class Claim(BaseModel):
                 return "verified"
             return "pending" if self.corroboration_ok is None else "human_review"
         if any(s == "could_not_verify_paywall" for s in sts):
-            return "could_not_verify_paywall"
+            # A flag, not a pass. A claim short of the documents it needs goes to review as it
+            # would with every source verified: the yellow badge sits outside the review filter.
+            return "human_review" if self.corroboration_ok is False else "could_not_verify_paywall"
         if any(s == "pending" for s in sts):
             return "pending"
         return "human_review"
