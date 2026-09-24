@@ -123,6 +123,12 @@ Do not summarize the source rules for them — the agent definition carries them
    the source carries a `page` locator it is already where it belongs, with a person reading
    that page. Retrying it only invites a researcher to swap in a readable copy. Retry it only
    to ask for the missing `page`.
+
+   **A retry with no failing source: an answer whose figures no snippet carries.** The claim
+   is `human_review` with every source green, and its conflict line names the dollar figures
+   or years the answer states that none of its snippets do. Hand that line back to a
+   researcher: quote the span that carries the figure, or correct the answer. `vg
+   check-claim` does not catch this yet (#82), so a clean exit there does not rule it out.
 4. `uv run vg archive` — saves a fresh snapshot of every cited URL, checks each one
    actually holds the cited page (a bot check or a capture missing the snippet is
    `archive_unusable`), then re-checks any paywalled snippet against its snapshot and

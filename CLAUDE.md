@@ -129,8 +129,9 @@ to review, so the cost was measured on two real runs first:
   scaled in binary floats, so "$8.2 million" was 8199999.999999999, not "$8,200,000". As flags
   they were noise; under a gate they send sound claims to review, so both were fixed with it.
   Tightening a match loses what the loose one caught by accident: a whole-word unit dropped
-  "$5MM" and "$6 mil", so the abbreviations are listed. The measurement ran with the old
-  parser. Conflict lines also printed whole dollars, and $4.40 against $4.25 read "$4 vs $4".
+  "$5MM" and "$6 mil", so every form is listed, in one list the pattern is built from. And a
+  rule to keep "$500 K-12" from reading as thousands broke ranges ("$1.5M-2M" read as $1.50),
+  so the rarer misread stays. The measurement ran with the old parser. Conflict lines also printed whole dollars, and $4.40 against $4.25 read "$4 vs $4".
   Amounts under $10 and fractional amounts now show cents.
 
 `detect()` reads verdicts now, so `_settle()` runs it once they are applied, after
