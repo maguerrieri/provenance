@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 
 import pytest
 
@@ -38,13 +39,16 @@ CREDENTIAL_PARAMS = [
     "oauth_signature", "X-Amz-Signature", "X-Amz-Credential", "sig", "client_secret",
     "password", "passwd", "pass", "sessionid", "session_id", "SessionId", "jsessionid",
     "PHPSESSID", "sid", "otp", "auth[token]", "user[password]", "pw", "cred", "creds",
-    "sess", "session_ids", "sessionIds", "authcode", "authkey",
+    "session_ids", "sessionIds", "authcode", "authkey", "key1", "apiKey2", "api_keys",
+    "userkey", "devkey", "licensekey", "sesskey", "appid", "_wpnonce", "nonce",
+    "SAMLResponse", "authentication", "pswd",
 ]
 ORDINARY_PARAMS = [
     "session", "Session", "legislative_session", "session_year", "sessionYear", "author",
     "authorId", "authority", "passed", "passage", "secretary", "credit", "keyword", "pin",
     "parcel_pin", "q", "page", "per_page", "jurisdiction", "queryField", "filterValue",
-    "turkey", "hockey", "turnkey", "ticket_number",
+    "turkey", "hockey", "turnkey", "ticket_number", "sess", "keys", "sort_keys", "sign",
+    "noncertified",
 ]
 
 
@@ -56,9 +60,9 @@ def test_credential_parameter_names(name):
 @pytest.mark.parametrize("name", ORDINARY_PARAMS)
 def test_ordinary_parameter_names(name):
     """`sess`, `auth`, `pass` and `pin` anywhere in a header name are credentials. In a
-    parameter's they are a legislative session, a byline, a bill's passage and a parcel.
-    `ticket` is left out on purpose: in public records it is a citation, and a CAS ticket is
-    spent by the time the browser shows the page."""
+    parameter's they are a legislative session, a byline, a bill's passage and a parcel, and
+    `keys` is a site search box. `ticket` is left out on purpose: in public records it is a
+    citation, and a single-sign-on ticket is spent by the time the browser shows the page."""
     assert not credential_param(name)
 
 
@@ -77,6 +81,8 @@ def test_a_credential_in_the_query_string_is_refused_and_named(name):
     f"{URL}?filter=" + '{"q":"a;b","apiKey":"' + FAKE + '"}',  # a `;` inside that JSON
     f"{URL}?next=https%3A%2F%2Fportal.example%2Fcb%3Faccess_token%3D{FAKE}",  # a URL in a value
     f"{URL}?next=/search?token={FAKE}",
+    f"{URL}?next=search%3Ftoken%3D{FAKE}",                    # a relative link
+    f"{URL}?q=%3Ftoken%3D{FAKE}",                             # a bare query
 ])
 def test_every_parameter_the_url_carries_is_checked(url):
     _refused(f"curl '{url}'", "credentials in its URL")
@@ -99,6 +105,7 @@ def test_a_credential_in_a_form_body_is_refused(body):
     {"query": {"filters": [{"field": "name", "apiKey": FAKE}]}},
     {"payload": json.dumps({"session_id": FAKE})},
     {"callback": f"https://portal.example/cb?token={FAKE}"},
+    {"data": f"csrf_token={FAKE}&q=1"},
 ])
 def test_a_credential_in_a_json_body_is_refused_at_any_depth(fields):
     _refused(f"curl -H 'content-type: application/json' -d '{json.dumps(fields)}' {URL}",
@@ -135,8 +142,11 @@ def test_a_json_string_body_sent_as_a_form_is_read_as_a_form_too():
 
 
 @pytest.mark.parametrize("key, value", [
-    (f"token {FAKE}", FAKE),                # a pair that lost its `=`
-    ("sessid_4f9a1c2e7b", "4f9a1c2e7b"),    # a map keyed by session id
+    (f"token {FAKE}", FAKE),                        # a pair that lost its `=`
+    ("sessid_4f9a1c2e7b", "4f9a1c2e7b"),            # a map keyed by session id
+    ("sessid_QhFkZpLmNaBx", "QhFkZpLmNaBx"),        # mixed case splits into short words
+    ("sessid_Q2hFk9ZpLmNaBx", "Q2hFk9ZpLmNaBx"),
+    ("sessid_deadbeefcafebabe", "deadbeefcafebabe"),
 ])
 def test_a_name_that_may_hold_a_value_is_described_not_repeated(key, value):
     fields = {"sessions": {key: {}}}
@@ -152,8 +162,22 @@ def test_a_url_header_is_checked_too():
 
 
 def test_a_legislative_session_still_imports():
-    res = parse_curl(f"curl '{URL}?session=2025-2026&author=Doe&q=budget'")
-    assert _recipe(res)["url"] == f"{URL}?session=2025-2026&author=Doe&q=budget"
+    query = "session=2025-2026&sess=CUR&author=Doe&keys=budget"
+    assert _recipe(parse_curl(f"curl '{URL}?{query}'"))["url"] == f"{URL}?{query}"
+
+
+def test_a_lone_padded_value_is_not_read_as_a_pair():
+    """Base64 ends in `=`, and read as `name=value` its letters can spell `Key`."""
+    body = "state=abcKeyXyz%3D%3D&q=x"
+    assert _recipe(parse_curl(f"curl -d '{body}' {URL}"))["body"] == body
+
+
+def test_a_url_nested_in_urls_is_read_once():
+    """Every pair is read two ways, so without a cache each level of nesting doubled the work:
+    a 130-character paste ran for minutes."""
+    start = time.monotonic()
+    _refused(f"curl '{URL}?" + "a=/x?" * 40 + f"token={FAKE}'", "credentials in its URL")
+    assert time.monotonic() - start < 5
 
 
 @pytest.mark.parametrize("content_type, body", [

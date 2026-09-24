@@ -714,29 +714,48 @@ callers use:
 - the URL in an `origin` or `referer` header. The import already strips the referer's query,
   but a hand-edited recipe can put one back;
 - a form body, and a JSON body's keys at any depth;
-- inside any value, the keys of JSON and the parameters of a URL (a `next` or `callback`
-  link carries a query of its own).
+- inside any value, the keys of JSON, the parameters of a URL (a `next` or `callback` link
+  carries a query of its own, relative or absolute), and `&`-joined pairs.
 
 Pairs are read twice, split on `&` alone and on `&` and `;`, because servers differ: splitting
-on `;` alone cut up a JSON value holding one, and the key after it went unread. A body that is
-neither JSON nor form-encoded is refused, because its fields can't be read: a multipart form
-carries its CSRF token in a part.
+on `;` alone cut up a JSON value holding one, and the key after it went unread. **A reader that
+reads text two ways must not redo the work both readings reach.** Each reading recursed into
+the same nested value, and each returned its names, so a URL nested in a URL doubled the work
+and the name list at every level. A 130-character paste ran for minutes. `_value_names()` is
+now cached for the length of one check, and `_pair_names()` keeps each name once. A value is
+read as pairs only if it holds an `&`. A lone `name=value` is too often base64 with its
+padding, and `__VIEWSTATE` is kilobytes of it, whose letters sooner or later spell `Key`. A body
+that is neither JSON nor form-encoded is refused, because its fields can't be read: a multipart
+form carries its CSRF token in a part.
 
-**Parameter names need their own rule.** The header pattern matches parts of words, and in a
-parameter name those parts mean other things: `sess` in `?session=2025-2026` is a legislative
-session, `auth` is in `author` and `authority`, `pass` is in `passed`, `pin` is a parcel
-number. `credential_param()` splits a name into words (`apiKey`, `api_key` and `X-Api-Key` all
-hold `key`) and matches whole words, a few parts no ordinary word contains (`token`, `csrf`,
-`passw`: they catch `csrfmiddlewaretoken`, which has no separators to split on), and
-`session` followed by `id`. `key` is a whole word or the end of a few named compounds
-(`apikey`), since a part match took `turkey` and `hockey` with it. Bare `session` passes on
-purpose, so a web session sent as `?session=` is not caught. `ticket` is left out: in public
-records it is a citation number, and a single-sign-on ticket is spent by the time the browser
-shows the page. The false positives are accepted: `sort_key`, `pageToken`, and a legislature
-that numbers its sessions as `SessionID`. Each costs a hand-recorded entry, while the opposite
-mistake publishes a credential. A message repeats a flagged name only if it is short and
-word-like. A value can land in a name slot (a JSON map keyed by session id), so any other name
-is described instead.
+**Parameter names need their own rule, and a word counts only if it has no ordinary
+public-records meaning.** The header pattern matches parts of words. In a parameter name those
+parts mean other things:
+- `?session=2025-2026` and `?sess=CUR` are legislative sessions;
+- `auth` is in `author` and `authority`, and `pass` is in `passed`;
+- `pin` is a parcel number, and `keys` is a site search box.
+
+`credential_param()` splits a name into words (`apiKey`, `api_key` and `X-Api-Key` all hold
+`key`) and matches three things: whole words, parts no ordinary word contains, and a few
+two-word forms. The parts catch names with no separators to split on (`csrfmiddlewaretoken`,
+`PHPSESSID`, `_wpnonce`). `key` is a whole word or ends a named compound (`apikey`, `sesskey`),
+because a part match took `turkey` and `hockey` with it. The two-word forms are those compounds
+split (`api_keys`) and `session` followed by `id`. Every word left out is left out on
+purpose, and the review rounds on #52 proposed several of them:
+- `session` and `sess`, so a web session sent under either name gets through;
+- `keys`;
+- `ticket`, a citation number in public records, while a single-sign-on ticket is spent by
+  the time the browser shows the page;
+- `sign`.
+
+The false positives are accepted: `sort_key`, `pageToken`, and a legislature that numbers its
+sessions as `SessionID`. Each costs a hand-recorded entry, while the opposite mistake publishes
+a credential. No list of names is complete, so a credential under a name nobody listed still
+gets through. Add a name when one is found, and check it against public-records usage first.
+
+A message repeats a flagged name only if it reads like one a person wrote. A value can land in
+a name slot, such as a JSON map keyed by session id. A mixed-case token splits into a run of
+short words, and a hex id is one long word, so both are described instead of repeated.
 
 The habit worth keeping: when a source looks browser-only, open dev tools and see what the
 UI is calling. The FPPC portal is JS; its data is a cookieless JSON POST.
