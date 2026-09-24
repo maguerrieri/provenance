@@ -1080,12 +1080,17 @@ judgment pass exists.
 DESC LIMIT 4`, so five givers at the contribution limit came back as a four-way tie naming
 whichever four SQLite picked. Nothing ordered equal totals, the value reproduced for as long as
 SQLite kept its pick, and a citation naming four of the five verified. The tie is now everyone
-within half a cent of the top, however many, sorted by name as displayed and ignoring case (a
-group's displayed spelling is whichever of its rows SQLite reads, so a case-sensitive sort could
-reorder it). A large tie is listed whole, not refused: the whole set is true and reproduces, and
-the detail already says it is no single largest contributor. Wherever a query picks "the top",
-select on the value, not a row count, and order equal values by something stable. A set is not
-stable: iterating one orders by hash, which changes from one process to the next.
+within half a cent of the top, however many, sorted by name as displayed and ignoring case. A
+large tie is listed whole, not refused: the whole set is true and reproduces, and the detail
+already says it is no single largest contributor.
+
+Wherever a query picks "the top", select on the value, not a row count, and order equal values
+by something stable. Two orders that look stable are not:
+- **A bare column in a `GROUP BY`** is whichever of the group's rows SQLite reads, so a name's
+  spelling (its case, a padded part) changed with the order rows were loaded in. Pick it with
+  an aggregate (`MIN`) and trim it.
+- **A set** iterates by hash, which changes from one process to the next. So does anything
+  that inherits its order, such as a stable sort on a key where two entries are equal.
 
 ## A receipt is not a contribution
 
