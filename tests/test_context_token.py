@@ -6,7 +6,9 @@ passes is a re-verify that lands while a verifier works: another run re-fetches 
 one rebuilds the context from the new copy, and the claim file names a copy that is cached and
 a context no verifier has read. The verdict used to be recorded, and the row rendered green on
 that context. `vg handoff` now prints the claim and each source's context with a token, `vg
-judge --context` hands the token back, and a token for anything else writes nothing.
+judge --context` hands the token back, and a token for anything else writes nothing. A query
+citation's token also names the run that produced its context, since a re-run under another
+definition can print exactly the same text.
 """
 
 from __future__ import annotations
