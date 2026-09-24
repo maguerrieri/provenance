@@ -463,8 +463,11 @@ note) still don't.
 inside the one value it is given. `vg handoff '[/' --data 'x]'` raised MarkupError instead of
 refusing: the id and the path were escaped one at a time, and `[/` from one met `]` from the
 other as a closing tag. Print a message that quotes data as one escaped run, or as `Text`, as
-`cli._refuse()` does for `vg judge` and `vg handoff`. And refuse a malformed argument before
-anything prints it: both commands check the question id with `judgments.path_for()` first.
+`cli._refuse()` does for the refusals `vg judge` and `vg handoff` print themselves. And refuse a
+malformed argument before anything prints it: both commands check the question id with
+`judgments.path_for()` first. The shared helpers they call (`load_claims()`'s skip lines,
+`_cache_root()`'s refusals) still escape value by value, so both commands can still raise
+there until #35 lands.
 
 ## A verdict is about a source as cached at judgment time
 
