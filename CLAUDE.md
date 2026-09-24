@@ -1516,8 +1516,9 @@ Each fix re-derived one more piece of build, and each re-derivation missed somet
 `judgments.merge()` (the body of `apply_to()`), then `revalidate_from_cache()`. It splits
 what build will show without a verdict into two lines. The gate is sources a verdict would
 fix: status in `verify.GOOD`, so there is confirmed context, and no usable verdict. The rest
-have nothing a verifier can judge yet. Either their status isn't `GOOD`, or revalidation dropped
-a usable verdict because the context moved since `vg verify`. Tests pin the two to add up to
+have nothing a verifier can judge yet. Either their status isn't `GOOD`, or revalidation redrew
+the excerpt since `vg verify`, which drops any verdict on the old one, including one recorded
+now: a verifier judges the claim file's excerpt. Tests pin the two to add up to
 build's `claims.json`. Two more ways the gate read 0 wrongly are also closed: when there was
 nothing to count (a typo'd `--data` or `--question-id`), and when `load_claims()` skipped an
 unreadable claim file. Both now exit 1.
