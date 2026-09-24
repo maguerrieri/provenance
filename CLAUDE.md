@@ -643,9 +643,10 @@ the list lacked:
 
 So `cli._handed()` builds what the hand-off prints as one value (`judgments.Handoff`),
 `cli._print_handoff()` reads nothing else, and the token hashes all of it but what
-`judgments._NOT_HASHED` names. That is the ids (`vg judge` takes the question id and the
-judged sid as arguments and checks them itself, and a sid is a hash of a citation whose printed
-fields are hashed), and each source's status and the reason it has nothing to judge.
+`judgments._NOT_HASHED` names: the question id and the judged source's sid, which `vg judge`
+takes as arguments and checks itself, and each source's status and the reason it has nothing to
+judge. The other sources' sids are hashed, since a query citation's sid covers the figure it
+asserts and nothing else printed does.
 Whether it has a context is hashed, as the context; the reason also names the cache root as
 spelled, so hashing it would split one database into two. Every source's block is in every
 token, along with which block the token was printed beside. Any change to one source refuses

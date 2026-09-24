@@ -1152,19 +1152,26 @@ def _query_run_line(run) -> str:
 
 def _handed(claim, cache_root: Path, *, judged=None):
     """What `vg handoff` shows a verifier for `claim`, as one value (`judgments.Handoff`): the
-    printer reads nothing else, and the context token hashes it, so nothing can be printed that
-    the token does not cover. `vg handoff` and `vg judge` both build it here, from one read of
-    the claim file. Apply the run's snapshots first (`_apply_archive_rows()`).
+    printer reads nothing else, and the context token hashes all of it but what it names as left
+    out, so nothing else can be printed that the token does not cover. `vg handoff` and `vg
+    judge` both build it here, from one read of the claim file. Apply the run's snapshots first
+    (`_apply_archive_rows()`).
 
     `judged` is a source `vg judge` has already found judgeable, and is not asked again: that
     would read a query's database a second time, and a rebuild landing between the two reads
     would refuse a verdict whose stamp comes from the first."""
     from . import judgments, queries
 
+    first: dict[str, int] = {}
     sources = []
-    for s in claim.sources:
+    for n, s in enumerate(claim.sources, 1):
         v = s.verification
-        why = ("" if s is judged else
+        # `vg judge` finds a source by its sid, so a second citation of the same url and snippet
+        # is judged as the first: one verdict, keyed by that sid, and one token, printed there.
+        k = first.setdefault(s.sid, n)
+        why = (f"the same source id as [{k}/{len(claim.sources)}], where it is judged: a verdict "
+               f"is recorded per source id" if k != n else
+               "" if s is judged else
                _unjudgeable(s, cache_root, seen=v.context_page, last_run=v.query_run)
                ) or ("" if v.context else "it has no context")
         context = None
@@ -1230,7 +1237,7 @@ def _print_handoff(h, run_args: str) -> None:
          f"source(s)): {_printable(h.question)}", "bold")
     line(f"claim: {_printable(h.answer)}")
     for n, s in enumerate(h.sources, 1):
-        token = judgments.context_token(h, s.sid)
+        token = judgments.context_token(h, s.sid) if s.context is not None else ""
         line("")
         line(f"[{n}/{len(h.sources)}] sid {s.sid}  "
              + (f"context token {token}" if token else "nothing to judge yet"), "bold")
