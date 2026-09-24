@@ -199,7 +199,8 @@ badge. That is failing it by another name, and it pushes researchers to swap in 
 
 So a paywalled row is outside the judgment pass (`models.NOT_JUDGED`, read by
 `Source.awaits_verdict`). Its claim rolls up to the yellow paywall flag unless something
-outranks it: a failed citation, or a readable source still waiting on its verdict. Past those,
+outranks it: a failed citation, a readable source still waiting on its verdict, or one `vg
+verify` has not reached (`pending`, even if a verdict landed on it by sid). Past those,
 the paywall branch applies the all-verified branch's rules, with the flag standing in for green.
 Only `corroboration_ok: true` earns the flag, unchecked corroboration is `pending`, and failed
 corroboration is `human_review`. The flag is not a pass, and it sits outside the review filter,

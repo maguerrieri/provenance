@@ -66,6 +66,10 @@ def test_the_exemption_covers_the_paywalled_source_and_nothing_beside_it():
 
     not_yet_verified = _claim(_source(url=READABLE, status="pending"), _source())
     assert not_yet_verified.status == "pending"
+    # ...even carrying a verdict: a citation rewritten with the same url and snippet keeps its
+    # sid, so a recorded verdict can land on it before `vg verify` reaches it again.
+    not_yet_verified.sources[0].verification.support = "supports"
+    assert not_yet_verified.status == "pending"
 
     # A rejected source beside a paywalled one is not "every source rejected": the paywalled
     # source may still carry the claim, and only the human can read it.
