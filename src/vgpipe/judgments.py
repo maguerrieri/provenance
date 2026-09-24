@@ -19,14 +19,12 @@ import fcntl
 import json
 import os
 import re
-import shutil
 import time
-from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import MISSING, asdict, dataclass, fields
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import NamedTuple, get_type_hints
+from typing import get_type_hints
 
 from .models import QID_PATTERN
 
@@ -67,28 +65,9 @@ class UnreadableJudgments(ValueError):
     """
 
 
-class Rehomed(NamedTuple):
-    """What a re-home did. `moved` counts verdicts that now sit in a shard they were not in —
-    `filed` counts every verdict kept, so a mapping that matched nothing would read the same as
-    one that worked."""
-    filed: int
-    archived: int
-    questions: list[str]
-    moved: int
-
-
 class Unjudgeable(ValueError):
     """A verdict on this source cannot be recorded now, because nothing would tie it to the
     copy of the page the verifier read. `vg judge` refuses with the message and writes nothing."""
-
-
-class CannotRehome(ValueError):
-    """rehome() cannot tell which question a verdict belongs to, so it changed nothing.
-
-    Reported like UnreadableJudgments. A separate class because every file is fine: what is
-    missing is the answer — the mapping `vg judgments --repair --moved` takes — and picking
-    one would attach a verdict to a claim it never judged.
-    """
 
 
 _TYPES = get_type_hints(Judgment)
@@ -100,8 +79,8 @@ if not all(isinstance(t, type) for t in _TYPES.values()):
     # check there before adding it here.
     raise TypeError(f"Judgment fields must be plain classes, got {_TYPES}")
 # What Source.sid makes: the first 12 hex characters of a sha1. Anything else — empty,
-# padded, a typo — can never match a cited source, so it would read as a lapsed verdict, and
-# rehome() archives lapsed verdicts out of the live shards.
+# padded, a typo — can never match a cited source, so it would read as a lapsed verdict: a
+# verdict someone recorded, silently judging nothing.
 _SID = re.compile(r"[0-9a-f]{12}")
 
 
@@ -174,13 +153,9 @@ def path_for(root: Path, question_id: str) -> Path:
 
 
 def backup_dir(root: Path) -> Path:
-    """Where rehome() keeps every shard as it was, for exactly as long as it is rewriting them."""
+    """Where a re-home by the retired `vg remap` kept every shard as it was while it rewrote
+    them. Nothing writes it now, so one that exists was left by an interrupted re-home."""
     return root / "judgments-backup"
-
-
-def archive_dir(root: Path) -> Path:
-    """Where rehome() keeps verdicts that no current claim cites, one directory per run."""
-    return root / "judgments-archive"
 
 
 # Every holder keeps the lock for one shard read or one rewrite: milliseconds. Waiting longer
@@ -193,8 +168,9 @@ LOCK_TIMEOUT = 60.0
 def _lock(root: Path, *, shared: bool = False):
     """Hold the judgments directory while reading or rewriting it.
 
-    rehome() reads every shard and then rewrites them, so a `vg judge` that landed in between
-    was never read, and the rewrite deleted it. Writers take the lock exclusively. Readers take
+    record() reads a shard and then rewrites it, and verifier agents record in parallel, so a
+    second `vg judge` that landed in between was never read, and the rewrite deleted it. Writers
+    take the lock exclusively. Readers take
     it shared, so they wait out a rewrite rather than seeing half of one. It is an flock on the
     directory itself: no lock file to litter a tracked data dir, and a holder that dies releases
     it with its process.
@@ -220,7 +196,7 @@ def _lock(root: Path, *, shared: bool = False):
                     if time.monotonic() > deadline:
                         raise UnreadableJudgments(
                             f"{d} has been locked by another vg process for over "
-                            f"{LOCK_TIMEOUT:.0f}s. A verdict write or re-home holds it for "
+                            f"{LOCK_TIMEOUT:.0f}s. A verdict write holds it for "
                             f"milliseconds, so that process is stuck: stop it and re-run."
                         ) from None
                     time.sleep(0.05)
@@ -231,10 +207,11 @@ def _lock(root: Path, *, shared: bool = False):
 
 
 def refuse_if_interrupted(root: Path) -> None:
-    """Raise if a re-home was interrupted. A backup left behind means a rewrite stopped
-    partway: some shards may already hold their new contents and others not. Reading that as
-    the verdicts would render whatever is missing as unreviewed, which is the silent loss the
-    backup exists to prevent."""
+    """Raise if a re-home by the retired `vg remap` or `vg judgments --repair` was interrupted.
+    A backup left behind means a rewrite stopped partway: some shards may already hold their new
+    contents and others not. Reading that as the verdicts would render whatever is missing as
+    unreviewed, which is the silent loss the backup exists to prevent. The command that undoes
+    it retired with them, so the message names the checkout that still has it."""
     b = backup_dir(root)
     try:
         b.stat()
@@ -244,10 +221,12 @@ def refuse_if_interrupted(root: Path) -> None:
         # exists() would read this as "no backup" (3.13+), and the shards as whole.
         raise UnreadableJudgments(f"cannot tell whether {b} exists: {e}.") from None
     raise UnreadableJudgments(
-        f"{b} exists, so a re-home of {root / 'judgments'} was interrupted and its shards may "
-        f"be half-rewritten. Run `vg judgments --rollback --data {root}` to put back "
-        f"everything it changed (the verdicts, and the claim files if it was `vg remap "
-        f"--apply`), then re-run it.")
+        f"{b} exists, so a re-home of {root / 'judgments'} by the retired `vg remap` or `vg "
+        f"judgments --repair` was interrupted, and its shards may be half-rewritten. This "
+        f"version cannot undo it: run `vg judgments --rollback --data {root}` from a checkout "
+        f"of the commit before they were retired (the parent of the commit `git log -1 "
+        f"-S'def rollback(' -- src/vgpipe/judgments.py` shows). It puts back everything the "
+        f"re-home changed: the verdicts, and the claim files if it was `vg remap --apply`.")
 
 
 def load(root: Path, question_id: str) -> dict[str, Judgment]:
@@ -277,7 +256,7 @@ def _read(p: Path) -> dict[str, Judgment]:
                                   f"— rewrite it as a list. Do not delete it: that discards them "
                                   f"too.")
     # The file-level rule, one level down: an entry skipped here reads as "nobody judged this",
-    # and record() and rehome() rewrite the file from what this returns, so it is also deleted.
+    # and record() rewrites the file from what this returns, so it is also deleted.
     out: dict[str, Judgment] = {}
     problems: list[str] = []
     seen: set[str] = set()
@@ -309,9 +288,9 @@ def load_every(root: Path) -> dict[str, dict[str, Judgment]]:
     verdict for it, and the pooled `load_all()` this replaces kept only the shard that sorted
     last.
 
-    Reads every shard before returning anything, so a caller about to rewrite the directory
-    learns that one is unreadable while nothing has been touched yet — and a caller that
-    also needs the verdicts (`vg judgments`) gets them from the same read.
+    Reads every shard before returning anything, so an unreadable one stops the caller before
+    it reports on any, and a caller that also needs the verdicts (`vg judgments`) gets them
+    from the same read.
     """
     with _lock(root, shared=True):
         return _load_every(root)
@@ -388,7 +367,8 @@ def record(root: Path, question_id: str, sid: str, verdict: str, note: str = "",
                          f"{' and '.join(why)}")
     p = path_for(root, question_id)
     p.parent.mkdir(parents=True, exist_ok=True)
-    # Read and rewrite under one lock: a rehome() between the two would otherwise be undone.
+    # Read and rewrite under one lock: another record() between the two would otherwise be
+    # undone.
     with _lock(root):
         refuse_if_interrupted(root)
         existing = _read(p)
@@ -397,449 +377,10 @@ def record(root: Path, question_id: str, sid: str, verdict: str, note: str = "",
     return j
 
 
-def rehome(root: Path, claims, moved: Mapping[str, str | None] | None = None,
-           then: Callable[[], None] | None = None,
-           also: Sequence[Path] = (), *, exact: bool = False) -> Rehomed:
-    """Re-file verdicts under the question whose claim they judged, after claims have moved.
-
-    Entries are keyed by source id, but the FILES are named by question id — so moving a claim
-    to a new id leaves its verdicts behind in the old shard, and the new id finds nothing. That
-    orphaned verdict renders as `unreviewed`, which the pipeline reads as "not yet judged"
-    rather than "lost", so a damaged run looks merely incomplete: the operator either pays for
-    the whole judgment pass twice or ships rows whose verdicts exist but aren't attached.
-
-    A verdict belongs to a (question, source) pair, never to a source alone. This used to pool
-    every shard by source id and file each verdict under the last claim citing it, so a source
-    cited by two questions kept one of their two verdicts, and could hand it to the claim that
-    never earned it: a `supports` for one claim rendering green on another that a verifier had
-    judged `topic_only`.
-
-    `moved` maps a shard to the question whose claim it judged: {old question id: new question
-    id}. A verdict only ever moves along it: a source id is not proof of ownership, so nothing
-    here moves one because another question happens to cite its source. A shard named as a key
-    follows its claim to the new id; one that a claim moved onto, and that is not a key itself,
-    judged the claim there before; any other shard stays on its own id. Each verdict is then
-    filed under that question if its claim cites the source, and archived if not — unless that
-    would be a guess:
-
-    - `exact=True` is `vg remap`: its mapping names every claim that moves, one per id, and
-      they move inside this call, so no verdict can have been recorded against a claim's new
-      id. A shard a claim moved onto judged a claim that is gone (archived as stranded), and a
-      verdict its claim no longer cites has lapsed, whoever else cites the source.
-    - Otherwise (`vg judgments --repair`) the claims moved some time ago, and `moved` is only
-      what the operator stated — possibly nothing. It speaks for the shards it names as keys
-      and no others, and verdicts may have been judged since the move, so several shards may
-      name one claim: the verdicts it earned before it moved, and those judged on its new id
-      since (`q21:q18` and `q18:q18`). Where two hold a verdict for one source, the later
-      replaces the earlier, as record() would have. A value of None (`--gone OLD`) says the
-      claim OLD's shard judged is gone, so its verdicts are archived. A mapping out of an id no
-      claim holds has nothing left to contradict it, so the claim it names must cite every
-      verdict in that shard: a claim that moved keeps its sources. A verdict another question
-      cites is ambiguous when nothing names its
-      shard as a key (its claim dropped the source, or moved away, and only the operator knows
-      which), or when the mapping sends its shard elsewhere but it is the claim on the shard's
-      own id that cites it (judged after the move, or already re-homed: re-applying a mapping
-      would move it a second time).
-
-    Anything ambiguous raises CannotRehome naming each verdict, with nothing changed.
-
-    Verdicts no current claim cites are not deleted: they go to a fresh directory under
-    archive_dir(), so a claim archived by `vg remap --archive-stranded` can be restored with its
-    verdicts. The rewrite is a transaction (see _rewrite()): it completes, is rolled back on a
-    failure, or leaves a backup that `vg judgments --rollback` undoes. `then` runs inside it,
-    after the shards are written, and `also` names what it changes, each a direct child of
-    `root`: a directory (its `*.json` files) or a file (its bytes, or its absence). They are
-    snapshotted into the same backup and restored with the shards. remap moves the claim files
-    and appends its re-apply marker there, so verdicts, claims and marker roll back together —
-    rolling back only the shards put verdicts on old ids under claims on new ones. All of it
-    happens under the directory lock, so a `vg judge` cannot land between the read and the
-    rewrite and be lost. Returns a Rehomed.
-    """
-    with _lock(root):
-        # Every shard is read before anything is written, so an unreadable one raises while
-        # the directory is still intact.
-        before = _load_every(root)
-        after, orphans = _plan(before, claims, moved, exact, root)
-        filed = sum(len(v) for v in after.values())
-        archived = sum(len(v) for v in orphans.values())
-        # Identity, not equality: a verdict that stayed is the very object read from its shard.
-        moved_n = sum(1 for q, shard in after.items() for sid, j in shard.items()
-                      if before.get(q, {}).get(sid) is not j)
-        if after != before or then is not None:
-            _rewrite(root, before, after, orphans, then, also)
-    return Rehomed(filed, archived, sorted(after), moved_n)
-
-
-def _plan(before: dict[str, dict[str, Judgment]], claims,
-          moved: Mapping[str, str | None] | None, exact: bool, root: Path):
-    """Where each verdict goes: ({question: {sid: verdict}} to keep, {shard: {sid: verdict}} to
-    archive). Raises CannotRehome if any verdict has no single right home (see rehome())."""
-    moved = dict(moved or {})
-    if exact and len(set(moved.values())) < len(moved):
-        raise ValueError(f"two claims cannot move onto one question: {moved}")
-    # `--moved Q1:q1`, where this disk opens Q1.json as q1.json, is no move: it says q1's own
-    # shard judged q1, as `--moved q1:q1` does. Read as a move out of a vacant id, the shard had
-    # to bear it out alone, and a verdict q1 has since dropped refused the repair.
-    said: dict[str, str | None] = {}
-    by: dict[str, str] = {}
-    for old, new in moved.items():
-        key = new if new is not None and old != new and _same_file(root, old, new) else old
-        if key in said and said[key] != new:
-            raise CannotRehome(f"{by[key]} and {old} are one shard on this disk, and the mapping "
-                               f"says two things about it ({by[key]}:{said[key]}, {old}:{new}), "
-                               f"so nothing was changed. Say one.")
-        said[key], by[key] = new, old
-    moved = said
-    citers: dict[str, set[str]] = {}
-    for c in claims:
-        for s in c.sources:
-            citers.setdefault(s.sid, set()).add(c.question_id)
-    onto: dict[str, list[str]] = {}
-    for old, new in moved.items():
-        if new is not None and old != new:
-            onto.setdefault(new, []).append(old)
-
-    def owner(qid: str) -> str | None:
-        """The question whose claim this shard judged; None for one no longer on any id."""
-        if qid in moved:
-            return moved[qid]
-        # A claim moved onto this id, so its shard judged the one there before: gone (remap
-        # archived it as stranded), or — for --repair — wherever the operator has not said.
-        return None if qid in onto else qid
-
-    held = {c.question_id for c in claims}
-    known = held | moved.keys() | {new for new in moved.values() if new is not None}
-
-    def resolve(stem: str) -> str:
-        """The id whose shard this is. Where the disk opens Q1.json as q1.json, `vg build`
-        applies it to claim q1 and `vg judge q1` writes into it: it is q1's shard, by the disk's
-        own identity rather than a guess from a source id. Keyed by its stem, remap archived the
-        verdicts of a claim it moved as lapsed. On a case-sensitive disk it is its own shard."""
-        return stem if stem in known else opened_as(root, stem, known) or stem
-
-    wanted: dict[tuple[str, str], list[tuple[str, Judgment]]] = {}
-    orphans: dict[str, dict[str, Judgment]] = {}
-    unsaid: list[str] = []          # nothing says which claim the shard judged
-    contradicted: list[str] = []    # the mapping says, and the claims disagree
-    unsupported: list[str] = []     # the mapping says, and its shard does not bear it out
-    for stem, entries in before.items():
-        # `qid` is the id the shard is under, `stem` its file name: they differ only for a
-        # shard the disk opens under another id.
-        qid = resolve(stem)
-        home = owner(qid)
-        for sid, j in entries.items():
-            cited_by = citers.get(sid, set())
-            if home in cited_by:
-                wanted.setdefault((home, sid), []).append((stem, j))
-            elif not exact and home is not None and home != qid and qid not in held:
-                # Out of an id no claim holds, nothing is left to contradict the mapping, so its
-                # shard has to bear it out alone. A claim that moved keeps its sources: one the
-                # named claim does not cite says the mapping named the wrong claim — a question
-                # that merely cites a deleted claim's page, say — or that the claim was retried
-                # since, which the operator settles by hand. Without this, `--moved q2:q7` for a
-                # hand-deleted q2 filed its co-cited verdict green on q7 and archived the rest.
-                unsupported.append(f"{stem}/{sid}: the mapping says {stem}'s shard judged the "
-                                   f"claim now at {home}, which does not cite it")
-            elif exact or not cited_by:
-                # remap's mapping is complete and its own doing, so a verdict its claim no
-                # longer cites has lapsed, whoever else cites the source. Cited by nothing, it
-                # has lapsed on any reading.
-                orphans.setdefault(stem, {})[sid] = j
-            elif qid not in moved:
-                # Either the claim this shard judged dropped the source (the verdict lapsed) or
-                # it moved away. Only the operator can say which — never the source id.
-                where = (f"{', '.join(onto[qid])} moved onto {qid}, and nothing says which "
-                         f"claim {stem}'s own shard judged" if home is None else
-                         f"the claim at {qid} no longer cites it" if qid in held else
-                         f"no claim holds {stem}")
-                unsaid.append(f"{stem}/{sid}: {where}; also cited by "
-                              f"{', '.join(sorted(cited_by))}")
-            elif home is not None and home != qid and qid in cited_by:
-                # The mapping says this shard judged another claim, and it is the claim on the
-                # shard's own id that cites the source. Lapsed when the moved claim dropped it,
-                # or judged since the move, or re-homed already: moving it could attach it to a
-                # claim it never judged, and archiving it could lose the second reading's.
-                contradicted.append(f"{stem}/{sid}: the mapping says {stem}'s shard judged the "
-                                    f"claim now at {home}, which does not cite it, but the claim "
-                                    f"now at {qid} does")
-            else:
-                # The mapping names the claim this shard judged, and it no longer cites the
-                # source (or is gone): lapsed, as with remap. Who else cites it says nothing.
-                orphans.setdefault(stem, {})[sid] = j
-
-    # Only --repair can file two verdicts under one (question, source): the one a claim earned
-    # before it moved and the one judged on its new id since. Both judged the same claim, by the
-    # operator's word, so the later replaces the earlier exactly as record() would have — the
-    # earlier is archived, not deleted. Verdicts that cannot be put in order are refused.
-    after: dict[str, dict[str, Judgment]] = {}
-    unordered: list[str] = []
-    for (home, sid), found in sorted(wanted.items()):
-        times = [_instant(j.judged_at) for _, j in found]
-        if len(found) > 1 and (None in times or times.count(max(times)) > 1):
-            unordered.append(f"{home}/{sid}: {', '.join(q for q, _ in found)} each hold a "
-                             f"verdict for it, judged at "
-                             f"{', '.join(repr(j.judged_at) for _, j in found)}")
-            continue
-        keep = found[times.index(max(times))][1] if len(found) > 1 else found[0][1]
-        after.setdefault(home, {})[sid] = keep
-        for q, j in found:
-            if j is not keep:
-                orphans.setdefault(q, {})[sid] = j
-
-    # Two ids the disk opens as one file (claims Q1 and q1, where it folds case) would each be
-    # written, the second over the first, whose verdicts would vanish with no archive entry.
-    # Unlinking before writing only helps a shard that is leaving; both of these stay.
-    ids = sorted(after)
-    shared = [(a, b) for i, a in enumerate(ids) for b in ids[i + 1:] if _one_file(root, a, b)]
-
-    if unsaid or contradicted or unsupported or unordered or shared:
-        why = []
-        if unsaid:
-            why.append(
-                f"{'; '.join(unsaid)}. A source id is not proof of ownership, so a verdict is "
-                f"never moved on one — and a question that also cites the source is not a "
-                f"candidate for where a claim went: mapping a shard onto it is that same guess, "
-                f"made by hand. Say what you know of each shard's claim, from the run's own "
-                f"record (the remap that moved it, the claim files' history), to `vg judgments "
-                f"--repair --data {root}`: `--moved OLD:NEW` for a claim you know moved from OLD "
-                f"to NEW, `--moved OLD:OLD` for one still on OLD, or `--gone OLD` for one that "
-                f"no longer exists, even if another claim has since taken its id. A verdict the "
-                f"named claim no longer cites has lapsed, and is archived. Several shards may "
-                f"name one claim: the verdicts it earned before it moved and those judged on its "
-                f"new id since")
-        if contradicted:
-            why.append(
-                f"{'; '.join(contradicted)}. Each has three readings: it lapsed when the moved "
-                f"claim dropped the source; it was judged against the claim on the shard's own "
-                f"id after the move; or the mapping was applied already and the verdicts "
-                f"re-homed. Only the first fits the mapping, so check it — re-applying a "
-                f"finished one would move verdicts a second time. If a verdict did lapse, move "
-                f"that entry into judgments-archive/ by hand; a shard holding verdicts for two "
-                f"claims has to be split by hand")
-        if unsupported:
-            why.append(
-                f"{'; '.join(unsupported)}. No claim holds those ids, so only the shard can bear "
-                f"the mapping out, and a claim that moved keeps its sources: a verdict the named "
-                f"claim does not cite says it is the wrong claim. If the claim that shard judged "
-                f"is gone, say `--gone OLD`. If it did move and has dropped these sources since, "
-                f"move each such entry into judgments-archive/ by hand, then re-run")
-        if unordered:
-            why.append(
-                f"{'; '.join(unordered)}. The later one would replace the earlier, as a "
-                f"re-judgment does, but these cannot be put in order: fix each `judged_at`, or "
-                f"move the one to drop into judgments-archive/ by hand")
-        if shared:
-            why.append(
-                f"{'; '.join(f'{a} and {b}' for a, b in shared)} are one file on this disk, which "
-                f"does not tell case apart, so writing both would replace one claim's verdicts "
-                f"with the other's and archive nothing. Two claims whose ids differ only in case "
-                f"cannot both hold verdicts here: give one of them another id")
-        n = len(unsaid) + len(contradicted) + len(unsupported) + len(unordered)
-        heads = ([f"cannot tell which question {n} verdict(s) belong to"] if n else []) + (
-            [f"{len(shared)} pair(s) of claims would share one verdict file"] if shared else [])
-        raise CannotRehome(
-            f"{', and '.join(heads)}, so nothing was changed: {'. '.join(why)}. Do not delete "
-            f"one: that discards the verdict.")
-    return after, orphans
-
-
-def _archive(dest: Path, orphans: dict[str, dict[str, Judgment]]) -> None:
-    """Keep verdicts no current claim cites, under the shard name they had. A fresh directory
-    per run, so an earlier run's archive is never merged into or overwritten."""
-    dest.mkdir(parents=True)
-    for qid, items in sorted(orphans.items()):
-        _write(dest / f"{qid}.json", items.values())
-    _fsync_dir(dest)
-
-
-def _rewrite(root: Path, before: dict[str, dict[str, Judgment]],
-             after: dict[str, dict[str, Judgment]], orphans: dict[str, dict[str, Judgment]],
-             then: Callable[[], None] | None, also: Sequence[Path]) -> None:
-    """Make the shards read `after` and archive `orphans` as one transaction.
-
-    No order of per-file writes is safe on its own: when two claims swap ids, each shard gains
-    what the other loses. So the transaction is recorded by backup_dir(), which is complete or
-    absent. It is built beside its final name, made durable, and only then renamed into place.
-    A process that dies while building it has touched no shard, and the next run discards the
-    leftover. Once the backup exists:
-    - every write and the archive happen, then `then`, then the commit: _retire() renames the
-      backup out of the name readers and rollback trust, in one step. Deleting it in place was
-      not atomic — killed partway, it left a backup missing shards that a rollback then trusted,
-      unlinking every shard it lacked;
-    - if any of it raises, _restore() puts the shards (and everything in `also`) back from the
-      backup, and removes the archive it names;
-    - if the process dies, the backup stays, every reader refuses, and `vg judgments --rollback`
-      runs the same _restore().
-    """
-    backup, building = backup_dir(root), _building_dir(root)
-    shutil.rmtree(building, ignore_errors=True)     # a build that died: no shard was touched
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
-    building.mkdir()
-    try:
-        for qid in before:
-            _copy(_on_disk(root, qid), building / f"{qid}.json")
-        if orphans:
-            # Named up front, so a rollback can remove an archive this run began: its verdicts
-            # go back into their shards, and a copy left behind would be archived again.
-            _durable_text(building / _ARCHIVE_NAME, stamp)
-        if also:
-            _snapshot(root, also, building)
-        _fsync_dir(building)
-        os.replace(building, backup)
-        _fsync_dir(root)
-    except BaseException:
-        shutil.rmtree(building, ignore_errors=True)
-        raise
-    try:
-        # Shards leaving go first. A new shard's name can be the same file as a leaving one:
-        # q1.json IS Q1.json on a case-insensitive disk. Written first, it replaced Q1.json
-        # under the old name, and the unlink then deleted the verdicts just written.
-        # Unlinked first, the name is free and the write creates the claim's exact id. The
-        # backup holds every shard either way, so the order costs nothing if a step fails.
-        for qid in sorted(before.keys() - after.keys()):
-            _on_disk(root, qid).unlink()
-        for qid, items in sorted(after.items()):
-            if items != before.get(qid):
-                # A shard already on disk is rewritten where it is; a new one is named by an id
-                # from outside (a claim, the mapping), which path_for() checks.
-                _write(_on_disk(root, qid) if qid in before else path_for(root, qid),
-                       items.values())
-        if orphans:
-            _archive(archive_dir(root) / stamp, orphans)
-        if (root / "judgments").is_dir():
-            _fsync_dir(root / "judgments")
-        if then is not None:
-            then()
-            for path in also:
-                _fsync_dir(path if path.is_dir() else root)
-    except BaseException:
-        _restore(root)
-        raise
-    _retire(root)
-
-
-def _retire(root: Path) -> None:
-    """Remove the backup as one atomic step: rename it to a name nothing reads, make the rename
-    durable, and only then delete it. A kill during the delete leaves a leftover that readers and
-    rollback ignore and the next run clears."""
-    discard = _discard_dir(root)
-    shutil.rmtree(discard, ignore_errors=True)
-    os.replace(backup_dir(root), discard)
-    _fsync_dir(root)
-    shutil.rmtree(discard, ignore_errors=True)
-
-
-def rollback(root: Path) -> tuple[int, list[str]]:
-    """Undo a re-home that was interrupted, from the backup it left. Returns the number of shards
-    put back (0 if there was nothing to undo) and the names of the other paths it put back —
-    remap's claims/ and its marker.
-
-    The backup is complete by construction (see _rewrite()), so this needs no judgment: it makes
-    the shards, and whatever else the re-home was changing, exactly what the backup holds, and
-    removes the archive the re-home began.
-    """
-    with _lock(root):
-        try:
-            backup_dir(root).stat()
-        except FileNotFoundError:
-            return 0, []
-        also = [name for _kind, name in _read_also(backup_dir(root))]
-        return _restore(root), also
-
-
-def _restore(root: Path) -> int:
-    """Make the shards, and each path the backup's ALSO list names, exactly what backup_dir()
-    holds; remove the archive it names; then retire it. Copies rather than moves, so a failure
-    partway leaves the backup whole for a retry."""
-    backup = backup_dir(root)
-    shards = _mirror(backup, root / "judgments")
-    for kind, name in _read_also(backup):
-        target, saved = root / name, backup / _ALSO_DIR / name
-        if kind == "dir":
-            _mirror(saved, target)
-        elif kind == "file":
-            _copy(saved, target)
-        else:
-            target.unlink(missing_ok=True)      # it did not exist before the re-home
-    _fsync_dir(root)
-    if stamp := _read_name(backup / _ARCHIVE_NAME):
-        shutil.rmtree(archive_dir(root) / stamp, ignore_errors=True)
-    _retire(root)
-    return shards
-
-
-def _mirror(src: Path, dst: Path) -> int:
-    """Make dst's *.json files exactly src's. Every file dst has that src lacks was created by
-    the interrupted re-home, from contents src already holds.
-
-    Removed before anything is copied, as _rewrite() does: after a re-home renamed Q1.json to
-    q1.json, copying Q1.json back on a case-insensitive disk lands in q1.json under that name,
-    and unlinking q1.json afterwards deleted what the rollback had just restored."""
-    kept = sorted(p.name for p in src.iterdir() if p.suffix == ".json")
-    dst.mkdir(exist_ok=True)
-    for p in dst.iterdir():
-        if p.suffix == ".json" and p.name not in kept:
-            p.unlink()
-    for name in kept:
-        _copy(src / name, dst / name)
-    _fsync_dir(dst)
-    return len(kept)
-
-
-def _snapshot(root: Path, also: Sequence[Path], building: Path) -> None:
-    """Save each path in `also` into the backup being built, and list them in its ALSO marker as
-    `dir NAME`, `file NAME`, or `absent NAME` (restoring that one means removing it)."""
-    saved = building / _ALSO_DIR
-    saved.mkdir()
-    lines = []
-    for path in also:
-        if path.parent != root:
-            raise ValueError(f"{path} must be directly inside {root}")
-        if path.is_dir():
-            (saved / path.name).mkdir()
-            for f in sorted(path.glob("*.json")):
-                _copy(f, saved / path.name / f.name)
-            _fsync_dir(saved / path.name)
-            lines.append(f"dir {path.name}")
-        elif path.exists():
-            _copy(path, saved / path.name)
-            lines.append(f"file {path.name}")
-        else:
-            lines.append(f"absent {path.name}")
-    _fsync_dir(saved)
-    _durable_text(building / _ALSO_NAME, "\n".join(lines))
-
-
-def _read_also(backup: Path) -> list[tuple[str, str]]:
-    """The (kind, name) pairs a backup's ALSO marker lists; malformed lines are ignored rather
-    than trusted, since each name is joined to the run directory."""
-    try:
-        text = (backup / _ALSO_NAME).read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return []
-    out = []
-    for line in text.splitlines():
-        kind, _, name = line.partition(" ")
-        if kind in ("dir", "file", "absent") and name and "/" not in name \
-                and name not in (".", ".."):
-            out.append((kind, name))
-    return out
-
-
-def _read_name(marker: Path) -> str | None:
-    """A marker's single path component, or None. Refuses anything that could reach outside the
-    directory it is joined to."""
-    try:
-        name = marker.read_text(encoding="utf-8").strip()
-    except FileNotFoundError:
-        return None
-    return name if name and "/" not in name and name not in (".", "..") else None
-
-
 def _on_disk(root: Path, stem: str) -> Path:
     """A shard found by listing judgments/, addressed by the name it has. It is inside the
     directory by construction, and path_for() would refuse a name from before ids were checked,
-    stopping a re-home over a file that escapes nothing."""
+    stopping a command over a file that escapes nothing."""
     return root / "judgments" / f"{stem}.json"
 
 
@@ -855,79 +396,11 @@ def _same_file(root: Path, stem: str, question_id: str) -> bool:
 def opened_as(root: Path, stem: str, question_ids) -> str | None:
     """The one id among `question_ids`, other than its own name, that this disk opens shard
     `stem` as: q1 for Q1.json where the disk folds case. None if there is none, or more than one.
-    The one test for it, so `vg judgments` and a re-home never disagree about whose shard it is.
+    `vg judgments` asks it, so it counts a shard for the claim `vg build` opens it as.
     """
     same = [q for q in question_ids
             if q != stem and q.casefold() == stem.casefold() and _same_file(root, stem, q)]
     return same[0] if len(same) == 1 else None
-
-
-def _disk_folds_case(root: Path) -> bool:
-    """Whether this disk opens a name in judgments/ under another case, asked of the directory
-    itself — for ids with no shard yet to ask about."""
-    d = root / "judgments"
-    try:
-        return os.path.samefile(d, d.with_name(d.name.upper()))
-    except OSError:
-        return False
-
-
-def _one_file(root: Path, a: str, b: str) -> bool:
-    """Whether the shards for question ids `a` and `b` are one file on this disk. Ids are ASCII
-    (QID_PATTERN), so only case can make two of them one name; whether it does is the disk's."""
-    if a.casefold() != b.casefold():
-        return False
-    if _on_disk(root, a).exists() or _on_disk(root, b).exists():
-        return _same_file(root, a, b)
-    return _disk_folds_case(root)
-
-
-def _building_dir(root: Path) -> Path:
-    """Where the backup is assembled. Readers ignore it: until it is renamed to backup_dir()
-    no shard has been touched."""
-    return root / "judgments-backup.partial"
-
-
-def _discard_dir(root: Path) -> Path:
-    """Where a committed backup goes to be deleted. Nothing reads it."""
-    return root / "judgments-backup.discard"
-
-
-# Inside the backup: the archive run directory this re-home writes, and the other directory it
-# changes (remap's claims/) with its snapshot.
-_ARCHIVE_NAME, _ALSO_NAME, _ALSO_DIR = "ARCHIVE", "ALSO", "also-files"
-
-
-def _copy(src: Path, dst: Path) -> None:
-    """Copy a shard's exact bytes the way _write() writes one: fsynced, then renamed into place.
-    A backup that a power loss left empty would be the only copy of every shard already
-    rewritten."""
-    tmp = dst.with_name(f".{dst.name}.{os.getpid()}.tmp")
-    try:
-        with open(tmp, "wb") as f:
-            f.write(src.read_bytes())
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, dst)
-    finally:
-        tmp.unlink(missing_ok=True)
-
-
-def _durable_text(p: Path, text: str) -> None:
-    with open(p, "w", encoding="utf-8") as f:
-        f.write(text)
-        f.flush()
-        os.fsync(f.fileno())
-
-
-def _fsync_dir(d: Path) -> None:
-    """Make a directory's entries durable: a rename or unlink is only on disk once its directory
-    is, and the transaction's order (backup before rewrite, rewrite before commit) depends on it."""
-    fd = os.open(d, os.O_RDONLY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
 
 
 def _judged_page(cache_root: Path, url: str):
