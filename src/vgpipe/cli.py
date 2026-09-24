@@ -1026,29 +1026,49 @@ def run_query(name: str = typer.Argument(""), param: list[str] = None, data: Pat
               soft_wrap=True)
 
 
+def _refuse(msg: str) -> NoReturn:
+    """Print `msg` in red and exit 1. As one Text, never markup: a refusal quotes ids, paths
+    and agent-written values, and escape() only neutralises a tag complete inside the one value
+    it is given, so `[/` escaped in one piece and `]` in the next still made a closing tag, and
+    the refusal raised MarkupError instead."""
+    con.print(Text(msg, style="red"))
+    raise typer.Exit(1)
+
+
+def _qid_or_exit(data: Path, question_id: str) -> None:
+    """Stop unless `question_id` has the shape every claim's has — before anything prints it.
+
+    `judgments.path_for()` is the check, since the id names a verdict file. A command given a
+    malformed id has nothing to find, and each message quoting it is one more place it can
+    combine with the text around it."""
+    from . import judgments
+
+    try:
+        judgments.path_for(data, question_id)
+    except ValueError as e:
+        _refuse(str(e))
+
+
 def _claim_or_exit(data: Path, question_id: str, needed: str) -> tuple[Claim, list[Claim]]:
     """The claim with exactly this question id, loaded as `vg judge` reads it (trusted), and
     every readable claim; or stop, naming why. `needed` finishes the sentence for a claim that
-    could not be read: what that leaves unknown."""
+    could not be read: what that leaves unknown. Plain text, not markup."""
     skipped: list[str] = []
     claims = _load_or_exit(data / "claims", trust_machine_fields=True, skipped=skipped)
     claim = next((c for c in claims if c.question_id == question_id), None)
     if claim is not None:
         return claim, claims
-    qid = escape(question_id)
     if question_id in skipped:
-        con.print(f"[red]claim {qid} could not be read, {needed} — fix it first[/]")
-        raise typer.Exit(1)
+        _refuse(f"claim {question_id} could not be read, {needed} — fix it first")
     # q07 for q7, Q7 for q7: the same question to a reader, a different shard to the code.
     # On a case-insensitive disk Q7.json even IS q7.json, which `vg judgments` then misses.
     near = [c.question_id for c in claims
             if qid_sort_key(c.question_id.lower()) == qid_sort_key(question_id.lower())]
-    con.print(f"[red]no {'readable ' if skipped else ''}claim has question id {qid} in "
-              f"{escape(str(data / 'claims'))}"
-              + (f" — did you mean {escape(', '.join(near))}?" if near else "")
-              + (f" {len(skipped)} could not be read ({escape(', '.join(skipped))}), and it may "
-                 f"be one of those: fix them first." if skipped else "") + "[/]")
-    raise typer.Exit(1)
+    _refuse(f"no {'readable ' if skipped else ''}claim has question id {question_id} in "
+            f"{data / 'claims'}"
+            + (f" — did you mean {', '.join(near)}?" if near else "")
+            + (f" {len(skipped)} could not be read ({', '.join(skipped)}), and it may be one of "
+               f"those: fix them first." if skipped else ""))
 
 
 def _run_args(data: Path, cache: Path | None) -> str:
@@ -1134,6 +1154,7 @@ def handoff(question_id: str, data: Path = DATA, cache: Path = None):
     """
     from . import judgments
 
+    _qid_or_exit(data, question_id)
     cache_root = _verdict_cache_root(data, cache)
     claim, _ = _claim_or_exit(data, question_id, "so what it cites cannot be shown")
     _apply_archive_rows(data, claim.sources, cache_root)
@@ -1207,33 +1228,23 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
     """
     from . import judgments
 
-    try:
-        # Before reading anything, so an unrelated claims error can't stop the command first
-        # and hide the refusal. Escaped: the message quotes the id, and `[/x]` in it is markup.
-        judgments.path_for(data, question_id)
-    except ValueError as e:
-        con.print(f"[red]{escape(str(e))}[/]")
-        raise typer.Exit(1) from None
-
-    def refuse(msg: str) -> NoReturn:
-        con.print(f"[red]{msg}[/]")
-        raise typer.Exit(1)
-
+    # Before reading anything, so an unrelated claims error can't stop the command first and
+    # hide the refusal.
+    _qid_or_exit(data, question_id)
     if verdict not in judgments.VERDICTS:
         # First, with the id: a mistake in the command itself is named before any check of what
         # it refers to, so one call with two mistakes does not take two refusals to fix.
-        refuse(f"{escape(verdict)} is not a verdict: use one of {', '.join(judgments.VERDICTS)}")
+        _refuse(f"{verdict} is not a verdict: use one of {', '.join(judgments.VERDICTS)}")
     cache_root = _verdict_cache_root(data, cache)
     claim, claims = _claim_or_exit(data, question_id,
-                                   f"so whether it cites {escape(sid)} cannot be checked")
-    qid = escape(question_id)
+                                   f"so whether it cites {sid} cannot be checked")
     source = next((s for s in claim.sources if s.sid == sid), None)
     if source is None:
         citing = [c.question_id for c in claims if any(s.sid == sid for s in c.sources)]
-        refuse(f"claim {qid} does not cite source {escape(sid)}"
-               + (f"; {escape(', '.join(citing))} does" if citing else
-                  "; no current claim cites it — its citation may have changed since you were "
-                  "given it"))
+        _refuse(f"claim {question_id} does not cite source {sid}"
+                + (f"; {', '.join(citing)} does" if citing else
+                   "; no current claim cites it — its citation may have changed since you were "
+                   "given it"))
     with _judgments_or_exit():
         # Before the page check: an unreadable shard is what to fix first, since nothing can be
         # recorded into it whatever else is right.
@@ -1250,7 +1261,7 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
         try:
             page_url, page_at, ver = judgments.judged_copy(source, cache_root)
         except judgments.Unjudgeable as e:
-            refuse(escape(str(e)))
+            _refuse(str(e))
     else:
         # A query citation has no page: its evidence is the query, so stamp its definition and
         # export instead — and only if that is what produced the context the verifier read.
@@ -1258,18 +1269,18 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
         # share its sid while each carries its own last run.
         if why := judgments.unjudgeable_query(source.query, source.verification.query_run,
                                               cache_root):
-            refuse(f"not recorded: {escape(why)}")
+            _refuse(f"not recorded: {why}")
         query_ver, export = judgments.query_stamp(cache_root, source.query)
     # A context build would not keep, the claim file's own copy notwithstanding: a verdict on it
     # would outlive the next `vg verify` and apply to the context that one gives.
     if why := _rebuild_problem(source, cache_root):
-        refuse(f"not recorded: {escape(why)}")
+        _refuse(f"not recorded: {why}")
     # Last, so a wrong id, sid or copy is still what a refusal names first. The copy check above
     # passes a re-verify that rebuilt the context from a newer cached copy; this is what doesn't.
     if why := judgments.wrong_context(
             claim, source, context, required=source.query is None,
             handoff=f"vg handoff {shlex.quote(question_id)}{_run_args(data, cache)}"):
-        refuse(f"not recorded: {escape(why)}")
+        _refuse(f"not recorded: {why}")
     try:
         # And stamp the claim it judged, so a retry that rewrites the claim later can be seen to
         # have left the verdict about words it no longer says.
@@ -1278,13 +1289,11 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
                              query_version=query_ver, export_date=export, page_url=page_url,
                              claim_fingerprint=claim.fingerprint)
     except ValueError as e:
-        con.print(f"[red]{escape(str(e))}[/]")   # it may quote the verdict file's own text
-        raise typer.Exit(1) from None
-    color = "green" if j.verdict == "supports" else "red"
-    # Escaped: the note is agent-written, and a `[/]` in it raised after the verdict was on
+        _refuse(str(e))   # it may quote the verdict file's own text
+    # As Text: the note is agent-written, and a `[/]` in it raised after the verdict was on
     # disk — a non-zero exit that verifiers are told means nothing was recorded.
-    con.print(f"[{color}]{j.verdict}[/] recorded for {escape(question_id)}/{escape(sid)}"
-              + (f": {escape(note)}" if note else ""))
+    con.print(Text.assemble((j.verdict, "green" if j.verdict == "supports" else "red"),
+                            f" recorded for {question_id}/{sid}" + (f": {note}" if note else "")))
 
 
 # A retired flag: still parsed, so an old invocation reaches _retired(), but not in --help. Given

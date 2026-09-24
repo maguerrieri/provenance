@@ -49,6 +49,8 @@ def _vg(*args) -> tuple[int, str]:
         res = CliRunner().invoke(cli.app, [str(a) for a in args])
     finally:
         cli.con.width = width
+    if res.exception is not None and not isinstance(res.exception, SystemExit):
+        raise res.exception   # a crash also exits 1, so it must not pass for a refusal
     return res.exit_code, re.sub(r"\x1b\[[0-9;]*m", "", res.output)   # when FORCE_COLOR is set
 
 
@@ -257,6 +259,32 @@ def test_handoff_names_a_claim_it_cannot_find(tmp_path):
     run = _run(tmp_path)
     code, out = _vg("handoff", "Q1", "--data", run)
     assert code == 1 and "no claim has question id Q1" in out and "did you mean q1?" in out, out
+
+
+@pytest.mark.parametrize("args", [("handoff", "[/"), ("judge", "[/", "0123456789ab", "supports")],
+                         ids=["handoff", "judge"])
+def test_a_malformed_question_id_is_refused_before_anything_prints_it(tmp_path, args):
+    """`vg handoff '[/' --data '<dir>]'` raised rich's MarkupError instead of refusing. The id
+    and the path were escaped one at a time, and escape() only neutralises a tag complete
+    inside one value, so `[/` from one and `]` from the other made a closing tag. Both commands
+    now refuse an id outside the question-id pattern before anything prints it."""
+    code, out = _vg(*args, "--data", tmp_path / "x]")
+    assert code == 1 and "refusing question id '[/'" in out, out
+
+
+@pytest.mark.parametrize("command", ["handoff", "judge"])
+def test_a_refusal_quotes_the_run_and_the_unreadable_ids_as_written(tmp_path, command):
+    """With a well-formed id the refusal still quotes data: the run's path and the ids of claims
+    that could not be read. `[/` in the one and `]` in the other made a tag the same way, so the
+    whole message is printed as one Text."""
+    run = tmp_path / "[/run"
+    (run / "claims").mkdir(parents=True)
+    (run / "cache").mkdir()
+    (run / "claims" / "bad.json").write_text(json.dumps({"question_id": "x]"}))
+    args = [command, "q9"] + (["0123456789ab", "supports"] if command == "judge" else [])
+    code, out = _vg(*args, "--data", run)
+    assert code == 1 and f"no readable claim has question id q9 in {run / 'claims'}" in out, out
+    assert "1 could not be read (x]), and it may be one of those" in out, out
 
 
 def test_a_lone_surrogate_does_not_stop_the_token():
