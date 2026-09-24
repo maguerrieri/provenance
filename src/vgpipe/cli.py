@@ -1264,7 +1264,9 @@ def show_judgments(data: Path = DATA, question_id: str = "",
                 waiting += 1
                 stale_waiting += bool(why)
                 v = f"[yellow]stale (was {j.verdict})[/]" if why else "[dim]unreviewed[/]"
-                note = j.note if j else ""
+                # Why it is stale, not its old note: a verifier reads this table, and a stale
+                # note can be about another answer, or another claim's.
+                note = why or (j.note if j else "")
             t.add_row(c.question_id, escape(f"{s.publisher} {s.sid}"), v,
                       escape((note or "")[:60]))
     con.print(t)

@@ -284,3 +284,18 @@ def test_an_unjudged_source_on_a_redrawn_context_waits_on_verify_not_a_verifier(
     _verify(run)                                            # redraws the claim file's excerpt
     code, need, stale, out = _gate(run)
     assert (code, need) == (1, 1), out                      # now a verifier's to close
+
+
+def test_a_stale_row_shows_why_not_the_note_about_the_old_answer(tmp_path):
+    """A verifier re-judging a stale row reads this table. The old note was about words the
+    claim no longer says, so the row shows why the verdict is stale instead."""
+    s = src()
+    run = _verified_run(tmp_path / "run", claim("q1", s))
+    _judge(run, "q1", s, "supports", "the minutes record a yes vote")
+    _write(run, claim("q1", src(), answer=AGAINST))
+    _verify(run)
+
+    code, need, stale, out = _gate(run)
+    assert (code, need, stale) == (1, 1, 1), out
+    assert "stale (was supports) judged another question or answer" in out, out
+    assert "the minutes record a yes vote" not in out, out
