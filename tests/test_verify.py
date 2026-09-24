@@ -5215,7 +5215,8 @@ def test_vg_judge_refuses_an_escaping_question_id_without_a_traceback(tmp_path, 
     assert CliRunner().invoke(cli.app, ["verify", "--data", str(run)]).exit_code == 0
 
     def judge(qid):
-        return CliRunner().invoke(cli.app, ["judge", qid, s.sid, "supports", "--data", str(run)])
+        return CliRunner().invoke(cli.app, ["judge", qid, s.sid, "supports", "--data", str(run),
+                                            *_ctx(run, s.sid)])
 
     assert judge("q1").exit_code == 0, "a valid id still records"
     before = _tree(tmp_path)
@@ -6726,6 +6727,18 @@ def _candidate_run(tmp_path):
     return data, cand, s
 
 
+def _ctx(run, sid, qid="q1"):
+    """`--context <token>` for the context the claim file gives `sid` now: what `vg handoff`
+    prints beside it, and what `vg judge` checks a page verdict against."""
+    from vgpipe import judgments
+    from vgpipe.cli import load_claims
+
+    claim = next(c for c in load_claims(Path(run) / "claims", trust_machine_fields=True)
+                 if c.question_id == qid)
+    s = next(s for s in claim.sources if s.sid == sid)
+    return ["--context", judgments.context_token(s.verification.context)]
+
+
 def _refetch_shared(data, s):
     from vgpipe.fetch import cache_path
     from vgpipe.models import EXTRACTOR_VERSION
@@ -6747,7 +6760,8 @@ def test_a_candidate_run_checks_staleness_in_the_shared_cache(tmp_path):
     from vgpipe import cli, judgments
 
     data, cand, s = _candidate_run(tmp_path)
-    res = CliRunner().invoke(cli.app, ["judge", "q1", s.sid, "supports", "--data", str(cand)])
+    res = CliRunner().invoke(cli.app, ["judge", "q1", s.sid, "supports", "--data", str(cand),
+                                       *_ctx(cand, s.sid)])
     assert res.exit_code == 0, res.output
     assert judgments.load(cand, "q1")[s.sid].page_fetched_at, "stamped from the shared cache"
     root = cli._cache_root(cand, None)
@@ -6791,8 +6805,8 @@ def test_every_command_reads_verdict_pages_from_the_shared_cache_and_creates_non
     real = judgments._judged_page
     monkeypatch.setattr(judgments, "_judged_page",
                         lambda root, url: looked_in.append(root) or real(root, url))
-    for args in (["judge", "q1", s.sid, "supports"], ["judgments"], ["status"], ["verify"],
-                 ["build"]):
+    for args in (["judge", "q1", s.sid, "supports", *_ctx(cand, s.sid)], ["judgments"],
+                 ["status"], ["verify"], ["build"]):
         looked_in.clear()
         res = CliRunner().invoke(cli.app, [*args, "--data", str(cand)])
         assert res.exit_code == 0, (args, res.output)
@@ -6820,7 +6834,7 @@ def test_an_explicit_cache_is_the_one_both_sides_use(tmp_path):
     (moved / "cache").mkdir(parents=True)
     (data / "cache").rename(moved / "cache")
 
-    res = CliRunner().invoke(cli.app, ["judge", "q1", s.sid, "supports",
+    res = CliRunner().invoke(cli.app, ["judge", "q1", s.sid, "supports", *_ctx(cand, s.sid),
                                        "--data", str(cand), "--cache", str(moved)])
     assert res.exit_code == 0, res.output
     assert _unjudged(cand, cache=moved) == (0, 1, 0, 0)
@@ -8430,7 +8444,7 @@ def test_judge_refuses_a_question_id_no_claim_has(tmp_path):
         assert "did you mean q1?" in out, out
         assert _shard_files(cand) == {}, f"`vg judge {typo}` wrote a verdict"
 
-    code, out = _vg("judge", "q1", s.sid, "supports", "--data", cand)
+    code, out = _vg("judge", "q1", s.sid, "supports", "--data", cand, *_ctx(cand, s.sid))
     assert code == 0 and "supports recorded for q1" in out, out
     assert list(_shard_files(cand)) == ["q1.json"]
 
@@ -8467,7 +8481,7 @@ def test_judge_refuses_when_the_claim_it_names_cannot_be_read(tmp_path):
     assert code == 1 and "did you mean q1?" in out and "could not be read" in out, out
     assert _shard_files(cand) == {}
 
-    code, _ = _vg("judge", "q1", s.sid, "supports", "--data", cand)
+    code, _ = _vg("judge", "q1", s.sid, "supports", "--data", cand, *_ctx(cand, s.sid))
     assert code == 0, "an unreadable claim elsewhere does not block a checkable verdict"
 
 
@@ -8492,7 +8506,7 @@ def test_judge_success_line_prints_a_note_as_written(tmp_path):
 
     _, cand, s = _candidate_run(tmp_path)
     code, out = _vg("judge", "q1", s.sid, "topic_only", "--note", "roster only [/] no [sic]",
-                    "--data", cand)
+                    "--data", cand, *_ctx(cand, s.sid))
     assert code == 0 and "roster only [/] no [sic]" in out, out
     assert judgments.load(cand, "q1")[s.sid].note == "roster only [/] no [sic]"
 
@@ -8578,7 +8592,7 @@ def test_a_missing_default_cache_is_named_not_silent(tmp_path):
     so these warn rather than refuse. Every page verdict then reads stale, and the warning is
     what says why."""
     data, cand, s = _candidate_run(tmp_path)
-    code, _ = _vg("judge", "q1", s.sid, "supports", "--data", cand)
+    code, _ = _vg("judge", "q1", s.sid, "supports", "--data", cand, *_ctx(cand, s.sid))
     assert code == 0
     (data / "cache").rename(tmp_path / "gone")
     for cmd in ("judgments", "build", "status"):
@@ -9142,7 +9156,8 @@ def test_verify_lists_the_verdicts_its_own_re_fetch_made_stale(tmp_path, monkeyp
     from vgpipe import cli, fetch as fetch_module
 
     data, cand, s = _candidate_run(tmp_path)
-    res = CliRunner().invoke(cli.app, ["judge", "q1", s.sid, "supports", "--data", str(cand)])
+    res = CliRunner().invoke(cli.app, ["judge", "q1", s.sid, "supports", "--data", str(cand),
+                                       *_ctx(cand, s.sid)])
     assert res.exit_code == 0, res.output
 
     def refetch(url, root, *, refresh=False, timeout=30.0):
@@ -9454,7 +9469,7 @@ def test_judge_stamps_an_archive_verified_source_from_its_snapshot(tmp_path):
     assert v.status == "verified_via_archive"
     assert v.context_page.url == SNAP_A, "verify names the copy the context came from"
 
-    code, out = _vg("judge", "q1", s.sid, "supports", "--data", data)
+    code, out = _vg("judge", "q1", s.sid, "supports", "--data", data, *_ctx(data, s.sid))
     assert code == 0, out
     j = judgments.load(data, "q1")[s.sid]
     snap, stub_page = load_cached(data, SNAP_A), load_cached(data, PAYWALLED)
@@ -9475,7 +9490,7 @@ def test_a_re_archive_makes_an_archive_verified_verdict_stale(tmp_path, monkeypa
     from vgpipe import cli, judgments
 
     data, s = _archive_verified_run(tmp_path)
-    assert _vg("judge", "q1", s.sid, "supports", "--data", data)[0] == 0
+    assert _vg("judge", "q1", s.sid, "supports", "--data", data, *_ctx(data, s.sid))[0] == 0
 
     _cache(data, SNAP_B, datetime.now(UTC))           # the same article, captured again
 
@@ -9503,7 +9518,7 @@ def test_a_re_archive_makes_an_archive_verified_verdict_stale(tmp_path, monkeypa
     assert _built_unreviewed(data) == {PAYWALLED: "verified_via_archive"}, "not applied by build"
 
     # judging the context the new snapshot gave is what closes it
-    assert _vg("judge", "q1", s.sid, "supports", "--data", data)[0] == 0
+    assert _vg("judge", "q1", s.sid, "supports", "--data", data, *_ctx(data, s.sid))[0] == 0
     assert _unjudged(data) == (0, 1, 0, 0)
 
 
@@ -9527,7 +9542,7 @@ def test_judge_refuses_when_the_page_was_re_fetched_after_verify(tmp_path):
     assert _built_unreviewed(cand) == {s.url: "verified"}
 
     # the context verify gives now is what can be judged
-    code, out = _vg("judge", "q1", s.sid, "supports", "--data", cand)
+    code, out = _vg("judge", "q1", s.sid, "supports", "--data", cand, *_ctx(cand, s.sid))
     assert code == 0, out
     assert _built_unreviewed(cand) == {}
     # The cited page goes unnamed on disk, as on every verdict from before `page_url`, so an
@@ -9644,7 +9659,7 @@ def test_judge_on_a_live_row_does_not_need_the_archive_records(tmp_path):
     must not stop verdicts on every other row of the run."""
     _, cand, s = _candidate_run(tmp_path)
     (cand / "archives.json").write_text("{not json")
-    code, out = _vg("judge", "q1", s.sid, "supports", "--data", cand)
+    code, out = _vg("judge", "q1", s.sid, "supports", "--data", cand, *_ctx(cand, s.sid))
     assert code == 0, out
     assert _unjudged(cand) == (0, 1, 0, 0), "nor the gate, on a run with no archive row"
 
