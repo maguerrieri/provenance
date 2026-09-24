@@ -40,17 +40,29 @@ def year_values(text: str) -> set[str]:
 
 
 def detect(claims: list[Claim]) -> list[Claim]:
-    """Flag three kinds of conflict:
+    """Flag four kinds of conflict:
     1. sources within one claim disagreeing with each other;
     2. the answer's figures/dates vs. those in its own snippets;
-    3. two claims asserting near-miss amounts.
+    3. two claims asserting near-miss amounts;
+    4. a source a verifier judged to contradict its claim.
 
     (1) is the case a voter guide most needs surfaced — two outlets reporting different
     numbers for the same settlement is a finding, not noise to average away — and it is
-    invisible to (2), which passes as long as the answer matches *one* of them.
+    invisible to (2), which passes as long as the answer matches *one* of them. (4) is the
+    same finding made by the judgment pass rather than by comparing figures.
+
+    (4) reads the support verdicts, so run this after they are settled (`cli._settle()` does):
+    on a claim file as loaded, `support` is whatever the file says, recorded or not.
     """
     for c in claims:
         c.conflicts = []
+        # (4) Before the snippet test: a query citation's verdict counts, snippet or none.
+        for s in c.sources:
+            if s.contradicts:
+                note = s.verification.support_note
+                c.conflicts.append(
+                    f"a verifier judged {s.publisher} ({s.url}) contradicts the claim"
+                    + (f": {note}" if note else ""))
         snip = " ".join(s.snippet for s in c.sources)
         if not snip:
             continue

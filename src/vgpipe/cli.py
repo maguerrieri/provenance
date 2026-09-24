@@ -611,11 +611,13 @@ def _settle(claims: list[Claim], data: Path, cache_root: Path,
     the recorded verdicts, each checked against the page it judged; revalidation checks every
     row against the cache, a verified_via_archive one against that snapshot; corroboration
     counts the sources revalidation left standing; and check_inputs() reads every input's
-    finished status. Run out of order, a step reads what the claim file said instead — q36
-    once rendered verified on an input build downgraded two steps later. Build and status both
-    call this so the order lives in one place.
+    finished status. Conflicts come last, since a `contradicts` verdict is one. Run out of
+    order, a step reads what the claim file said instead — q36 once rendered verified on an
+    input build downgraded two steps later. Build and status both call this so the order lives
+    in one place.
     """
     from . import judgments
+    from .conflicts import detect
 
     _apply_archives(claims, records, cache_root)
     with _judgments_or_exit():
@@ -631,6 +633,7 @@ def _settle(claims: list[Claim], data: Path, cache_root: Path,
     for cycle in check_inputs(claims):   # a conclusion is not verified while an input isn't
         con.print(f"[yellow]derives_from cycle: {', '.join(sorted(cycle, key=qid_sort_key))} — "
                   f"none of these can be verified until one stops deriving from the others[/]")
+    detect(claims)   # lists `contradicts` verdicts, so only the recorded ones
     return stale, recorded
 
 
@@ -710,7 +713,6 @@ def _left_out(failing: set[str], where: str) -> None:
 def build(data: Path = DATA, cache: Path = None, race: str = "", candidate: str = "",
           title: str = ""):
     """Detect conflicts and render the review app."""
-    from .conflicts import detect
     from .races import candidate as find_candidate
 
     # First, so that every way this build can stop short (a refusal below, a crash, a kill)
@@ -744,7 +746,6 @@ def build(data: Path = DATA, cache: Path = None, race: str = "", candidate: str 
     # render, as load_claims() skips an unreadable claim: one mis-filed claim must not cost the
     # run every other one. A claim deriving from one left out reads its input as missing.
     claims = [c for c in claims if c.question_id not in failing]
-    detect(claims)
     records = _archive_records(data)
     _warn_unrecorded_snapshots(data / "claims", records)
     stale_verdicts, recorded = _settle(claims, data, cache_root, rules, records)
@@ -1585,8 +1586,6 @@ def new_candidate(candidate: str, data: Path = DATA, race: str = "",
 @app.command()
 def status(data: Path = DATA, cache: Path = None, race: str = ""):
     """Summary of where the run stands."""
-    from .conflicts import detect
-
     claims = _load_or_exit(data / "claims", trust_machine_fields=True)
     # Even with no claims: a pending maps_from, or a question set nothing can read, is worth
     # settling before anyone researches on those ids.
@@ -1610,7 +1609,6 @@ def status(data: Path = DATA, cache: Path = None, race: str = ""):
                   f"rows `vg build --race` rejects[/]")
         rules = load_rules(("us",))
     cache_root = _verdict_cache_root(data, cache)
-    detect(claims)
     _settle(claims, data, cache_root, rules, _archive_records(data))
     t = Table("qid", "type", "status", "sources", "corroboration", "conflicts", box=None)
     for c in claims:
