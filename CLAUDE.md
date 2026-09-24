@@ -651,7 +651,8 @@ getting there:
   query's context carries its note (a message), and the excerpt's markup is ours. Hashing any of
   them cleared every check when the build was invoked differently or a message was reworded,
   and that teaches reviewers to re-tick without reading. Pipeline verdicts (status, support)
-  are left out for the same reason: they don't change what the reviewer read.
+  are left out for the same reason: they don't change what the reviewer read. The fields are
+  hashed as JSON, not joined: they are agent-authored, so any separator can occur in one.
 
 A new snapshot does clear a check on a row with no excerpt, by the same rule the verdict layer
 uses: a fresh snapshot is a different copy.

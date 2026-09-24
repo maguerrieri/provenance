@@ -106,7 +106,9 @@ def review_fingerprint(claim: Claim, source: Source) -> str:
     parts = [source.sid, claim.question, claim.answer, source.publisher, source.author,
              source.date or "", str(source.page or ""), source.secondary_host_ack or "",
              *evidence]
-    return hashlib.sha256("\x00".join(parts).encode()).hexdigest()[:16]
+    # JSON, not a join: these fields are agent-authored, and a separator one of them contains
+    # would let two different rows hash alike.
+    return hashlib.sha256(json.dumps(parts).encode()).hexdigest()[:16]
 
 
 def context_html(claim_source) -> Markup | None:

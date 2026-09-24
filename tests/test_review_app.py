@@ -226,6 +226,11 @@ def test_the_fingerprint_covers_what_the_row_attests():
                          ("snippet", "approved the levy by a vote")):
         assert fp(**{field: value}) != base, field
 
+    # The fields are agent-authored, so a separator one of them contains must not move a
+    # boundary: joined with NUL, these two rows hashed alike.
+    assert (fp(claim("q1", "Yes.\x00Example Ledger"), publisher="")
+            != fp(claim("q1", "Yes."), publisher="Example Ledger\x00"))
+
     passed = cited()
     passed.verification.status = "normalized_match"
     passed.verification.support = "topic_only"
