@@ -1,5 +1,23 @@
 # voter-guide-research — conventions
 
+## This repo is public: nothing from a private project lands unreviewed
+
+The tool was built in a private research project, and more will come over from projects like
+it: a sample project file, fixtures, examples, a lesson written up during a real run. A branch
+here is published the moment it is pushed, and history cannot be scrubbed afterwards, so each
+of those goes through the same evaluate-and-clean step the first import did, before it is
+committed:
+- Review everything being copied for private specifics: names of people and organizations,
+  figures and record ids from real research, research findings, copied third-party text,
+  personal notes, and references to a private repo or its issues.
+- For each one, remove it, reword it as a general lesson that keeps the mechanism, or replace
+  it with a synthetic stand-in where the content is load-bearing (a fixture, an example). Use
+  one synthetic value per identifier, so code, docs and tests still agree.
+- Scan the exact tree for secrets before the first push, not only in CI: the `secret-scan`
+  job runs after the push has already published the branch.
+- Keep the specifics out of commit messages, PRs and issues here. Describe what was removed in
+  general terms.
+
 ## The line that must not blur
 
 **Agents own research fields. The pipeline owns verification fields.**
