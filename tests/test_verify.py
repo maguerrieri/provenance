@@ -9046,9 +9046,9 @@ def _definition_fingerprint(name):
 # What cannot change a value a query returns: display, messages, listings (finding aids, not
 # citations), the export metadata, and the comparison and command a result is checked with.
 _NOT_A_DEFINITION = {
-    "vgpipe.queries": {"NOT_COMPLETE", "Query", "QueryResult", "REGISTRY", "_late_note",
-                       "_other_schedules", "dataset", "describe_export", "export_date",
-                       "human_command", "matches"},
+    "vgpipe.queries": {"AS_FILED", "NOT_COMPLETE", "Query", "QueryResult", "REGISTRY", "SPLIT",
+                       "_late_note", "_names_note", "_other_schedules", "dataset",
+                       "describe_export", "export_date", "human_command", "matches"},
     "vgpipe.calaccess": {"COVER_FALLBACK", "Contribution", "DegradedDatabaseWarning",
                          "EXPORT_META", "EXPORT_URL", "LATE_FALLBACK", "_UNUSABLE", "_export_date",
                          "_read_export_info", "citable_snapshot", "committee_url",
@@ -9060,10 +9060,10 @@ _NOT_A_DEFINITION = {
 
 # name -> (version, fingerprint). See test_a_query_definition_cannot_change_unnoticed.
 QUERY_DEFINITIONS = {
-    "calaccess.contributor_total": (3, "451b19e17b6b"),
-    "calaccess.filer_total": (2, "e2514a0ccd26"),
-    "calaccess.top_contributor": (4, "2ecdf68e0d85"),
-    "calaccess.ie_total": (2, "99fe0a47ee31"),
+    "calaccess.contributor_total": (4, "eb142f9c544e"),
+    "calaccess.filer_total": (2, "1c8a211aa6a1"),
+    "calaccess.top_contributor": (5, "46889e3989d2"),
+    "calaccess.ie_total": (2, "6a61c501107b"),
 }
 
 
