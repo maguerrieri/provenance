@@ -228,7 +228,8 @@ def test_vg_judgments_counts_a_shard_a_case_folding_disk_opens_as_the_claims(tmp
     (claim,) = cli.load_claims(run / "claims", trust_machine_fields=True)
     page_url, page_at, ver = judgments.judged_copy(claim.sources[0], data)
     judgments.record(run, "Q1", claim.sources[0].sid, "supports", "judged as Q1",
-                     page_fetched_at=page_at, extractor_version=ver, page_url=page_url)
+                     page_fetched_at=page_at, extractor_version=ver, page_url=page_url,
+                     claim_fingerprint=claim.fingerprint)
     code, out = _vg("judgments", "--data", run)
     if not (run / "judgments" / "q1.json").exists():   # this disk keeps Q1 and q1 apart
         assert code == 1 and "under an id no claim has (Q1.json)" in out, out

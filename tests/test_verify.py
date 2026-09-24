@@ -1150,6 +1150,11 @@ def _cache_judged_page(root, url):
               fetched_at=datetime.now(UTC) - timedelta(hours=1)).model_dump_json())
 
 
+# What `vg judge` stamps on a verdict about the `question="?", answer="a"` claim most tests
+# build. A verdict without it judged no answer anyone can name, and is stale (#74).
+FP = Claim(question_id="q1", question="?", answer="a").fingerprint
+
+
 def _stamp(root, url):
     """(page_fetched_at, extractor_version) of the copy cached at `url`: what a verdict stamped
     from it records. Tests only — `vg judge` stamps through `judgments.judged_copy()`, since the
@@ -1171,7 +1176,8 @@ def test_judgments_survive_a_verify_run(tmp_path):
 
     s = src()
     _cache_judged_page(tmp_path, s.url)
-    judgments.record(tmp_path, "q6", s.sid, "superseded", "2025 filing exists")
+    judgments.record(tmp_path, "q6", s.sid, "superseded", "2025 filing exists",
+                     claim_fingerprint=FP)
 
     # the claim file goes through the strip that would have destroyed an inline verdict
     raw = json.loads(Claim(question_id="q6", question="?", answer="a",
@@ -3154,7 +3160,7 @@ def test_a_verdict_does_not_outlive_the_text_it_judged(tmp_path, monkeypatch):
 
     judgments.record(tmp_path, "q1", s.sid, "topic_only", "roster-only, no bill number",
                      page_fetched_at=str(page.fetched_at),
-                     extractor_version=EXTRACTOR_VERSION)
+                     extractor_version=EXTRACTOR_VERSION, claim_fingerprint=FP)
     claim = Claim(question_id="q1", question="?", answer="a", sources=[s])
 
     assert judgments.apply_to(claim, tmp_path, cache_root=tmp_path) == []
@@ -3172,7 +3178,7 @@ def test_a_verdict_does_not_outlive_the_text_it_judged(tmp_path, monkeypatch):
     page.fetched_at = datetime.now(UTC) - timedelta(hours=6)
     judgments.record(tmp_path, "q1", s.sid, "supports", "fine now",
                      page_fetched_at=str(page.fetched_at),
-                     extractor_version=EXTRACTOR_VERSION - 1)
+                     extractor_version=EXTRACTOR_VERSION - 1, claim_fingerprint=FP)
     stale = judgments.apply_to(claim, tmp_path, cache_root=tmp_path)
     assert len(stale) == 1 and "re-extracted" in stale[0]
 
@@ -3205,7 +3211,7 @@ def _judgments_fixture(tmp_path):
         if verdict:
             judgments.record(data, qid, s.sid, verdict, "note",
                              page_fetched_at=str(judged_page_at),
-                             extractor_version=judged_version)
+                             extractor_version=judged_version, claim_fingerprint=FP)
         return s
 
     q1 = [cite("https://calmatters.org/a", "q1", "supports"),
@@ -3487,7 +3493,8 @@ def test_a_verdict_written_into_the_claim_file_does_not_render(tmp_path, monkeyp
     assert out.status == "pending"
 
     # A recorded verdict is still exactly what renders.
-    judgments.record(tmp_path, "q1", s.sid, "supports", "checked by a verifier")
+    judgments.record(tmp_path, "q1", s.sid, "supports", "checked by a verifier",
+                     claim_fingerprint=FP)
     out = _build_one(tmp_path, monkeypatch, s, {s.url: page})
     assert out.sources[0].verification.support == "supports"
     assert out.sources[0].verification.support_note == "checked by a verifier"
@@ -3928,9 +3935,10 @@ def test_a_stale_corroboration_ok_does_not_carry_through_check_inputs(tmp_path, 
     s36, p36 = _genuine("https://calmatters.org/q36")
     q17 = _claim("q17", a, b, claim_type="adversarial", corroboration_ok=True)
     q36 = _claim("q36", s36, derives_from=["q17"])
-    judgments.record(tmp_path, "q17", a.sid, "supports", "fine")
-    judgments.record(tmp_path, "q17", b.sid, "topic_only", "names the measure, not her position")
-    judgments.record(tmp_path, "q36", s36.sid, "supports", "fine")
+    judgments.record(tmp_path, "q17", a.sid, "supports", "fine", claim_fingerprint=FP)
+    judgments.record(tmp_path, "q17", b.sid, "topic_only", "names the measure, not her position",
+                     claim_fingerprint=FP)
+    judgments.record(tmp_path, "q36", s36.sid, "supports", "fine", claim_fingerprint=FP)
 
     out = _build_all(tmp_path, monkeypatch, [q17, q36],
                      {a.url: pa, b.url: pb, s36.url: p36})
@@ -4436,7 +4444,7 @@ def test_a_verdict_on_a_kept_page_still_applies(tmp_path, monkeypatch):
     s = src()
     judgments.record(tmp_path, "q1", s.sid, "supports", "says so",
                      page_fetched_at=str(good.fetched_at),
-                     extractor_version=EXTRACTOR_VERSION - 1)
+                     extractor_version=EXTRACTOR_VERSION - 1, claim_fingerprint=FP)
     claim = Claim(question_id="q1", question="?", answer="a", sources=[s])
     assert judgments.apply_to(claim, tmp_path, cache_root=tmp_path) == []
     assert claim.sources[0].verification.support == "supports"
@@ -5647,7 +5655,8 @@ def _judged(root, s, *, page_at=None, version=None, judged_at=None):
 
     judgments.record(root, "q1", s.sid, "supports", "fine",
                      page_fetched_at="" if page_at is None else page_at,
-                     extractor_version=EXTRACTOR_VERSION if version is None else version)
+                     extractor_version=EXTRACTOR_VERSION if version is None else version,
+                     claim_fingerprint=FP)
     if judged_at is not None:
         p = judgments.path_for(root, "q1")
         raw = json.loads(p.read_text())
@@ -5775,7 +5784,8 @@ def test_a_query_citation_verdict_needs_no_page(tmp_path, monkeypatch):
         lambda root, **kw: queries.QueryResult(value=12345.0), ("filer_id",), "test", 1))
     s = src(query=QueryCitation(name="test.total", params={"filer_id": "1"}, expected="12345"))
     claim = _judged(tmp_path, s, page_at="", version=0)
-    judgments.record(tmp_path, "q1", s.sid, "supports", "fine", query_version=1)
+    judgments.record(tmp_path, "q1", s.sid, "supports", "fine", query_version=1,
+                     claim_fingerprint=FP)
     assert judgments.apply_to(claim, tmp_path, cache_root=tmp_path) == []
     assert claim.sources[0].verification.support == "supports"
 
@@ -6002,9 +6012,11 @@ def test_vg_judgments_reads_a_miscased_shard_as_build_does(tmp_path):
         "judge": "verifier", "page_fetched_at": page_at, "extractor_version": ver}]))
 
     folds_case = (cand / "judgments" / "q1.json").exists()   # asked of this disk, as the code does
-    need = _unjudged(cand)[0]
+    need, _, stale, _ = _unjudged(cand)
     assert need == len(_built_unreviewed(cand)), "vg judgments and vg build disagree"
-    assert need == (0 if folds_case else 1)
+    # Unstamped, so it judged no answer anyone can name and is stale wherever it is read
+    # (#74): read as q1's only where the disk opens Q1.json for it.
+    assert (need, stale) == (1, 1 if folds_case else 0)
 
     _, out = _vg("judgments", "--data", cand)
     if folds_case:
@@ -6022,7 +6034,7 @@ def test_vg_judgments_reads_a_miscased_shard_as_build_does(tmp_path):
         "q1.json": before["Q1.json"]}
     _, out = _vg("judgments", "--data", cand)
     assert "only in case" not in out and "no claim has" not in out, out
-    assert _unjudged(cand)[0] == 0 and not _built_unreviewed(cand)
+    assert _unjudged(cand)[::2] == (1, 1), "q1's now on either disk, and still unstamped"
 
 
 
@@ -6330,7 +6342,8 @@ def test_a_query_verdict_from_before_versioning_is_stale(tmp_path, monkeypatch):
     from vgpipe.fetch import cache_path
 
     data, s = _query_run_with_verdict(tmp_path, monkeypatch)
-    judgments.record(data, "q1", s.sid, "supports", "recorded before versions existed")
+    judgments.record(data, "q1", s.sid, "supports", "recorded before versions existed",
+                     claim_fingerprint=FP)
     claim = Claim(question_id="q1", question="?", answer="a", sources=[s])
     stale = judgments.apply_to(claim, data, cache_root=data)
     assert len(stale) == 1 and "before query definitions were versioned" in stale[0]
@@ -6340,7 +6353,8 @@ def test_a_query_verdict_from_before_versioning_is_stale(tmp_path, monkeypatch):
     page_src = src()
     cache_path(data, page_src.url).write_text(
         _page(fetched_at=datetime.now(UTC) - timedelta(hours=1)).model_dump_json())
-    judgments.record(data, "q2", page_src.sid, "supports", "unstamped page verdict")
+    judgments.record(data, "q2", page_src.sid, "supports", "unstamped page verdict",
+                     claim_fingerprint=FP)
     assert judgments.apply_to(Claim(question_id="q2", question="?", answer="a",
                                     sources=[page_src]), data, cache_root=data) == []
 
@@ -6995,14 +7009,14 @@ def test_a_verdict_is_stale_once_the_context_comes_from_another_page(tmp_path):
 
     stub_at, ver = _stamp(data, PAYWALLED)
     judgments.record(data, "q1", s.sid, "supports", page_fetched_at=stub_at,
-                     extractor_version=ver)                                  # no page_url
+                     extractor_version=ver, claim_fingerprint=FP)            # no page_url
     [why] = judgments.apply_to(claim, data, cache_root=data)
     assert (f"judged against the cited page; its context now comes from the snapshot "
             f"{SNAP_A}") in why, why
 
     snap_at, ver = _stamp(data, SNAP_A)
     judgments.record(data, "q1", s.sid, "supports", page_fetched_at=snap_at,
-                     extractor_version=ver, page_url=SNAP_A)
+                     extractor_version=ver, page_url=SNAP_A, claim_fingerprint=FP)
     assert judgments.apply_to(claim, data, cache_root=data) == []
 
     claim.sources[0].archive_url = None                 # a command that skipped the records
@@ -7019,7 +7033,7 @@ def test_a_verdict_is_stale_once_the_context_comes_from_another_page(tmp_path):
     # so the times agree — but it may be about the snapshot the row has lost.
     claim.sources[0].verification.status = "could_not_verify_paywall"
     judgments.record(data, "q1", s.sid, "topic_only", page_fetched_at=stub_at,
-                     extractor_version=ver)
+                     extractor_version=ver, claim_fingerprint=FP)
     [why] = judgments.apply_to(claim, data, cache_root=data)
     assert "judged against the cited page, which is now paywalled" in why, why
     assert claim.sources[0].verification.support == "unreviewed"

@@ -7,7 +7,9 @@ the orchestrator had to hand-sequence every verify before every writeback, and t
 still had no effect on status.
 
 One shard per question, keyed within it by source id (url + snippet), so a judgment follows
-the citation it was about and lapses on its own when a retry changes the quote. A verdict is
+the citation it was about and lapses on its own when a retry changes the quote. The answer is
+the other half of what was judged, so a verdict applies only while its claim still asks and
+answers what it judged (`claim_fingerprint`; see `_claim_stale()`). A verdict is
 about one question's claim, not about the source alone: two questions citing the same page
 each get their own verdict, and the two can differ — a snippet can support one claim and be
 `topic_only` for another. Nothing here pools verdicts across questions by sid.
@@ -62,8 +64,9 @@ class Judgment:
     page_url: str = ""
     # Which claim it judged: `Claim.fingerprint` of the claim `vg judge` was given, its question
     # and answer. A retry that rewrites either keeps the sid, and so the verdict, while the
-    # words it judged are gone; this is what shows it. Empty on a verdict recorded before it
-    # existed.
+    # words it judged are gone; this is what shows it, and a verdict whose fingerprint is not
+    # the claim's is stale (`_claim_stale()`). Empty on a verdict recorded before it existed,
+    # which is stale too.
     claim_fingerprint: str = ""
 
 
@@ -863,6 +866,31 @@ def is_stale(j: "Judgment", cache_root: Path, source) -> str:
     return ""
 
 
+def _claim_stale(j: "Judgment", fingerprint: str) -> str:
+    """Why this verdict is not about the claim's question and answer as they read now, or "".
+    `fingerprint` is that claim's `Claim.fingerprint`.
+
+    A verdict judges a page against one answer, and the sid covers only the page's half: a retry
+    that rewrote the answer and kept the url and snippet kept the verdict too. A `supports` about
+    "voted for" then vouched for "voted against", and a `contradicts` held a corrected claim in
+    review over an answer it no longer gives.
+
+    A legacy verdict, recorded before verdicts named their claim, is stale. The page rule's
+    exception does not carry over: it bounds a legacy verdict by `judged_at` against the time
+    every fetch stamps on its page, and nothing records when an answer was written.
+    `checked_at` moves on every `vg verify`, and a claim file's mtime on every write-back and
+    checkout. With no bound, it is the query rule instead: unknown fails toward re-checking."""
+    if not j.claim_fingerprint:
+        return ("recorded before verdicts named the claim they judged, so nothing shows it is "
+                "about this question and answer")
+    if j.claim_fingerprint != fingerprint:
+        # Or a misfiled verdict, one another claim earned, which says as little about this
+        # claim's answer.
+        return ("judged another question or answer than this claim gives now: a retry or hand "
+                "edit rewrote the claim since, or the verdict is filed under another claim's id")
+    return ""
+
+
 def verdicts_for(claim, root: Path, judged: dict[str, Judgment] | None = None, *,
                  cache_root: Path):
     """Yield (source, recorded judgment or None, why it is stale or "") for each source.
@@ -872,12 +900,20 @@ def verdicts_for(claim, root: Path, judged: dict[str, Judgment] | None = None, *
     `root` is where the verdicts live (the candidate's data dir); `cache_root` is where the
     pages they judged live. Required, and keyword-only, because defaulting it to `root` is
     exactly the bug that hid every stale verdict in a candidate run.
+
+    A verdict is stale when it judged another question or answer (`_claim_stale()`, checked
+    here because this is where the claim is in hand) or another copy of the page or query
+    (`is_stale()`). Both halves are reported: re-judging needs the page half settled too, and
+    `vg judge` refuses a page it cannot stamp.
     """
     if judged is None:
         judged = load(root, claim.question_id)
+    fingerprint = claim.fingerprint
     for s in claim.sources:
         j = judged.get(s.sid)
-        yield s, j, (is_stale(j, cache_root, s) if j is not None else "")
+        why = ("; ".join(filter(None, (_claim_stale(j, fingerprint), is_stale(j, cache_root, s))))
+               if j is not None else "")
+        yield s, j, why
 
 
 def apply_to(claim, root: Path, *, cache_root: Path) -> list[str]:

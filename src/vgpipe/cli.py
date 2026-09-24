@@ -456,9 +456,9 @@ def _report_stale(stale: list[str]) -> None:
         return
     con.print(f"[yellow]{len(stale)} verdict(s) predate the page they judged, or have no cached "
               f"page to check against, or judged a copy their context no longer comes from (a "
-              f"replaced snapshot), or were formed under another query definition, and were "
-              f"NOT applied — re-judge those sources (after `vg verify`, where the page is "
-              f"missing):[/]")
+              f"replaced snapshot), or were formed under another query definition, or judged "
+              f"another question or answer than their claim gives now, and were NOT applied — "
+              f"re-judge those sources (after `vg verify`, where the page is missing):[/]")
     for x in stale[:8]:
         # Escaped: a reason can name a snapshot, whose URL embeds the agent-authored one.
         con.print(f"  {escape(x)}")
@@ -603,9 +603,15 @@ def _report_rearchived_verdicts(claims: list[Claim], data: Path, cache_root: Pat
     from . import judgments
 
     try:
-        stale = [f"{c.question_id}/{s.sid}" for c in claims
-                 for s, _j, why in judgments.verdicts_for(c, data, cache_root=cache_root)
-                 if why and s.verification.status == "verified_via_archive"]
+        # The page half only (`is_stale()`), on archive rows only: a verdict about another answer
+        # is stale however the snapshot went, and this message says the snapshot is why.
+        stale = []
+        for c in claims:
+            judged = judgments.load(data, c.question_id)
+            stale += [f"{c.question_id}/{s.sid}" for s in c.sources
+                      if s.verification.status == "verified_via_archive"
+                      and (j := judged.get(s.sid)) is not None
+                      and judgments.is_stale(j, cache_root, s)]
     except judgments.UnreadableJudgments as e:
         # The archive itself is done and written; an unreadable shard is every reader's to stop on.
         con.print(f"[yellow]could not check verdicts against the new snapshots: "
@@ -1038,7 +1044,7 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", data: Path =
 
     The verdict also records the claim's fingerprint (its question and answer as the claim file
     reads now), so a retry that rewrites the claim after this can be told apart from one that
-    did not.
+    did not: `vg build` applies the verdict only while the claim still asks and answers that.
     """
     from . import judgments
 
@@ -1287,8 +1293,9 @@ def show_judgments(data: Path = DATA, question_id: str = "",
         # judge either, so it sits with the blocked sources, and `vg judge` refuses it.
         con.print(f"[yellow]{stale} verdict(s) predate the page they judged, or have no cached "
                   f"page to check against, or judged a copy their context no longer comes from "
-                  f"(a replaced snapshot), or were formed under another query definition, so "
-                  f"`vg build` will not apply them. "
+                  f"(a replaced snapshot), or were formed under another query definition, or "
+                  f"judged another question or answer than their claim gives now, so `vg build` "
+                  f"will not apply them. "
                   + (f"{stale_waiting} are in the count below and need judging again. "
                      if stale_waiting else "")
                   + (f"{stale - stale_waiting} have nothing a verifier can judge yet (above)."
