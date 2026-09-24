@@ -127,7 +127,8 @@ Do not summarize the source rules for them — the agent definition carries them
    context comes from its snapshot, and a fresh snapshot is a different copy: every verdict
    on such a row goes stale when `vg archive` replaces it, and a row it newly upgrades has no
    verdict yet. `vg archive` says how many verdicts it made stale. Skipping this step leaves
-   every paywalled row unreviewed in the review app.
+   the claim behind every archive-verified row `pending` in the review app. A row still
+   paywalled needs no verdict: its claim is flagged for the human, not left waiting.
 
 ## Phase 3 — review surface
 
