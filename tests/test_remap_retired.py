@@ -141,8 +141,11 @@ def test_a_backup_an_interrupted_re_home_left_still_stops_every_reader(tmp_path,
     (judgments.backup_dir(run) / "q1.json").write_text("[]")
     before = _tree(data)
     monkeypatch.chdir(tmp_path)
+    # `vg judge` too, the one writer: a verdict recorded into half-rewritten shards is one the
+    # old rollback then overwrites.
     for args in (["judgments"], ["judgments", "--rollback"], ["judgments", "--repair"],
-                 ["remap", "--apply"], ["build"], ["status"], ["verify"]):
+                 ["remap", "--apply"], ["build"], ["status"], ["verify"],
+                 ["judge", "q1", _source().sid, "supports"]):
         code, out = _vg(*args, "--data", run.relative_to(tmp_path))
         assert code == 1, (args, out)
         assert "was interrupted, and its shards may be half-rewritten" in out, (args, out)
@@ -169,9 +172,10 @@ def test_the_rollback_command_quotes_a_run_path_with_a_space(tmp_path):
 
 
 def test_the_commit_named_for_rollback_is_on_main_and_has_it():
-    """The refusal above sends an operator to this commit. It must be named in full, stay in
-    this branch's history, and its `vg judgments` must still take `--rollback`. CI's checkout is
-    shallow, so the history half runs where the history is."""
+    """The refusal above sends an operator to this commit. It must be named in full, be on
+    main, where the operator's clone has it (a commit only on a feature branch can be rebased
+    away), and its `vg judgments` must still take `--rollback`. CI's checkout is shallow, so
+    the history half runs where the history is."""
     import subprocess
 
     def git(*args):
@@ -182,7 +186,10 @@ def test_the_commit_named_for_rollback_is_on_main_and_has_it():
     old = git("show", f"{commit}:src/vgpipe/judgments.py")
     if old.returncode != 0:
         pytest.skip(f"no git history with {commit} here: {old.stderr.strip()}")
-    assert git("merge-base", "--is-ancestor", commit, "HEAD").returncode == 0
+    # HEAD only where there is no origin/main to ask, as in a fork's checkout.
+    main = ("origin/main" if git("rev-parse", "--verify", "--quiet", "origin/main").returncode == 0
+            else "HEAD")
+    assert git("merge-base", "--is-ancestor", commit, main).returncode == 0, main
     assert "\ndef rollback(root: Path)" in old.stdout
     assert "rollback: bool = False" in git("show", f"{commit}:src/vgpipe/cli.py").stdout
 
