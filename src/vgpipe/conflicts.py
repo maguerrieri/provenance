@@ -59,10 +59,10 @@ def detect(claims: list[Claim]) -> list[Claim]:
         # (4) Before the snippet test: a query citation's verdict counts, snippet or none.
         for s in c.sources:
             if s.contradicts:
+                who = f"{s.publisher.strip()} ({s.url})" if s.publisher.strip() else s.url
                 note = s.verification.support_note
-                c.conflicts.append(
-                    f"a verifier judged {s.publisher} ({s.url}) contradicts the claim"
-                    + (f": {note}" if note else ""))
+                c.conflicts.append(f"a verifier judged {who} contradicts the claim"
+                                   + (f": {note}" if note else ""))
         snip = " ".join(s.snippet for s in c.sources)
         if not snip:
             continue
