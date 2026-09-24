@@ -657,11 +657,14 @@ question starts empty. If the old id then goes to a new question that is researc
 dropped, the dropped question's claim sits on the old id beside an empty destination. The refusal
 used to say the file was "retired somewhere else", which is false there. Nothing on disk tells
 the two apart, so remap still refuses and nothing moves, but the message names both readings and
-the way out of each: put back the retired `maps_from`, or archive the dropped question's file by
-hand. Archiving is also a way past the guard when the first reading is the true one, and then it
-strands the moved question's research. So the message says how to tell them apart, and it is not
-the claim's wording, which the migration may have changed: the sparse reading holds only if the
-history of `questions.json` put a question at the old id after the move.
+the way out of each. For the first, put back the retired `maps_from`. For the second, archive the
+dropped question's file by hand and `vg judgments --repair --gone <old id>` its verdicts: left
+on the old id, they apply to the next question there and can render it green. Archiving is also
+a way past the guard when the first reading is the true one, and then it strands the moved
+question's research. So the message says how to tell them apart, and it is not the claim's
+wording, which the migration may have changed: the sparse reading holds only if the history of
+`questions.json` put a question at the old id after the move. It says "records these moves", not
+"moved": in the sparse reading nothing did.
 
 **What no layer can tell apart** is the original report's own finding: a new migration that
 happens to share pairs with an old one, versus old pairs restored beside a new edit. A restored

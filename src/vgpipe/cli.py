@@ -1709,28 +1709,35 @@ def remap(data: Path = DATA, apply: bool = False, archive_stranded: bool = False
     # committing the retired file with the claims it describes.)
     #
     # A sparse run with a question dropped leaves the same files (_never_arrived), so the
-    # refusal names both readings and the way out of each. It used to name only the first, and
-    # was false for the second. Refusing either way fails safe: nothing moves.
+    # refusal names both readings, how to tell them apart, and the way out of each. It used to
+    # name only the first, and was false for the second. Refusing either way fails safe: nothing
+    # moves. The way out of the second has to take the dropped claim's verdicts too: left on the
+    # old id, they apply to whatever question takes that id next, and can render it green.
     unmoved = _never_arrived(questions, claims_dir)
     if unmoved:
-        moves_ = ", ".join(f"{src} (moved to {dst})" for src, dst in unmoved)
-        con.print(f"[red]refusing:[/] {qpath} records migrations as applied (mapped_from), but "
-                  f"{claims_dir} still holds a claim on the id each moved from, which no current "
-                  f"question uses, and the question each moved to has none: {escape(moves_)}. "
-                  "The claim files can't show which of two things happened, so nothing moves:\n"
-                  "  • this questions.json was retired somewhere else and arrived without its "
-                  "claims, which never went through it here: put back the maps_from it retired "
-                  "(the file's history has it) and dry-run remap;\n"
-                  "  • or this is a sparse run: the old id had no claim when the move ran, so "
-                  "the question it led to started empty, and the file on the old id now is the "
-                  f"claim of a later question at that id, since dropped from {qpath}. Nothing "
-                  "maps to it, so move it out of claims/ by hand (into "
-                  f"{data / 'claims-archive'}, under a name not already there) and re-run.\n"
-                  f"Tell them apart by the history of {qpath}, not by the claim's wording, which "
-                  "the migration may have changed: the second holds only if a version after the "
-                  "move put a question at the old id, and that is the question the claim answers. "
-                  "Archiving the file in the first case strands that question's research in the "
-                  "archive.")
+        recorded = ", ".join(f"{dst} from {src}" for src, dst in unmoved)
+        olds = sorted({src for src, _dst in unmoved}, key=qid_sort_key)
+        judged = [o for o in olds if _j.path_for(data, o).exists()]
+        gone = (f" Then run `vg judgments --repair {' '.join(f'--gone {o}' for o in judged)} "
+                f"--data {data}`, so the verdicts on {', '.join(judged)} can't apply to a later "
+                "question at that id." if judged else "")
+        con.print(f"[red]refusing:[/] {escape(str(qpath))} records these moves as applied "
+                  f"(mapped_from): {escape(recorded)}. For each, {escape(str(claims_dir))} still "
+                  "holds a claim on the old id, which no current question uses, and none on the "
+                  "question that records the move. The claim files can't show which of two "
+                  "things happened, so nothing moves:\n"
+                  "  • the file was retired somewhere else and arrived without its claims, "
+                  "which never went through the move here. Put back the maps_from it retired "
+                  "(its history has them) and dry-run remap.\n"
+                  "  • Or this is a sparse run: the old id had no claim when the move ran, so "
+                  "nothing moved, and the file there now is the claim of a later question at "
+                  "that id, since dropped. Nothing maps to it. Move it out of claims/ by hand, "
+                  f"into {escape(str(data / 'claims-archive'))} under a name not already there."
+                  + escape(gone) + " Then re-run.\n"
+                  "Tell them apart by the file's history, not by the claim's wording, which the "
+                  "move may have changed: the second holds only if a version after the move put "
+                  "a question at the old id, and the claim answers that question. Archiving the "
+                  "claim in the first case strands the moved question's research.")
         raise typer.Exit(1)
 
     # (2), an older state. With nothing pending, the file may still be current — a question the

@@ -199,15 +199,25 @@ def test_every_claim_path_remap_builds_refuses_a_value_that_is_not_an_id(tmp_pat
 def _sparse_run_with_a_question_dropped(tmp_path):
     """A sparse run: q2 had no claim when the first migration mapped it to q5, so nothing moved
     there, and the apply retired the pair anyway (q5.mapped_from = q2). The id q2 then went to a
-    new question, which was researched and later dropped. So q2.json is that dropped question's
-    claim, no current question uses q2, and q5 has no claim: exactly what a questions.json
-    retired in another checkout, arriving without its claims, leaves too."""
+    new question, which was researched, judged, and later dropped. So q2.json is that dropped
+    question's claim, with a verdict on the id, no current question uses q2, and q5 has no claim:
+    exactly what a questions.json retired in another checkout, arriving without its claims,
+    leaves too."""
+    from vgpipe import judgments
+    from vgpipe.models import Source
+
     run = tmp_path / "run"
     _claim(run / "claims", "q1", "donations")
     (run / "questions.json").write_text(json.dumps([
         _question("q3", maps_from="q1"), _question("q5", maps_from="q2"), _question("q2")]))
     cli.remap(data=run, apply=True)
-    _claim(run / "claims", "q2", "researched on the new q2")
+    cited = Source(url="https://news.example/story", publisher="Example News",
+                   author="A. Writer", date="2026-01-15", source_type="bylined_journalism",
+                   snippet="the council approved the plan")
+    (run / "claims" / "q2.json").write_text(json.dumps(
+        {"question_id": "q2", "question": "new q2", "answer": "approved",
+         "sources": [cited.model_dump(mode="json")]}))
+    judgments.record(run, "q2", cited.sid, "supports", "says so")
     qpath = run / "questions.json"
     qpath.write_text(json.dumps([q for q in json.loads(qpath.read_text()) if q["id"] != "q2"]))
     return run
@@ -217,7 +227,7 @@ def test_a_sparse_run_is_refused_for_the_true_reason(tmp_path, out):
     """The check that disproves a retired move refused this run saying the questions.json "was
     retired somewhere else", which is false here. The files can't tell the two apart (both leave
     a claim on the old id and nothing on the destination), so the refusal stands: it fails safe.
-    But it names both readings and the way out of each, not only the one that's wrong here."""
+    But it names both readings, how to tell them apart, and the way out of each."""
     run = _sparse_run_with_a_question_dropped(tmp_path)
     before = _tree(tmp_path)
     out.truncate(0)
@@ -228,22 +238,34 @@ def test_a_sparse_run_is_refused_for_the_true_reason(tmp_path, out):
             cli.remap(data=run, **flags)
         assert _tree(tmp_path) == before, flags
     said = " ".join(out.getvalue().split())
-    assert "q2 (moved to q5)" in said, said
+    # "records", not "moved": in the sparse reading nothing moved.
+    assert "records these moves as applied (mapped_from): q5 from q2." in said, said
+    assert "moved to" not in said, said
     assert "retired somewhere else" in said, "the first reading, still named"
     assert "had no claim when the move ran" in said and "since dropped" in said, said
     assert str(run / "claims-archive") in said, "and where the second reading's file goes"
+    # The dropped claim's verdicts stay on q2 unless they go too, and would apply to the next
+    # question at q2.
+    assert f"vg judgments --repair --gone q2 --data {run}" in said, said
     # The claim's wording can't tell them apart when the migration reworded the question, and
     # archiving the file on the first reading strands the research, so the message says what can.
-    assert f"history of {run / 'questions.json'}" in said, said
+    assert "by the file's history, not by the claim's wording" in said, said
 
 
-def test_archiving_a_sparse_runs_dropped_claim_by_hand_gets_past_the_refusal(tmp_path, out):
+def test_the_sparse_runs_way_out_gets_past_the_refusal_and_takes_the_verdicts(tmp_path, out):
     """The way out the refusal gives for the sparse reading works: the file on the old id was a
-    dropped question's research, so once it is archived nothing disproves the retired move."""
+    dropped question's research, so once it is archived nothing disproves the retired move, and
+    its verdict leaves the live shards rather than waiting on q2 for the next question there."""
+    from vgpipe import judgments
+
     run = _sparse_run_with_a_question_dropped(tmp_path)
     (run / "claims-archive").mkdir()
     (run / "claims" / "q2.json").rename(run / "claims-archive" / "q2.json")
+    cli.show_judgments(data=run, repair=True, gone=["q2"])
 
+    assert not judgments.path_for(run, "q2").exists()
+    assert list(judgments.archive_dir(run).rglob("q2.json")), "archived, not deleted"
+    out.truncate(0)
+    out.seek(0)
     cli.remap(data=run)
-
     assert "nothing to remap" in out.getvalue()
