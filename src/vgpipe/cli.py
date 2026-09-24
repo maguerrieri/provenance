@@ -1169,8 +1169,8 @@ def _handed(claim, cache_root: Path, *, judged=None):
         # `vg judge` finds a source by its sid, so a second citation of the same url and snippet
         # is judged as the first: one verdict, keyed by that sid, and one token, printed there.
         k = first.setdefault(s.sid, n)
-        why = (f"the same source id as [{k}/{len(claim.sources)}], where it is judged: a verdict "
-               f"is recorded per source id" if k != n else
+        why = (f"the same source id as [{k}/{len(claim.sources)}]: a verdict is recorded per "
+               f"source id, and `vg judge` takes that one for it" if k != n else
                "" if s is judged else
                _unjudgeable(s, cache_root, seen=v.context_page, last_run=v.query_run)
                ) or ("" if v.context else "it has no context")
@@ -1323,9 +1323,8 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
     # that no longer exists. Same root, same lookup as the check in `apply_to()`, or the stamp
     # describes a page the check never looks at.
     page_url, page_at, ver, query_ver, export = "", "", 0, 0, ""
-    # An archive-verified context comes from the snapshot the run's records name. Every source:
-    # the token covers the whole hand-off, which prints them all.
-    _apply_archive_rows(data, claim.sources, cache_root)
+    # An archive-verified context comes from the snapshot the run's records name.
+    _apply_archive_rows(data, [source], cache_root)
     if source.query is None:
         try:
             page_url, page_at, ver = judgments.judged_copy(source, cache_root)
@@ -1350,7 +1349,10 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
         _refuse(f"not recorded: {why}")
     # Last, so a wrong id, sid or copy is still what a refusal names first. The copy check above
     # passes a re-verify that rebuilt the context from a newer cached copy; this is what doesn't.
-    # The hand-off as `vg handoff` would print it now, from the claim file judge just read.
+    # The hand-off as `vg handoff` would print it now, from the claim file judge just read. It
+    # prints every source, so the others need their snapshots too, applied only here: a damaged
+    # records file is not what a refusal about this source's own id, sid or copy names first.
+    _apply_archive_rows(data, [s for s in claim.sources if s is not source], cache_root)
     if why := judgments.wrong_context(
             _handed(claim, cache_root, judged=source), sid, context,
             handoff=f"vg handoff {shlex.quote(question_id)}{_run_args(data, cache)}"):

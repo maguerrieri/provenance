@@ -662,6 +662,10 @@ inside a string, so text moved across the separator from one field into the next
 token as it was (#99). Changing what the token covers changes every outstanding token once: a
 verifier holding one is refused and re-reads the hand-off, and nothing else is lost.
 
+The token guards the window from hand-off to judge, and no longer. A recorded verdict is keyed
+by its sid, so one recorded beside a sibling that a later retry swaps out still applies: a
+verdict about a set of sources is #42.
+
 Handing out a token is a prediction that `vg judge` will record the verdict and `vg build` will
 keep it, so `vg handoff`, `vg judge` and `vg judgments` ask one function, `cli._unjudgeable()`.
 It includes build's own rebuild, run on a copy (`_rebuild_problem()`): a claim file whose
