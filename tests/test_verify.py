@@ -2244,8 +2244,9 @@ def test_an_organizations_own_endorsement_is_not_a_mirror():
     flagging the party's own site told a run to "repair" genuine primary sources."""
     from vgpipe.verify import secondary_host
 
-    own = src(url="https://cadem.org/endorsements/2026", publisher="California Democratic Party",
-              author="California Democratic Party", source_type="own_statement",
+    own = src(url="https://examplecountyparty.org/endorsements/2030",
+              publisher="Example County Party", author="Example County Party",
+              source_type="own_statement",
               snippet="endorsed for County Assessor")
     assert not secondary_host(own)
 
