@@ -6472,16 +6472,17 @@ def _definition_fingerprint(name):
 # What cannot change a value a query returns: display, messages, listings (finding aids, not
 # citations), the export metadata, and the comparison and command a result is checked with.
 _NOT_A_DEFINITION = {
-    "vgpipe.queries": {"LATE_SHOWN", "LateReport", "NOT_COMPLETE", "Query", "QueryResult",
-                       "REGISTRY", "UNSETTLED_SHOWN", "_elsewhere", "_late_note", "_listed",
-                       "_other_schedules", "_schedule_label", "_unread", "dataset",
-                       "describe_export", "export_date", "human_command", "late_text", "matches",
-                       "share_text"},
+    "vgpipe.queries": {"LATE_SHOWN", "LEFT_OUT", "LateReport", "NOT_COMPLETE", "Query",
+                       "QueryResult", "REGISTRY", "UNSETTLED_SHOWN", "_elsewhere", "_late_note",
+                       "_listed", "_other_schedules", "_schedule_label", "_unread", "dataset",
+                       "describe_export", "export_date", "human_command", "late_text",
+                       "left_out_text", "matches", "share_text"},
     "vgpipe.calaccess": {"COVER_FALLBACK", "Contribution", "DegradedDatabaseWarning",
                          "EXPORT_META", "EXPORT_URL", "LATE_FALLBACK", "NO_COVERS",
-                         "SCHEDULE_FALLBACK", "_UNUSABLE", "_export_date", "_read_export_info",
-                         "citable_snapshot", "committee_url", "contributions_to", "db_path",
-                         "export_info", "filing_url", "find_filers", "independent_expenditures",
+                         "Reattributed", "SCHEDULE_FALLBACK", "_UNUSABLE", "_export_date",
+                         "_read_export_info", "citable_snapshot", "committee_url",
+                         "contributions_to", "cover_names", "db_path", "export_info",
+                         "filing_url", "find_filers", "independent_expenditures", "latest_cover",
                          "shown_date", "Unrestated", "UnrestatedSchedule", "unusable",
                          "zip_path"},
 }
@@ -6490,18 +6491,22 @@ _NOT_A_DEFINITION = {
 # name -> (version, fingerprint). See test_a_query_definition_cannot_change_unnoticed.
 QUERY_DEFINITIONS = {
     # moved without a bump: the flag for a schedule a later amendment left out, and the
-    # grouping it shares, change no value (DEDUPED_RECEIPTS is the same SQL)
-    "calaccess.contributor_total": (6, "9552441e5003"),
-    "calaccess.filer_total": (6, "d92f4fd6f126"),
-    "calaccess.top_contributor": (7, "75d60e904cfd"),
+    # grouping it shares, change no value (DEDUPED_RECEIPTS is the same SQL); then
+    # left_out_sql(), ie_total's helper for rows a later cover reattributed, which they do not
+    # run
+    "calaccess.contributor_total": (6, "2d3d2333a1c1"),
+    "calaccess.filer_total": (6, "6eb8151d2d50"),
+    "calaccess.top_contributor": (7, "f4bbfa0d8254"),
     # moved without a bump: amount_sql() is ie_total's own amount expression, extracted
     # unchanged, and DEDUPED_RECEIPTS, which it does not read, changed beside it; then the
     # unsettled-amendment flag and its shared helpers, which change no value it returns; then
     # _schedule(), the receipt queries' schedule filter, which it does not call; then the
     # late-report helpers and the Form 497 load, which it does not run; then how
     # top_contributor shows and orders a ranking's names (_shown, the late-report check), which
-    # it does not run; then the left-out-schedule flag beside them
-    "calaccess.ie_total": (2, "37f7884b70d9"),
+    # it does not run; then the left-out-schedule flag beside them; then the flag for rows a
+    # later cover reattributed (`reattributed`), which verification acts on and which changes
+    # no value
+    "calaccess.ie_total": (2, "84ff6226c9f7"),
 }
 
 

@@ -408,6 +408,88 @@ def unrestated_filings(con: sqlite3.Connection, table: str,
     return out
 
 
+@dataclass(frozen=True)
+class Reattributed:
+    """A filing whose Form 496 rows its own amendment's cover gave to the candidate and stance
+    asked about, while no cover of the filing's latest amendment, which decides whose money a
+    row is (CVR_LATEST), does: it names another candidate, the other stance or none. No total
+    for the first candidate counts those rows, and the export cannot say which cover is right:
+    the later amendment withdrew or moved them, or its cover was an update that dropped the
+    candidate.
+
+    `amount` and `rows` are what a total left out; a listing leaves them 0.
+    """
+    filing_id: str
+    own_amend: int       # the amendment the rows are from, whose cover named the candidate
+    latest_amend: int    # the filing's latest amendment, whose cover decides
+    latest: str          # who that cover names (cover_names()), "" for no candidate
+    amount: float = 0.0
+    rows: int = 0
+
+    @property
+    def cite_url(self) -> str:
+        return filing_url(self.filing_id)
+
+    def describe(self) -> str:
+        return (f"filing {self.filing_id}'s rows are from amendment {self.own_amend}, whose "
+                f"cover matches this total, and the cover of its latest amendment "
+                f"({self.latest_amend}) names {self.latest or 'no candidate'}")
+
+    def mark(self) -> str:
+        """The listing's note on the row: who the cover attribution goes by names instead."""
+        return f"a{self.latest_amend}'s cover names {self.latest or 'no candidate'}"
+
+
+def cover_names(last, first, stance) -> str:
+    """Who and which stance a cover names, as Reattributed.latest has it: "" for no candidate.
+    Quoted with repr, as ie_total's near matches are: the names are export text, and a control
+    byte in one would otherwise reach a terminal or a claim file raw."""
+    name = " ".join(x.strip() for x in (first, last) if x and x.strip())
+    if not name:
+        return ""
+    side = {"S": "support", "O": "oppose"}.get((stance or "").strip().upper(), "no stance")
+    return f"{name!r} ({side})"
+
+
+def latest_cover(con: sqlite3.Connection, filing_id: str) -> tuple[int, str]:
+    """A filing's latest cover amendment and who its cover names (cover_names()), for
+    Reattributed. An amendment has one cover record; rowid only breaks a tie, should one ever
+    carry two, so the text is stable."""
+    r = con.execute("""
+        SELECT CAST(AMEND_ID AS INTEGER) a, CAND_NAML, CAND_NAMF, SUP_OPP_CD
+        FROM CVR_CAMPAIGN_DISCLOSURE_CD WHERE FILING_ID = ?
+        ORDER BY CAST(AMEND_ID AS INTEGER) DESC, rowid LIMIT 1""", [str(filing_id)]).fetchone()
+    return r["a"], cover_names(r["CAND_NAML"], r["CAND_NAMF"], r["SUP_OPP_CD"])
+
+
+def left_out_sql(asked) -> str:
+    """SQL true when S496 row `s` is one the latest-cover rule keeps out of every total asking
+    for `asked` (Reattributed): a cover of the row's own amendment matches, and no cover of the
+    filing's latest amendment does. `asked(alias)` is the total's condition on a cover alias;
+    it appears twice, so its arguments go in twice. Needs covers_by_amendment(con).
+
+    EXISTS, not a join, so a second cover record of one amendment could never count the row
+    twice. And through the FILING_ID index, not a join to CVR_LATEST, which rebuilt that view
+    on every call: on a synthetic export of 1.5 million covers that took 5s, twice the total
+    itself, where this takes 0.4s.
+
+    These are exactly the rows the total leaves out while their own cover matched, because an
+    amendment has one cover record, so CVR_LATEST's cover is the latest amendment's only one.
+    In the export measured for #111, no Form 496 filing's latest amendment carried two.
+    """
+    return f"""(EXISTS (SELECT 1 FROM CVR_CAMPAIGN_DISCLOSURE_CD o
+                        WHERE o.FILING_ID = s.FILING_ID
+                          AND CAST(o.AMEND_ID AS INTEGER) = CAST(s.AMEND_ID AS INTEGER)
+                          AND {asked("o")})
+            AND NOT EXISTS (SELECT 1 FROM CVR_CAMPAIGN_DISCLOSURE_CD l
+                            WHERE l.FILING_ID = s.FILING_ID
+                              AND CAST(l.AMEND_ID AS INTEGER) = (
+                                  SELECT MAX(CAST(m.AMEND_ID AS INTEGER))
+                                  FROM CVR_CAMPAIGN_DISCLOSURE_CD m
+                                  WHERE m.FILING_ID = s.FILING_ID)
+                              AND {asked("l")}))"""
+
+
 def unrestated_shares(con: sqlite3.Connection, table: str, counted,
                       gaps: dict[str, Unrestated] | None = None) -> list[Unrestated]:
     """What each unrestated filing accounts for in a figure, largest first.
@@ -897,27 +979,60 @@ def independent_expenditures(root: Path, candidate_last: str, *, first: str = ""
     from .queries import iso_date_sql, name_match_sql
     from .queries import name_args as _nargs
 
-    if loose:
-        match, name_arglist = "UPPER(TRIM(c.CAND_NAML)) LIKE UPPER(?)", [f"%{candidate_last}%"]
-    else:
-        match = name_match_sql("c.CAND_NAML", "c.CAND_NAMF", first)
-        name_arglist = _nargs(candidate_last, first)
-    first_clause = ""
-    q = f"""
-        SELECT s.FILING_ID, c.FILER_ID, c.FILER_NAML, c.CAND_NAML, c.CAND_NAMF,
-               c.SUP_OPP_CD, s.AMOUNT, {iso_date_sql("s.EXP_DATE")} AS EXP_DATE,
-               TRIM(COALESCE(s.EXP_DATE, '')) AS FILED_DATE, s.EXPN_DSCR
-        FROM S496_LATEST s
-        JOIN CVR_LATEST c ON c.FILING_ID = s.FILING_ID
-        WHERE {match}{first_clause}
-        ORDER BY CAST(s.AMOUNT AS REAL) DESC
+    def named(cover: str) -> str:
+        if loose:
+            return f"UPPER(TRIM({cover}.CAND_NAML)) LIKE UPPER(?)"
+        return name_match_sql(f"{cover}.CAND_NAML", f"{cover}.CAND_NAMF", first)
+
+    name_arglist = [f"%{candidate_last}%"] if loose else _nargs(candidate_last, first)
+    checkable = covers_by_amendment(con)
+    def exp(s: str) -> str:
+        return f"""{s}.AMOUNT, {iso_date_sql(f"{s}.EXP_DATE")} AS EXP_DATE,
+                   TRIM(COALESCE({s}.EXP_DATE, '')) AS FILED_DATE, {s}.EXPN_DSCR"""
+
+    # Also every row whose own amendment's cover names this candidate while no cover of the
+    # latest amendment, which attribution goes by, does (Reattributed): no total for this
+    # candidate counts it, and hiding it here would hide the filing to open. Its cover columns
+    # are filled in below, from its own cover. Needs cover amendment ids. MATERIALIZED for
+    # the reason ie_total gives: the correlated tests first, the date work after.
+    left_out, reattributed = (f"""
+        WITH left_out AS MATERIALIZED (
+            SELECT s.* FROM S496_LATEST s WHERE {left_out_sql(named)})""", f"""
+        UNION ALL
+        SELECT l.FILING_ID, NULL, NULL, NULL, NULL, NULL, {exp("l")},
+               CAST(l.AMEND_ID AS INTEGER)
+        FROM left_out l""") if checkable else ("", "")
+    q = f"""{left_out}
+        SELECT * FROM (
+            SELECT s.FILING_ID, c.FILER_ID, c.FILER_NAML, c.CAND_NAML, c.CAND_NAMF,
+                   c.SUP_OPP_CD, {exp("s")}, NULL AS OWN_AMEND
+            FROM S496_LATEST s
+            JOIN CVR_LATEST c ON c.FILING_ID = s.FILING_ID
+            WHERE {named("c")}
+            {reattributed})
+        ORDER BY CAST(AMOUNT AS REAL) DESC
         LIMIT ?
     """
-    args = name_arglist + [top]
+    args = name_arglist * (3 if checkable else 1) + [top]
     rows = [dict(r) for r in con.execute(q, args)]
+    for r in rows:
+        r["reattributed"] = None
+        if r["OWN_AMEND"] is None:
+            continue
+        # Listed as its own amendment's cover has it. LIMIT 1: an amendment has one cover
+        # record, and should one ever carry two, this takes one that names this candidate.
+        own = con.execute(f"""
+            SELECT o.FILER_ID, o.FILER_NAML, o.CAND_NAML, o.CAND_NAMF, o.SUP_OPP_CD
+            FROM CVR_CAMPAIGN_DISCLOSURE_CD o
+            WHERE o.FILING_ID = ? AND CAST(o.AMEND_ID AS INTEGER) = ? AND {named("o")}
+            ORDER BY o.rowid LIMIT 1""", [r["FILING_ID"], r["OWN_AMEND"]] + name_arglist
+        ).fetchone()
+        r.update(dict(own))
+        r["reattributed"] = Reattributed(str(r["FILING_ID"]), r["OWN_AMEND"],
+                                         *latest_cover(con, r["FILING_ID"]))
     # Marked, and still listed: a finding aid that hid the row would hide the filing to open.
     gaps = (unrestated_filings(con, "S496_CD", {r["FILING_ID"] for r in rows})
-            if covers_by_amendment(con) else None)
+            if checkable else None)
     con.close()
     for r in rows:
         # None when the database cannot check, as for Contribution

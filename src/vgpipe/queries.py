@@ -285,6 +285,10 @@ class QueryResult:
     # out (`calaccess.UnrestatedSchedule`), with what it leaves out. A value with any is not
     # verified either.
     omitted: list = field(default_factory=list)
+    # Filings whose rows the value leaves out although their own amendment's cover matched
+    # what it asks for, because the filing's latest cover names someone else or no one
+    # (`calaccess.Reattributed`), with what each left out. A value with any is not verified.
+    reattributed: list = field(default_factory=list)
     # Late reports the value leaves out although they could change it (`LateReport`): any with
     # an amount nobody stated first, then the most money either way. A value with any is not
     # verified.
@@ -310,7 +314,7 @@ class QueryResult:
 
     @property
     def unsettled(self) -> str:
-        """Why this value cannot verify as it stands, or "". Three reasons, each with the filings
+        """Why this value cannot verify as it stands, or "". Four reasons, each with the filings
         a person opens, since a note alone would still render green:
 
         - `unrestated`: a filing's latest amendment can carry a cover and no rows in a table,
@@ -319,6 +323,10 @@ class QueryResult:
         - `omitted`: the same one level down, the other way round. A later amendment has rows
           on some schedules and none on another, and the value leaves out the earlier rows on
           that one.
+        - `reattributed`: the other side of the first. Rows the value leaves out because the
+          filing's latest cover names someone else, although their own amendment's cover
+          matched what the value asks for. The later amendment moved them, or dropped the
+          candidate in an update that restated nothing.
         - `late`: a figure for a schedule asked for by name (form_type=A, or "" for every
           schedule) is that schedule's as filed, and a late-reported gift no 460 restates yet
           is not in it: "gave $3,000" reads as the whole story a week after a $4,000 late gift.
@@ -326,9 +334,10 @@ class QueryResult:
           it stands; as the whole total or the largest giver, it may not.
 
         The first two say "rows a later amendment may have withdrawn", which the research skill
-        matches to leave the row for a person rather than retry it. Each names its
-        UNSETTLED_SHOWN or LATE_SHOWN largest (`_listed`): this becomes a claim file's reason,
-        and a committee's whole history can name dozens. `vg query` prints the rest.
+        matches to leave the row for a person rather than retry it; the third says LEFT_OUT,
+        which it matches too. Each names its UNSETTLED_SHOWN or LATE_SHOWN largest (`_listed`):
+        this becomes a claim file's reason, and a committee's whole history can name dozens.
+        `vg query` prints the rest.
         """
         why = []
         if self.unrestated:
@@ -345,6 +354,14 @@ class QueryResult:
                        f"cannot say whether it did. {each}. If that amendment withdrew them, "
                        f"leaving them out is right; if it only left that schedule unchanged, "
                        f"they belong in this figure.")
+        if self.reattributed:
+            each = _listed(self.reattributed, left_out_text, UNSETTLED_SHOWN,
+                           "filing(s) with smaller amounts")
+            why.append(f"{LEFT_OUT}: the filing's latest cover, which decides whose money a row "
+                       f"is, names another candidate, the other stance or none, and the export "
+                       f"cannot say which cover is right. {each}. If the earlier cover is right, "
+                       f"this value is short by those rows; if the latest one is, the value "
+                       f"stands.")
         if self.late:
             each = _listed(self.late, late_text, LATE_SHOWN, "late report(s)")
             why.append("leaves out late-reported contributions that no Form 460 schedule A "
@@ -374,6 +391,17 @@ def share_text(u) -> str:
     to": for top_contributor the rows are anyone's gifts in the ranking, not the named
     contributor's total."""
     return (f"{u.describe()}: ${u.amount:,.2f} in {u.rows} row(s) this result {u.does} "
+            f"(open {u.cite_url})")
+
+
+# What `vg verify` and `vg build` write for a value with `reattributed` filings, and what the
+# research skill matches to tell such a row from one to retry.
+LEFT_OUT = "leaves out rows that a filing's own amendment attributed to this candidate"
+
+
+def left_out_text(u) -> str:
+    """One reattributed filing's line in `QueryResult.unsettled`, and in a miss's detail."""
+    return (f"{u.describe()}: ${u.amount:,.2f} in {u.rows} row(s) this total leaves out "
             f"(open {u.cite_url})")
 
 
@@ -1114,11 +1142,14 @@ def _ie_total(root: Path, *, candidate_last: str, first: str = "", stance: str =
     # Refuses a database whose covers carry no amendment ids: this total could include money a
     # later amendment gave to another candidate.
     con = calaccess.connect_citable(root)
-    match = name_match_sql("c.CAND_NAML", "c.CAND_NAMF", first)
-    args: list[Any] = name_args(candidate_last, first)
-    if stance:
-        match += " AND UPPER(c.SUP_OPP_CD) = UPPER(?)"
-        args.append(stance[:1])
+
+    def asked(cover: str) -> str:
+        """What this total asks for, as a condition on cover alias `cover`, taking `args`."""
+        return (name_match_sql(f"{cover}.CAND_NAML", f"{cover}.CAND_NAMF", first)
+                + (f" AND UPPER({cover}.SUP_OPP_CD) = UPPER(?)" if stance else ""))
+
+    match = asked("c")
+    args: list[Any] = name_args(candidate_last, first) + ([stance[:1]] if stance else [])
     # EXP_DATE is "M/D/YYYY 12:00:00 AM" text, so a string comparison would sort 5/24/2026
     # before 10/14/2014: window the normalized date instead. A row whose date did not
     # normalize cannot be placed inside a window, so it stays out of one, as it always has --
@@ -1152,7 +1183,36 @@ def _ie_total(root: Path, *, candidate_last: str, first: str = "", stance: str =
         undated_amt = float(row["undated_amt"] or 0)
         left_out += (f"; {row['undated_n']} more with no readable date, not counted"
                      + (f" (${undated_amt:,.2f} between them)" if undated_amt else ""))
+    # The other side of the latest-cover rule: rows the window and amount rules would count,
+    # whose own amendment's cover matches what this total asks for while no cover of the
+    # filing's latest amendment does. This total never counts them and no other flag sees
+    # them, so a total short by them read as settled. Which cover is right is not decided here
+    # (CLAUDE.md, "Whose money a kept row is"): the row is named, for a person to open.
+    # MATERIALIZED, so the correlated tests run first and the date work only on the few rows
+    # they keep. Flattened, SQLite worked out every expenditure's window first: 3s where this
+    # takes 0.6s, on a synthetic export of 1.5 million covers.
+    reattributed = [
+        calaccess.Reattributed(str(r["fid"]), r["own_a"],
+                               *calaccess.latest_cover(con, r["fid"]),
+                               float(r["amt"]), int(r["n"]))
+        for r in con.execute(f"""
+            WITH left_out AS MATERIALIZED (
+                SELECT s.FILING_ID fid, CAST(s.AMEND_ID AS INTEGER) own_a, {amount} amt,
+                       {iso_date_sql("s.EXP_DATE")} d
+                FROM S496_LATEST s WHERE {calaccess.left_out_sql(asked)})
+            SELECT fid, own_a, SUM(amt) amt, COUNT(*) n
+            FROM (SELECT fid, own_a, amt, {inside} AS inside FROM left_out)
+            WHERE inside AND amt IS NOT NULL
+            GROUP BY fid ORDER BY amt DESC, fid
+        """, args * 2 + window_args).fetchall()]
     if n == 0:
+        if reattributed:
+            # Not a flag here: a miss never verifies. It says why, or it reads as "nobody
+            # spent on this candidate" when a filing's own amendment says someone did.
+            left_out += ("; not counted, because the filing's latest cover names another "
+                         "candidate, the other stance or none: "
+                         + _listed(reattributed, left_out_text, UNSETTLED_SHOWN,
+                                   "filing(s) with smaller amounts"))
         # The failure this guard exists for: a committee filed the candidate's whole name in
         # the last-name field, so a (last, first) filter found nothing and SUM() returned 0.0:
         # a confident "nobody spent against them", wrong by the largest expenditure in the race.
@@ -1179,7 +1239,7 @@ def _ie_total(root: Path, *, candidate_last: str, first: str = "", stance: str =
         """, window_args + args)])
     con.close()
     return QueryResult(value=float(row["amt"] or 0), rows=n, unrestated=unrestated,
-                       detail=f"{n} expenditure(s)"
+                       reattributed=reattributed, detail=f"{n} expenditure(s)"
                               + (f", {span}{left_out}" if window else
                                  f"{left_out} — NO DATE FILTER, may span multiple races"))
 
@@ -1234,7 +1294,8 @@ REGISTRY: dict[str, Query] = {
     # it sorted with case and spelled a name from whichever row SQLite read.
     # No bump for the flag for a schedule a later amendment left out (`omitted`), or the
     # grouping it shares with these queries: it changes no value, and DEDUPED_RECEIPTS is the
-    # same SQL.
+    # same SQL. Nor for ie_total's `reattributed`, for rows it leaves out: verification acts on
+    # it.
     "calaccess.contributor_total": Query(
         _contributor_total, ("filer_id", "contributor"),
         "contributions from one contributor (add contributor_first for an individual; "
