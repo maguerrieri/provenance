@@ -2,20 +2,21 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 from collections import Counter
 from datetime import UTC, datetime
 from html import escape
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 
 from jinja2 import Environment, FileSystemLoader
 from markupsafe import Markup
 
-from .models import Claim
 from . import queries
+from .models import QID_PATTERN, Claim, Source
 from .verify import secondary_host
 
 TEMPLATES = Path(__file__).resolve().parents[2] / "templates"
@@ -68,6 +69,34 @@ BADGE = {
     "pending": "mut",
 }
 
+# The review app records which ROW each check was made on (one source as cited by one claim,
+# `<question id>/<source id>`), to say when that row's evidence has changed since. The page
+# whitelists stored values to this shape; `/` is outside QID_PATTERN, so it is unambiguous.
+ROW_KEY_RE = QID_PATTERN.removesuffix("$") + "/[0-9a-f]{12}$"
+
+
+def review_fingerprint(claim: Claim, source: Source, context: str) -> str:
+    """What a reviewer's "verified by me" on one row attests: this source, as shown, supports
+    this claim. `context` is the highlighted excerpt as rendered, "" when there is none.
+
+    The page counts a row as checked only while some recorded check carries this fingerprint.
+    The source id alone covers just the url and snippet, so a check keyed by it counted for
+    every question citing the source, and survived a re-fetch or new snapshot that changed the
+    text around the snippet. Hashing the claim makes the check one claim's; hashing the
+    evidence clears it when what the reviewer read changes: the excerpt, the page locator, and
+    where a row shows no excerpt (a paywall, a scan), the snapshot offered in its place. A query
+    row adds the definition and export its figure was checked against, not the printed command,
+    whose `--cache` path moves with how the build was invoked.
+
+    It is content, not position, so a claim renumbered by `vg remap` without changing keeps
+    its check, while a reworded one loses it.
+    """
+    run = source.verification.query_run
+    parts = [source.sid, claim.question, claim.answer, str(source.page or ""), context,
+             "" if context else (source.archive_url or ""),
+             f"{run.version}\x00{run.export_date}" if run else ""]
+    return hashlib.sha256("\x00".join(parts).encode()).hexdigest()[:16]
+
 
 def context_html(claim_source) -> Markup | None:
     v = claim_source.verification
@@ -113,6 +142,19 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "voter guide",
     env = Environment(loader=FileSystemLoader(TEMPLATES), autoescape=True)
     tpl = env.get_template("review.html.j2")
 
+    def source_view(c: Claim, s) -> SimpleNamespace:
+        ctx = context_html(s)
+        command = (queries.human_command(
+            s.query.name, dict(s.query.params),
+            s.verification.query_run.cache_root if s.verification.query_run
+            else (str(cache_root) if cache_root else None)) if s.query else "")
+        provenance = query_provenance(s)
+        return SimpleNamespace(
+            **s.model_dump(), sid=s.sid, row_key=f"{c.question_id}/{s.sid}",
+            fingerprint=review_fingerprint(c, s, str(ctx or "")),
+            context_html=ctx, badge_class=BADGE.get(s.verification.status, "bad"),
+            secondary=secondary_host(s), query_command=command, query_provenance=provenance)
+
     # Build explicit view objects rather than writing render-only attributes onto the
     # models: assigning into a pydantic instance's __dict__ shadows computed properties
     # like Source.sid and leaves the model in a state nothing else can trust.
@@ -121,33 +163,23 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "voter guide",
             question_id=c.question_id, question=c.question, answer=c.answer,
             claim_type=c.claim_type, confidence=c.confidence, status=c.status,
             corroboration_ok=c.corroboration_ok, corroboration_note=c.corroboration_note,
-            conflicts=c.conflicts,
-            sources=[
-                SimpleNamespace(
-                    **s.model_dump(), sid=s.sid, context_html=context_html(s),
-                    badge_class=BADGE.get(s.verification.status, "bad"),
-                    secondary=secondary_host(s),
-                    query_command=(queries.human_command(
-                        s.query.name, dict(s.query.params),
-                        s.verification.query_run.cache_root if s.verification.query_run
-                        else (str(cache_root) if cache_root else None)) if s.query else ""),
-                    query_provenance=query_provenance(s))
-                for s in c.sources
-            ],
+            conflicts=c.conflicts, sources=[source_view(c, s) for s in c.sources],
         )
         for c in claims
     ]
 
-    # Keyed by the race, NOT by a hash of the question set. Sources carry stable ids
-    # (url + snippet), so keying storage by the question set would silently discard every
-    # checkbox the moment a question is added, split, or dropped — which happens
-    # constantly during a research run, and mid-review is exactly when losing it hurts.
+    # Keyed by the race, NOT by a hash of the question set. Checks carry stable fingerprints
+    # (review_fingerprint) and flags stable source ids, so keying storage by the question set
+    # would silently discard every checkbox the moment a question is added, split, or dropped
+    # — which happens constantly during a research run, and mid-review is exactly when losing
+    # it hurts. A row whose claim or evidence changed loses only its own check.
     store_key = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "voter-guide"
 
     html = tpl.render(
         claims=view,
         title=title,
         run_id=store_key,
+        row_key_re=ROW_KEY_RE,
         generated=datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC"),
         n_sources=sum(len(c.sources) for c in claims),
         status_counts=dict(Counter(c.status for c in claims).most_common()),
