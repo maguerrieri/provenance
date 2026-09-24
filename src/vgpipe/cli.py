@@ -998,7 +998,9 @@ def show_judgments(data: Path = DATA, question_id: str = "",
         # checkout that undoes it, so say that first.
         with _judgments_or_exit():
             judgments.refuse_if_interrupted(data)
-        _retired("`vg judgments --rollback`" if rollback else "`vg judgments --repair`")
+        given = [flag for flag, on in (("--repair", repair), ("--rollback", rollback),
+                                       ("--moved", moved), ("--gone", gone)) if on]
+        _retired(f"`vg judgments {' '.join(given)}`")
 
     cache_root = _verdict_cache_root(data, cache)
     skipped: list[str] = []
@@ -1362,13 +1364,13 @@ def check_claim(path: Path, data: Path = DATA, cache: Path = None, race: str = "
 
 
 # Question ids are stable and never reused, so a claim never moves between ids and nothing has
-# to re-file it or its verdicts (CLAUDE.md, "Question ids are stable"). The commands that did are
-# retired. Each still answers, hidden, so an old script or habit learns why instead of meeting
-# "No such command".
+# to re-file it or its verdicts (CLAUDE.md, "Question ids are stable and never reused"). The
+# commands that did are retired. Each still answers, hidden, so an old script or habit learns why
+# instead of meeting "No such command".
 _STABLE_IDS = ("question ids are stable and never reused. A split or reworded question gets a "
                "new id, and the old id is retired, so claims never move between ids and "
-               "nothing re-files them or their verdicts. See \"Question ids are stable\" in "
-               "CLAUDE.md.")
+               "nothing re-files them or their verdicts. See \"Question ids are stable and "
+               "never reused\" in CLAUDE.md.")
 
 
 def _retired(what: str) -> NoReturn:

@@ -90,25 +90,28 @@ def _tree(root):
     return {p.relative_to(root): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
 
 
-@pytest.mark.parametrize("args", [
-    ["remap"],
-    ["remap", "--apply"],
-    ["remap", "--apply", "--archive-stranded"],
-    ["remap", "--mark-applied"],
-    ["judgments", "--repair"],
-    ["judgments", "--repair", "--moved", "q1:q2", "--gone", "q3"],
-    ["judgments", "--moved", "q1:q2"],
-    ["judgments", "--rollback"],
-], ids=" ".join)
-def test_a_retired_command_says_why_and_changes_nothing(tmp_path, args):
+@pytest.mark.parametrize("args, named", [
+    (["remap"], "`vg remap`"),
+    (["remap", "--apply"], "`vg remap`"),
+    (["remap", "--apply", "--archive-stranded"], "`vg remap`"),
+    (["remap", "--mark-applied"], "`vg remap`"),
+    (["judgments", "--repair"], "`vg judgments --repair`"),
+    (["judgments", "--repair", "--moved", "q1:q2", "--gone", "q3"],
+     "`vg judgments --repair --moved --gone`"),
+    (["judgments", "--moved", "q1:q2"], "`vg judgments --moved`"),
+    (["judgments", "--gone", "q3"], "`vg judgments --gone`"),
+    (["judgments", "--rollback"], "`vg judgments --rollback`"),
+], ids=lambda v: " ".join(v) if isinstance(v, list) else "")
+def test_a_retired_command_says_why_and_changes_nothing(tmp_path, args, named):
     """An old script or habit must meet the rule that replaced these commands, not "No such
-    command" — and must not have anything moved, re-homed or rolled back on its behalf."""
+    command" — and must not have anything moved, re-homed or rolled back on its behalf. The
+    refusal names the flags given, not one the caller never typed."""
     data, run, _ = _legacy_run(tmp_path)
     judgments.record(run, "q1", _source().sid, "supports", "judged before the retirement")
     before = _tree(data)
     code, out = _vg(*args, "--data", run)
     assert code == 1, out
-    assert "is retired: question ids are stable and never reused" in out, out
+    assert f"{named} is retired: question ids are stable and never reused" in out, out
     assert "A split or reworded question gets a new id, and the old id is retired" in out, out
     assert _tree(data) == before
 
@@ -120,23 +123,74 @@ def test_retired_commands_are_not_offered(tmp_path):
     assert not re.search(r"--(repair|rollback|moved|gone)\b", out), out
 
 
-def test_a_backup_an_interrupted_re_home_left_still_stops_every_reader(tmp_path):
+def test_a_backup_an_interrupted_re_home_left_still_stops_every_reader(tmp_path, monkeypatch):
     """No re-home runs any more, but one an older version was running when it died left
     judgments-backup/ behind, with shards that may be half-rewritten. Reading them as the
     verdicts would render whatever is missing as unreviewed, so every reader still refuses,
-    and names the checkout whose `--rollback` undoes it. `--rollback` here says the same rather
-    than that it is retired, since that is what the operator asking for it needs."""
+    and names a commit whose `--rollback` undoes it. `--rollback` here says the same rather
+    than that it is retired, since that is what the operator asking for it needs.
+
+    The command runs from that other checkout, so the run is named by its absolute path: a
+    relative `--data data` there names that checkout's own data/, which holds no backup, and
+    the old rollback reports nothing to undo."""
     data, run, _ = _legacy_run(tmp_path)
     judgments.record(run, "q1", _source().sid, "supports", "half-rewritten")
     (judgments.backup_dir(run) / "q1.json").parent.mkdir()
     (judgments.backup_dir(run) / "q1.json").write_text("[]")
     before = _tree(data)
+    monkeypatch.chdir(tmp_path)
     for args in (["judgments"], ["judgments", "--rollback"], ["judgments", "--repair"],
                  ["build"], ["status"], ["verify"]):
-        code, out = _vg(*args, "--data", run)
+        code, out = _vg(*args, "--data", run.relative_to(tmp_path))
         assert code == 1, (args, out)
         assert "was interrupted, and its shards may be half-rewritten" in out, (args, out)
-        assert f"run `vg judgments --rollback --data {run}` from a checkout" in out, (args, out)
-        assert "git log -1 -S'def rollback(' -- src/vgpipe/judgments.py" in out, (args, out)
+        assert (f"run `vg judgments --rollback --data {run.resolve()}` from a checkout of "
+                f"commit {judgments.LAST_WITH_ROLLBACK}, which still has it") in out, (args, out)
         assert "is retired" not in out, (args, out)
     assert _tree(data) == before
+
+
+def test_the_commit_named_for_rollback_is_on_main_and_has_it():
+    """The refusal above sends an operator to this commit. It must stay reachable, and its
+    `vg judgments` must still take `--rollback`."""
+    import subprocess
+
+    def git(*args):
+        return subprocess.run(["git", *args], capture_output=True, text=True)
+
+    commit = judgments.LAST_WITH_ROLLBACK
+    old = git("show", f"{commit}:src/vgpipe/judgments.py")
+    if old.returncode != 0:
+        pytest.skip(f"no git history with {commit} here: {old.stderr.strip()}")
+    assert "\ndef rollback(root: Path)" in old.stdout
+    assert "rollback: bool = False" in git("show", f"{commit}:src/vgpipe/cli.py").stdout
+
+
+def test_a_verdict_recorded_while_another_is_being_written_is_not_lost(tmp_path, monkeypatch):
+    """record() reads a shard and rewrites it, and verifier agents record in parallel. A second
+    `vg judge` landing between the first one's read and its rewrite was never read, so the
+    rewrite deleted it. The directory lock makes it wait and land on top instead. (The test
+    that pinned this lock went with `rehome()`, which shared it.)"""
+    import threading
+
+    first, second = _source(), Source(**{**_source().model_dump(), "url": URL + "-2"})
+    real_read, waiting = judgments._read, []
+
+    def read_then_judge(p):
+        read = real_read(p)
+        if not waiting:
+            t = threading.Thread(target=judgments.record,
+                                 args=(tmp_path, "q1", second.sid, "topic_only", "second"))
+            waiting.append(t)
+            t.start()
+            t.join(timeout=0.3)
+            assert t.is_alive(), "the second verdict was written while the first held a stale read"
+        return read
+
+    judgments.record(tmp_path, "q1", first.sid, "supports", "warm-up")   # judgments/ exists
+    monkeypatch.setattr(judgments, "_read", read_then_judge)
+    judgments.record(tmp_path, "q1", first.sid, "supports", "first")
+    waiting[0].join(timeout=5)
+    assert not waiting[0].is_alive()
+    assert {sid: j.note for sid, j in judgments.load(tmp_path, "q1").items()} == {
+        first.sid: "first", second.sid: "second"}
