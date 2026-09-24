@@ -241,10 +241,12 @@ def test_no_question_set_is_said_and_does_not_fail(tmp_path):
     pytest.param(json.dumps([{"id": "q1", "text": VOTE}, "q2", {"text": FUNDS},
                              {"id": "q4"}, {"id": "q1", "text": FUNDS},
                              {"id": "Q1", "text": "Who endorsed them?"},
-                             {"id": " q6", "text": "Who endorsed them?"}]),
+                             {"id": " q6", "text": "Who endorsed them?"},
+                             {"id": "q7", "text": " "}]),
                  "entry 1 is not an object; entry 2 has no id; entry 3 (q4) has no text; "
                  "entry 4 reuses id q1; entry 5 reuses id q1 as Q1; "
-                 "entry 6 has id ' q6', which no claim can carry", id="bad-entries"),
+                 "entry 6 has id ' q6', which no claim can carry; entry 7 (q7) has no text",
+                 id="bad-entries"),
 ])
 def test_an_unreadable_question_set_fails_rather_than_reading_as_empty(tmp_path, text, expect):
     """Read as empty, every claim would sit on an unlisted id; read as missing, nothing would
@@ -328,6 +330,14 @@ def test_check_claim_fails_a_question_build_would_refuse(tmp_path):
     assert code == 1, out
     assert f"question id q9 is not in {root / 'questions.json'}" in out, out
     assert "do not edit it" in out, out
+
+    # A miscased id is the researcher's to fix, not a changed question set to report.
+    path = _cited(root, root, "Q1", VOTE)
+    code, out = _vg("check-claim", path, "--data", root)
+    assert code == 1, out
+    assert (f"question id Q1 is not in {root / 'questions.json'}, which has q1: they differ "
+            f"only in case") in out, out
+    assert "changed under you" not in out, out
 
 
 def test_check_claim_finds_the_run_from_inside_claims(tmp_path, monkeypatch):
