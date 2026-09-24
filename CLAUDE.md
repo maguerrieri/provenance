@@ -291,6 +291,29 @@ Both matter for the same reason: on a paywalled row the snapshot is the human's 
 to the text, so a stale capture that predates the quote is worse than no snapshot at all —
 it looks like verification.
 
+**Nor is a paywalled row left waiting on a verdict.** A `could_not_verify_paywall` row has no
+confirmed context: the live page is gated, and no snapshot confirmed the quote. So the judgment
+pass cannot cover it. `vg judge` refuses it (there is no copy to stamp), and a verdict recorded
+on it reads stale. The roll-up's "unreviewed means pending" rule still counted it, and that rule
+runs before the paywall branch. Every claim resting on a paywalled source therefore read
+`pending` forever: waiting on a judgment pass that could never record anything, with no paywall
+badge. That is failing it by another name, and it pushes researchers to swap in a readable copy.
+
+So a paywalled row is outside the judgment pass (`models.NOT_JUDGED`, read by
+`Source.awaits_verdict`). Its claim rolls up to the yellow paywall flag unless something
+outranks it: a failed citation, or a readable source still waiting on its verdict. The route to
+a verdict is the snapshot. Once `vg verify` or `vg archive` confirms the quote in the run's own
+snapshot, the row is `verified_via_archive`, its context is that snapshot, and it waits on a
+verdict like any other row.
+
+The rejected design was to judge a paywalled row's snapshot wherever one exists, stamped with
+the snapshot. Every snapshot that confirms the quote is already judged that way, as
+`verified_via_archive`. A row still paywalled has no snapshot, or one that does not confirm the
+quote, so the verifier would judge text the quote is not in. And a row with no snapshot still
+could never be judged, so its claim would stay `pending`, which is the bug itself. A test pins
+`NOT_JUDGED` to exactly `USABLE` minus `GOOD`, so a new usable status with no context has to be
+classified rather than read `pending` forever.
+
 ## Nothing to search is not "not on the page"
 
 A scanned PDF serves fine and extracts to nothing but the `[[page N]]` markers
