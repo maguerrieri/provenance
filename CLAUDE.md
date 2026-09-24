@@ -97,7 +97,41 @@ own evidence disagree, which `conflicts.py` treats as a finding, not noise to av
   its sid. So the skill leaves it for the human, and a retry for another failure keeps the
   source. That is prose, not a gate (#73).
 
-`detect()` reads verdicts now, so it runs at the end of `_settle()`. `vg build` and `vg status`
+**So does an answer whose figures none of its snippets carry.** `conflicts.py` finds two kinds
+of disagreement inside one claim: (1) its sources disagree on a dollar figure or a year, and
+(2) the answer states dollar figures or years, the snippets state some, and none of the
+answer's is among them. Both were flags only. `Claim.status` never read them, so the claim
+rendered `verified` with a red badge, outside the review filter and the counts, and a claim
+that `derives_from` it read it as a met input. Gating on text heuristics can send sound claims
+to review, so the cost was measured on two real runs first:
+
+- **(1) stays a flag.** (1) and (2) together flagged about one claim in ten, all otherwise
+  green. Read by hand, all but one were sound: claims with several facts, whose sources carry
+  different numbers because they describe different things (a total beside a single gift,
+  different offices' dates, different rates). Tighten it before it gates, for example by
+  comparing only figures within ~15% of each other as the cross-claim near-miss rule does, and
+  skipping year disagreement where the claim cites several dated events.
+- **(2) gates.** Alone it flagged one claim in 76, the one the read found plausibly real. It
+  sits in the `contradicts` check, so it outranks the same things: the verified and paywall
+  branches, `pending` (no verdict changes what the snippets say) and `not_found`.
+- **Worked out, not read from the list.** `Claim.status` calls `conflicts.unsourced_figures()`,
+  and `detect()` lists what that same function returns. The two cannot disagree, and a status
+  read before `detect()` still sees it. `_settle()` runs `detect()` before `check_inputs()`
+  anyway, so the line explaining a status is settled before any status is read.
+- **The cost holds for the detector as measured.** It fires only when *none* of the answer's
+  figures is in a snippet. An answer with one sourced figure beside an unsourced one passes,
+  and so does evidence with no figure at all. Widening either changes the cost, so measure it
+  again first. (3), near misses across claims, prompts across questions and stays a flag.
+- **A misread figure is a false conflict.** Two parsing errors read one number as two. A unit
+  came from the next word's first letter, so "$5,000 more" was five billion dollars. And units
+  scaled in binary floats, so "$8.2 million" was 8199999.999999999, not "$8,200,000". As flags
+  they were noise; under a gate they send sound claims to review, so both were fixed with it.
+  The measurement ran with them in place, so the fix can only lower its count. Conflict lines
+  also printed whole dollars, and $4.40 against $4.25 read "$4 vs $4". Amounts under $10 and
+  fractional amounts now show cents.
+
+`detect()` reads verdicts now, so `_settle()` runs it once they are applied, after
+revalidation and corroboration and before `check_inputs()`. `vg build` and `vg status`
 used to run it first, on claim files loaded with their machine fields trusted. There `support`
 is whatever the file says. A `contradicts` typed into a claim file would have been listed, and
 a recorded one missed. Anything that reads a verdict runs after `judgments.merge()` has applied
@@ -182,7 +216,8 @@ Now `check_inputs()` runs last and walks `derives_from` inputs-first, so a downg
 every claim built on it. A cycle is reported and its members marked unmet, not looped. The
 order lives in one place, `cli._settle()`, which `vg build` and `vg status` both call: a new
 command that reads `c.status` should call it too, rather than repeat the sequence. Conflict
-detection comes after all of it, since a `contradicts` verdict is a conflict.
+detection comes after the verdicts, since a `contradicts` verdict is a conflict, and before
+`check_inputs()`, so the conflicts that explain a status are settled before any status is read.
 
 **A mechanical failure outranks `pending`.** `pending` means a verdict could still clear the
 claim. No verdict can clear a claim with a failed citation, and the verifier does not judge a
@@ -192,7 +227,8 @@ the claim `human_review`, with or without verdicts, whatever its other sources s
 includes a paywalled one: `could_not_verify_paywall` is a yellow badge outside the review
 filter, and a broken citation must not hide behind it. It outranks `not_found` for the same
 reason: an absence claim needs no citation, but a broken one it carries is still shown. A
-`contradicts` verdict outranks both the same way (see "The judgment pass is not advisory").
+`contradicts` verdict, and an answer whose figures no snippet carries, outrank both the same
+way (see "The judgment pass is not advisory").
 
 ## Matching is literal first, normalized second — never silently
 
@@ -235,7 +271,8 @@ badge. That is failing it by another name, and it pushes researchers to swap in 
 
 So a paywalled row is outside the judgment pass (`models.NOT_JUDGED`, read by
 `Source.awaits_verdict`). Its claim rolls up to the yellow paywall flag unless something
-outranks it: a failed citation, a `contradicts` verdict, a readable source still waiting on
+outranks it: a failed citation, a `contradicts` verdict, an answer whose figures no snippet
+carries, a readable source still waiting on
 its verdict, or one `vg verify` has not reached (`pending`, even if a verdict landed on it by
 sid). Past those,
 the paywall branch applies the all-verified branch's rules, with the flag standing in for green.
