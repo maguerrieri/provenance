@@ -9,8 +9,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      # Node 24 actions: hosted runners dropped Node 20 on 2026-09-16. setup-uv's Node 24
+      # releases have no moving major tag, so it is pinned to one.
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
       - run: uv sync --all-groups
