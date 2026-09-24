@@ -95,7 +95,8 @@ def load(path: Path) -> QuestionSet:
             # unlisted id, and nothing would name this entry as the cause.
             problems.append(f"entry {i} has id {qid!r}, which no claim can carry")
             continue
-        if not isinstance(asked, str):
+        if not isinstance(asked, str) or not asked.strip():
+            # A blank question asks nothing, and a claim with a blank `question` would match it.
             problems.append(f"entry {i} ({qid}) has no text")
             continue
         if (first := folded.get(qid.casefold())) is not None:

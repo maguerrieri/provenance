@@ -1438,7 +1438,12 @@ def check_claim(path: Path, data: Path = DATA, cache: Path = None, race: str = "
         # who misquotes it hears here rather than stopping the whole run's review app.
         found = questions.check([claim], asked) if asked is not None else questions.Findings()
         qid = escape(claim.question_id)
-        if found.unlisted:
+        if listed := found.case_of.get(claim.question_id):
+            ok = False
+            con.print(f"  [red]question id[/] {qid} is not in {escape(str(asked_in))}, which "
+                      f"has {escape(listed)}: they differ only in case\n"
+                      f"      Use the question_id you were given, exactly.")
+        elif found.unlisted:
             ok = False
             con.print(f"  [red]question id[/] {qid} is not in {escape(str(asked_in))}\n"
                       f"      Use the question_id you were given, exactly. If you did, the "
