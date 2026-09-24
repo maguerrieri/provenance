@@ -780,13 +780,19 @@ near-matches. `_no_rows()` exists for exactly this and every new query must use 
 
 Related traps in the same data:
 - **A blank amount is not zero.** `CAST('' AS REAL)` is 0.0 and `COUNT(*)` still counts the
-  row, so an `ie_total` window whose only row had a blank `AMOUNT` came back found, "$0.00, 1
-  expenditure(s)". A blank is money nobody
+  row, so a total whose only row had a blank `AMOUNT` came back found, "$0.00, 1
+  expenditure(s)" or "1 itemized gift(s)". A blank is money nobody
   stated: leave it out of the sum *and* the count, and name it in the detail. Test for "is a
   number", not "is empty": CAST also reads `N/A` as 0.0 and `1,000` as 1.0. A stated `0` is
-  the filer's figure and counts. `ie_total` does this (v2), and the IE listing prints a
-  blank as `blank`, not `$0`; the receipt queries and `vg calaccess contributions` do not yet
-  (#34 — `RCPT_CD` has 992 blank amounts before dedup).
+  the filer's figure and counts. `amount_sql()` is that test, and every query reads `AMOUNT`
+  through it: `ie_total` (v2) and the three receipt queries (v2). `top_contributor` ranks
+  only gifts with an amount, since a blank read as 0.0 tied a stated $0. Both listings print a
+  blank as `blank`, not `$0`, and any other unreadable amount as filed.
+- **A dedup reads a value the way the sum does.** `DEDUPED_RECEIPTS` grouped on
+  `CAST(AMOUNT AS REAL)`, which reads `300,000` as 300.0. A row filed that way merged into a
+  $300 gift under the same transaction base, `MAX()` over the text kept `300,000`, and once
+  that read as unknown, the stated $300 went with it. It groups on `amount_sql()` now. When
+  you change how a value is read, find every place that groups or compares on it too.
 - **Names are not reliably split.** Match `NAML`, `first || ' ' || last`, and
   `last || ' ' || first`. But with a first name given, do NOT also match a bare surname: a
   race can have two candidates who share one, and a bare surname match belongs to neither.
