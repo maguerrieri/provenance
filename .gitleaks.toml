@@ -1,0 +1,12 @@
+# gitleaks reads this from the repo root (the secret-scan workflow). It keeps every default
+# rule and allows only values that are fake by construction.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Dummy credentials in tests that prove the curl importer strips them"
+# Matched against the extracted secret, so only this exact placeholder passes.
+regexes = [
+  '''^tokensecret$''',
+]
