@@ -68,8 +68,9 @@ Do not summarize the source rules for them — the agent definition carries them
    adversarial claims) are the two sources genuinely independent? Give it the question id
    and the run dir, not a copy of the claim: it reads the claim and each source's context
    from `uv run vg handoff <qid> --data <run>`, which prints every context with its sid and a
-   **context token** naming the claim, the citation and that context (and, for a query
-   citation, the query run that produced it). Record each verdict with:
+   **context token** naming the whole hand-off: the claim (its type included), and every
+   source printed with it, each with its citation, its context and, for a query citation, the
+   query run that produced it. Record each verdict with:
 
    ```
    uv run vg judge <qid> <sid> supports|topic_only|contradicts|superseded --context <token> --note "..."
@@ -78,13 +79,13 @@ Do not summarize the source rules for them — the agent definition carries them
    `vg judge` refuses, writing nothing, unless that claim (exact id, case included) cites
    that sid, the cache still holds the copy of the page `vg verify` built its context from
    (the snapshot, for a `verified_via_archive` source), that copy still gives the context the
-   claim file holds, and the token names the claim, context and query run the file has now —
+   claim file holds, and the token names the hand-off `vg handoff` would print now —
    so run it after `vg verify`, and re-verify if another run re-fetched the page or
    `vg archive` replaced the snapshot since. A verdict without a token is refused, a query
-   citation's included. A token for an older claim, citation, context or query run means one
-   changed while the verifier worked (a re-verify, a retry, a query re-run under a new
-   definition, export or database, even one printing the same figure): the verifier re-reads
-   what `vg handoff` prints and judges that. A refusal names a wrong id, sid or `--data`, the copy
+   citation's included. A token for an older hand-off means something in it changed while the
+   verifier worked (a re-verify, a retry that rewrote the claim or swapped, added or dropped a
+   source, a query re-run under a new definition, export or database, even one printing the
+   same figure): the verifier re-reads what `vg handoff` prints and judges that. A refusal names a wrong id, sid or `--data`, the copy
    that moved, or what changed; it is never a cue to file the verdict under some other claim.
 
    Judgments are stored in `data/judgments/<qid>.json`, keyed by source id — **not** in the
