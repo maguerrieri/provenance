@@ -263,3 +263,24 @@ def test_a_stale_verdict_on_a_redrawn_context_waits_on_verify_not_a_verifier(tmp
     assert (code, need, stale) == (0, 0, 0), out       # not waiting on a verifier...
     assert "1 more source(s) have nothing a verifier can judge yet" in out, out
     assert "unreviewed (run vg verify)" in out, out     # ...but on `vg verify`
+
+
+def test_an_unjudged_source_on_a_redrawn_context_waits_on_verify_not_a_verifier(tmp_path):
+    """The same row with no verdict yet. It counted as a verifier's to close, and `vg judge`
+    stamped a verdict on the claim file's outdated excerpt that build then dropped."""
+    from vgpipe.fetch import cache_path
+
+    s = src()
+    run = _verified_run(tmp_path / "run", claim("q1", s))
+    page = PageCache.model_validate_json(cache_path(run, s.url).read_text())
+    page.text = f"A different lead-in. {s.snippet}."     # same copy, fetch time unchanged
+    cache_path(run, s.url).write_text(page.model_dump_json())
+
+    code, need, stale, out = _gate(run)
+    assert (code, need, stale) == (0, 0, 0), out
+    assert "1 more source(s) have nothing a verifier can judge yet" in out, out
+    assert "unreviewed (run vg verify) the context changed since vg verify" in out, out
+
+    _verify(run)                                            # redraws the claim file's excerpt
+    code, need, stale, out = _gate(run)
+    assert (code, need) == (1, 1), out                      # now a verifier's to close

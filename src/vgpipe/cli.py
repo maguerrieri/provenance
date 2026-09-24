@@ -1242,14 +1242,16 @@ def show_judgments(data: Path = DATA, question_id: str = "",
                 blocked += 1
                 v = f"[dim]unreviewed ({s.verification.status})[/]"
                 note = s.verification.reason
-            elif j is not None and redrawn:
-                # Revalidation dropped a verdict: the context moved since `vg verify` wrote the
-                # claim file. Re-judging can't fix that; re-verifying does. Asked of the context,
-                # not of whether the verdict applied: a stale one (another answer, or none named)
-                # never applies, and on this row a fresh one would be dropped the same way.
+            elif redrawn:
+                # The context moved since `vg verify` wrote the claim file, and revalidation
+                # drops any verdict on the old one. Re-judging can't fix that; re-verifying does.
+                # Asked of the context, not of the verdict: a stale one (another answer, or none
+                # named) never applies, and with no verdict at all, `vg judge` would stamp one
+                # on the claim file's outdated excerpt and build would drop it the same way.
                 blocked += 1
                 v = "[dim]unreviewed (run vg verify)[/]"
-                note = "verdict recorded, but the context changed since vg verify"
+                note = (f"{'verdict recorded, but the' if j else 'the'} context changed since "
+                        f"vg verify")
             elif unjudgeable:
                 # `vg judge` would refuse it: the claim file's run predates this definition,
                 # export or root, or the copy of the page its context came from is gone or
