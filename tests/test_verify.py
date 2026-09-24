@@ -6459,12 +6459,12 @@ _NOT_A_DEFINITION = {
 
 # name -> (version, fingerprint). See test_a_query_definition_cannot_change_unnoticed.
 QUERY_DEFINITIONS = {
-    "calaccess.contributor_total": (2, "6faf00c6efd5"),
-    "calaccess.filer_total": (2, "2254fd2c42f7"),
-    "calaccess.top_contributor": (2, "a36018a98d16"),
+    "calaccess.contributor_total": (2, "03343db683a4"),
+    "calaccess.filer_total": (2, "bf8b0264379e"),
+    "calaccess.top_contributor": (2, "c588ae4ecba3"),
     # moved without a bump: amount_sql() is ie_total's own amount expression, extracted
     # unchanged, and DEDUPED_RECEIPTS, which it does not read, changed beside it
-    "calaccess.ie_total": (2, "7fb5ac423749"),
+    "calaccess.ie_total": (2, "dc70b31ada75"),
 }
 
 

@@ -100,11 +100,6 @@ def test_a_mixed_total_sums_only_the_stated_amounts_and_says_how_many_it_left_ou
     assert total.note == ("2 itemized schedule-A gift(s); 1 more gift(s) with no readable "
                           "amount, not counted")
 
-    top = queries.run("calaccess.top_contributor", {"filer_id": MIXED}, root)
-    assert top.found and top.value == "Quill PAC" and top.rows == 1
-    assert top.note == ("$500 across 1 gift(s); 1 more gift(s) to this filer with no readable "
-                        "amount, not counted")
-
     # the figure the unreadable row used to inflate or zero no longer reproduces
     for name, params in (("calaccess.contributor_total",
                           {"filer_id": MIXED, "contributor": "Quill PAC"}),
@@ -130,19 +125,64 @@ def test_a_stated_zero_is_the_filers_figure_and_counts(tmp_path, zero):
     assert top.found and top.value == "Cedar Trust"
 
 
+@pytest.mark.parametrize("unread", UNREADABLE)
+def test_no_largest_contributor_is_named_while_a_gift_has_no_amount(tmp_path, unread):
+    """A total can say what the stated gifts come to and name what it left out. A rank cannot:
+    a gift of unknown size could make anyone the largest, and "the largest contributor" is a
+    publishable sentence. So the stated leader is named as a lead, and nothing verifies."""
+    root = _receipts(tmp_path)
+    _set_amount(root, "T3", unread)   # Tess Marlow's only gift, not the leader's
+
+    top = queries.run("calaccess.top_contributor", {"filer_id": MIXED}, root)
+    assert top.value is None and not top.found, top
+    assert top.note.startswith("Quill PAC leads the stated amounts at $750, but no largest "
+                               "contributor can be named; 1 more gift(s) to this filer with no "
+                               "readable amount, not counted")
+    for expected in ("Quill PAC", "Tess Marlow"):
+        assert not _verifies(root, "calaccess.top_contributor", {"filer_id": MIXED}, expected)
+
+
 def test_a_contributor_with_only_unreadable_gifts_never_ties_for_top(tmp_path):
     """Read as 0.0, a contributor whose gifts all had blank amounts tied one whose stated total
-    was $0, and the tie was reported as a finding: "2-WAY TIE at $0"."""
+    was $0, and the tie was reported as a finding: "2-WAY TIE at $0". A tie among STATED
+    totals is still reported as one."""
     root = _receipts(tmp_path)
     _set_amount(root, "T1", "")
     _set_amount(root, "T2", "")
     _set_amount(root, "T3", "0")
 
     top = queries.run("calaccess.top_contributor", {"filer_id": MIXED}, root)
-    assert top.found and top.value == "Tess Marlow", top
-    assert "TIE" not in top.detail
-    assert top.note.endswith("; 2 more gift(s) to this filer with no readable amount, "
-                             "not counted")
+    assert not top.found and "TIE" not in top.detail and "tie" not in top.detail, top
+    assert top.detail.startswith("Tess Marlow leads the stated amounts at $0")
+
+    _set_amount(root, "T1", "300")   # Quill PAC now matches Tess Marlow's stated $300
+    _set_amount(root, "T3", "300")
+    top = queries.run("calaccess.top_contributor", {"filer_id": MIXED}, root)
+    assert not top.found
+    assert top.detail.startswith("a 2-way tie (Quill PAC | Tess Marlow) leads the stated "
+                                 "amounts at $300")
+
+
+def test_top_contributor_counts_unreadable_gifts_beyond_the_ranked_few(tmp_path):
+    """Only four contributors are fetched to rank. The unreadable count is over every gift to
+    the filer, not those four, and contributors with no readable gift never crowd out one
+    with a stated amount."""
+    root = _receipts(tmp_path)
+    for i in range(6):
+        _set(root, "INSERT INTO RCPT_CD (FILING_ID, AMEND_ID, TRAN_ID, LINE_ITEM, CTRIB_NAML,"
+             " RCPT_DATE, AMOUNT, FORM_TYPE) VALUES ('8100001', '0', ?, ?, ?,"
+             " '1/9/2026 12:00:00 AM', '', 'A')", f"U{i}", str(10 + i), f"Unstated Fund {i}")
+
+    top = queries.run("calaccess.top_contributor", {"filer_id": MIXED}, root)
+    assert not top.found, top
+    assert top.detail == ("Quill PAC leads the stated amounts at $750, but no largest "
+                          "contributor can be named; 6 more gift(s) to this filer with no "
+                          "readable amount, not counted")
+
+    # with every amount readable, the largest is named as before
+    _set(root, "DELETE FROM RCPT_CD WHERE TRAN_ID LIKE 'U%'")
+    top = queries.run("calaccess.top_contributor", {"filer_id": MIXED}, root)
+    assert top.found and top.value == "Quill PAC" and top.detail == "$750 across 2 gift(s)"
 
 
 def test_a_readable_gift_is_never_merged_into_an_unreadable_restatement(tmp_path):
@@ -172,13 +212,18 @@ def test_the_contributions_listing_never_prints_an_unreadable_amount_as_zero(
         tmp_path, capsys, unread):
     """The listing a researcher finds filings with printed a blank as "$0", which reads as a
     stated zero. A blank says so; anything else is shown as filed (escaped, so "[/]" is not
-    rich markup), and it sorts after every stated amount."""
+    rich markup). It sorts after every stated amount, and the top-N cut never drops it: it
+    is the gift a query total names as not counted, and its filing is how to check it."""
     root = _receipts(tmp_path)
     _set_amount(root, "T2", unread)
 
     got = calaccess.contributions_to(root, MIXED)
     assert [c.amount for c in got] == [500.0, 300.0, None]
     assert got[-1].amount_filed == unread.strip()
+    assert [c.amount for c in calaccess.contributions_to(root, MIXED, top=1)] == [500.0, None]
+    # a `since` window still applies to it
+    assert [c.amount for c in calaccess.contributions_to(root, MIXED, since="2026-01-07")] == [
+        300.0]
 
     capsys.readouterr()
     cli.calaccess_contributions(MIXED, data=root)
