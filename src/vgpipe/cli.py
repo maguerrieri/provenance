@@ -1482,8 +1482,9 @@ def _unreadable_ids(questions: list) -> list[str]:
     so the ids are untrusted: `../x` as a maps_from named a file beside claims/ for an apply to
     unlink, as an id the place it wrote the moved claim, and an absolute path discarded claims/
     entirely. The schema's own shape is the check (models.is_question_id), as in
-    judgments.path_for(). A falsy maps_from or mapped_from reads as absent, as it always has;
-    anything else must be one id, since a list or object there crashed the checks after it.
+    judgments.path_for(). A missing, null or empty maps_from or mapped_from reads as absent;
+    anything else must be one id. A list or object there crashed the checks after it, and a 0,
+    [] or false read as absent, so a mapping someone meant to write silently wasn't one.
     """
     out = []
     for i, q in enumerate(questions):
@@ -1493,10 +1494,20 @@ def _unreadable_ids(questions: list) -> list[str]:
         ok = is_question_id(q.get("id"))
         bad = [] if ok else [f"id {q['id']!r}" if "id" in q else "no id"]
         bad += [f"{k} {q[k]!r}" for k in ("maps_from", "mapped_from")
-                if q.get(k) and not is_question_id(q[k])]
+                if q.get(k) not in (None, "") and not is_question_id(q[k])]
         if bad:
             out.append(f"entry {i}" + (f" (id {q['id']})" if ok else "") + f": {' and '.join(bad)}")
     return out
+
+
+def _claim_file(claims_dir: Path, qid: str) -> Path:
+    """claims/<qid>.json for an id remap read from questions.json. Every such id is checked at
+    the door (_unreadable_ids), for the message and so nothing is touched first; this fails
+    closed at each join as well, so a later change that reaches one another way can't bring
+    `../x` back."""
+    if not is_question_id(qid):
+        raise ValueError(f"refusing to name a claim file after {qid!r}: not a question id")
+    return claims_dir / f"{qid}.json"
 
 
 def _retired_from(q: dict) -> str | None:
@@ -1516,7 +1527,7 @@ def _left_on_old_ids(questions: list[dict], key: str, claims_dir: Path) -> list[
     current = {q["id"] for q in questions}
     return sorted({q[key] for q in questions
                    if isinstance(q.get(key), str) and q[key] and q[key] not in current
-                   and (claims_dir / f"{q[key]}.json").exists()},
+                   and _claim_file(claims_dir, q[key]).exists()},
                   key=qid_sort_key)
 
 
@@ -1540,8 +1551,8 @@ def _never_arrived(questions: list[dict], claims_dir: Path) -> list[tuple[str, s
     sources = {q["maps_from"] for q in questions if q.get("maps_from")}
     return sorted({(src, q["id"]) for q in questions for src in [_retired_from(q)]
                    if src and src not in current and src not in sources
-                   and (claims_dir / f"{src}.json").exists()
-                   and not (claims_dir / f"{q['id']}.json").exists()},
+                   and _claim_file(claims_dir, src).exists()
+                   and not _claim_file(claims_dir, q["id"]).exists()},
                   key=lambda m: (qid_sort_key(m[0]), qid_sort_key(m[1])))
 
 
@@ -1634,14 +1645,15 @@ def remap(data: Path = DATA, apply: bool = False, archive_stranded: bool = False
     # for an apply to unlink or write (_unreadable_ids). A question id and a maps_from or
     # mapped_from each name one question, and the checks below all read them as such.
     if not isinstance(questions, list):
-        con.print(f"[red]refusing to remap:[/] {qpath} must be a list of questions, and holds "
-                  f"a {type(questions).__name__}. Nothing was touched.")
+        con.print(f"[red]refusing to remap:[/] {escape(str(qpath))} must be a list of "
+                  f"questions, and holds a {type(questions).__name__}. Nothing was touched.")
         raise typer.Exit(1)
     if unreadable := _unreadable_ids(questions):
-        con.print(f"[red]refusing to remap:[/] {qpath} names claim files by question id "
-                  f"(claims/<id>.json), so a question's id, maps_from and mapped_from must each "
-                  f"be one question id ({escape(QID_PATTERN)}: no path separators, no leading "
-                  f"dot). Not so for {escape('; '.join(unreadable))}. Nothing was touched.")
+        con.print(f"[red]refusing to remap:[/] {escape(str(qpath))} names claim files by "
+                  f"question id (claims/<id>.json), so a question's id, maps_from and mapped_from "
+                  f"must each be one question id ({escape(QID_PATTERN)}: no path separators, no "
+                  f"leading dot). Not so for {escape('; '.join(unreadable))}. Nothing was "
+                  "touched.")
         raise typer.Exit(1)
 
     # Two questions sharing an id passed the dry run and then crashed the apply after the backup
@@ -1891,15 +1903,15 @@ def remap(data: Path = DATA, apply: bool = False, archive_stranded: bool = False
     for q in questions:
         old = q.get("maps_from")
         if not old:
-            own = claims_dir / f"{q['id']}.json"
+            own = _claim_file(claims_dir, q["id"])
             if retired_file and own.exists():
                 keeps[q["id"]] = own
             else:
                 unclaimed.append(q["id"])
             continue
-        srcp = claims_dir / f"{old}.json"
+        srcp = _claim_file(claims_dir, old)
         if srcp.exists():
-            moves.append((srcp, claims_dir / f"{q['id']}.json", q))
+            moves.append((srcp, _claim_file(claims_dir, q["id"]), q))
 
     targets = {m[0] for m in moves}
     # A retired question whose claim a new pair moves away keeps nothing.

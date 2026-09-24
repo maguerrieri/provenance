@@ -686,8 +686,10 @@ keeps the `previous_question` an earlier migration recorded unless the wording a
 Malformed input is refused up front, in every mode: a question whose `id`, `maps_from` or
 `mapped_from` isn't one id of the question-id shape (see "A schema constraint guards only what
 passes through the schema"), two questions sharing an id, or one old id mapped into two questions
-(a split). Each of these used to crash, half-apply, or reach a file outside `claims/`. For a
-split, keep `maps_from` on the question that inherits the research.
+(a split). Each of these used to crash, half-apply, or reach a file outside `claims/`. A missing,
+null or empty `maps_from` reads as absent; a `0`, `[]` or `false` is refused, since reading it as
+absent silently dropped a mapping someone meant to write. For a split, keep `maps_from` on the
+question that inherits the research.
 
 **Commit the retired `questions.json` and the marker in the same commit as the claims they
 describe**, wherever those claims are tracked (`data/<candidate>/claims/`). Claims without their
@@ -1272,7 +1274,9 @@ apply. A check at each join would trip after the backup or the archive had run, 
 half-apply, and would let the dry run pass what the apply refuses. So `_unreadable_ids()` checks
 every id at the door, before any file at one is read or touched, in every mode. Put the check
 where every value passes: at the join when one join has many doors, at the door when one door
-feeds many joins. Either way it is one test, `models.is_question_id()`, which both call.
+feeds many joins. The joins still fail closed (`_claim_file()`), so a later change that opens a
+second door can't bring `../x` back, but the door is what makes the refusal readable and whole.
+Either way it is one test, `models.is_question_id()`, which every check calls.
 
 ## Known and accepted: the pipeline fetches whatever a claim cites
 

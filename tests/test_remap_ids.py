@@ -165,6 +165,37 @@ def test_ids_of_the_question_id_shape_still_remap(tmp_path, out):
     assert "nothing to remap" in out.getvalue()
 
 
+def test_absent_means_missing_null_or_empty_and_any_other_falsy_value_is_refused(tmp_path, out):
+    """A 0, [] or false in maps_from read as "no mapping", so a mapping someone meant to write
+    silently wasn't one, and its claim could be listed as stranded and archived. Missing, null
+    and "" still read as absent."""
+    run = tmp_path / "run"
+    _claim(run / "claims", "q1", "donations")
+    for k in ("maps_from", "mapped_from"):
+        for bad in (0, [], {}, False):
+            (run / "questions.json").write_text(json.dumps([_question("q1", **{k: bad})]))
+            out.truncate(0)
+            out.seek(0)
+            with pytest.raises(typer.Exit):
+                cli.remap(data=run)
+            assert f"entry 0 (id q1): {k} {bad!r}" in out.getvalue(), (k, bad)
+        for absent in (None, ""):
+            (run / "questions.json").write_text(json.dumps([_question("q1", **{k: absent})]))
+            out.truncate(0)
+            out.seek(0)
+            cli.remap(data=run)
+            assert "nothing to remap" in out.getvalue(), (k, absent)
+
+
+def test_every_claim_path_remap_builds_refuses_a_value_that_is_not_an_id(tmp_path):
+    """The door check keeps these from ever arriving; the join fails closed as well, so a later
+    change that reaches it another way can't bring `../x` back."""
+    for bad in ("../victim", "sub/victim", str(tmp_path / "victim"), ".victim", "q2\n", 7):
+        with pytest.raises(ValueError, match="not a question id"):
+            cli._claim_file(tmp_path / "claims", bad)
+    assert cli._claim_file(tmp_path / "claims", "q2a") == tmp_path / "claims" / "q2a.json"
+
+
 def _sparse_run_with_a_question_dropped(tmp_path):
     """A sparse run: q2 had no claim when the first migration mapped it to q5, so nothing moved
     there, and the apply retired the pair anyway (q5.mapped_from = q2). The id q2 then went to a
