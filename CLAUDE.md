@@ -212,7 +212,9 @@ the claim file**.
 `vg verify` reloads claims with `strip_machine_fields()` on (that is what stops a researcher
 self-certifying), so a verdict written inline is destroyed by the next verify run. Keying by
 source id also means a judgment lapses on its own when a retry changes the quote, which is
-correct: it was a judgment about different words. A `contradicts` is the exception: it holds
+correct: it was a judgment about different words. The answer is the other half of what was
+judged, and a verdict about another answer is stale (see "A verdict is about the answer it
+judged, too"). A `contradicts` on a source the claim no longer cites is the exception: it holds
 its claim instead (above).
 
 **An unreadable verdict must fail, whether it is a whole file or a single entry. It must
@@ -467,7 +469,8 @@ the supporting text — ships a green row nobody checked, by the same mechanism.
 says about it, so a retry that rewrites the answer and keeps the quote kept the verdict too.
 `vg judge` now stamps `claim_fingerprint` on every verdict: `Claim.fingerprint`, a short hash of
 the claim's question and answer. A verdict whose stamp no longer matches its claim judged words
-the claim no longer says; reading that as stale is #74's. Why that identity:
+the claim no longer says, and is stale (#74, "A verdict is about the answer it judged, too").
+Why that identity:
 - **The answer and the question.** A verdict judges one answer to one question, and answers
   repeat: "Yes." to two questions is two claims.
 - **Exact text, not normalized.** Which edits keep a claim's meaning is a judgment ("$40k" to
@@ -479,7 +482,8 @@ rewritten by `vg verify`, and an id that survives a retry says nothing about whe
 changed, which is the whole question. The fingerprint is recomputed from what the claim says, by
 the pipeline, and `vg judge` takes no flag for it.
 
-Where it stops. Verdicts from before stamping carry none, and nothing backfills one. Older
+Where it stops. Verdicts from before stamping carry none, and nothing backfills one (they read
+stale: see #74's section). Older
 checkouts refuse a shard holding a stamped verdict (an unknown key), the safe side. And the
 stamp is the claim as `vg judge` reads it, not the text the verifier was handed: a rewrite
 between hand-off and recording is the hand-off token's to catch (#36), and one after recording
@@ -527,8 +531,11 @@ stale; fresh has to be shown. The same rule, three places:
 Two deliberate exceptions. A **legacy** verdict, recorded before stamping (every one in the
 committed run), is checked against its `judged_at`: a page fetched no later is the copy that
 was cached when it was judged. Blanket-stale would re-judge whole runs to learn nothing;
-blanket-fresh was the fail-open. A **query citation** has no page at all, and its result is
-re-run at every build; a changed query *definition* is query versioning's (below).
+blanket-fresh was the fail-open. (Such a verdict also predates `claim_fingerprint`, so since
+#74 it is stale on the answer's side anyway, and this rule no longer spares a run a re-judge.
+See the next section for why that side has no bound.) A **query citation** has no page at all,
+and its result is re-run at every build; a changed query *definition* is query versioning's
+(below).
 
 **Stamp the copy the verifier read, not whatever is cached when `vg judge` runs.** Two bugs of
 one shape. The cache is shared, so another run can re-fetch a page between `vg verify` and
@@ -577,6 +584,44 @@ verified before `context_page` existed, or whose copy was re-fetched since, is b
 verify`, not waiting on a verifier. Counted as waiting, the gate could never reach 0 by judging.
 It asks with the claim file's `context_page` as loaded, before revalidation rebuilds it from
 the page cached now, since that file is what `vg judge` reads.
+
+## A verdict is about the answer it judged, too
+
+A verdict says whether a page supports one claim's answer, and the sid covers only the page's
+half (url + snippet). A retry that rewrote the answer and kept the source kept the verdict. A
+`supports` recorded about "voted for" rendered green on "voted against". A `contradicts` held
+a corrected claim in `human_review`, its note describing an answer the claim no longer gives.
+No check caught either: same words, same page, same sid.
+
+So `verdicts_for()` compares each verdict's `claim_fingerprint` (the hash of the question and
+answer `vg judge` stamps; why that identity is under #30 above) with the claim's
+`Claim.fingerprint`. One that differs is stale,
+exactly like a verdict on a re-fetched page: not applied, reported by `vg verify`, `vg build`
+and `vg judgments`, counted in the gate, and replaced by the next `vg judge`. A stale
+`contradicts` holds nothing: it reads `unreviewed` like any stale verdict, so a corrected claim
+waits on a verdict about its new answer (`pending`), not on one about the old answer. The check
+sits in `verdicts_for()`, not `is_stale()`, because that is where the claim is in hand and every
+reader of verdicts goes through it. The same comparison catches a verdict filed under another
+claim's id: it judged that claim's answer, whatever the sid says. Between twins (two claims
+that ask and answer the same thing) it cannot tell, and needn't: a verdict on the same snippet
+judged the same words against the same page.
+
+**A legacy verdict, with no fingerprint, is stale.** The page rule above bounds a legacy verdict
+by `judged_at` against the time every fetch stamps on its page. Nothing records when an answer
+was written: `checked_at` moves on every `vg verify`, which re-checks every claim, and a claim
+file's mtime moves on every write-back and checkout. With no bound, the query rule applies:
+unknown fails toward re-checking. **One-time cost:** every verdict recorded before #30 is judged
+again once, and `vg judge` records over it. Rejected: grandfathering them, which keeps the false
+green open for every verdict already on disk, against retries made after this change too; and
+backfilling the current fingerprint, which certifies whatever the answer says now.
+
+**Where it stops: the stamp is the claim `vg judge` reads, not the one the verifier read.** If
+the claim changes between hand-off and `vg judge`, a verdict about the old answer is stamped
+with the new one and reads fresh. `vg judge` refuses a fresh retry file until `vg verify` has
+run on it, but not one verified since, and not an answer edited in place, which keeps the
+file's verification. #36's context token closes it: the token hashes the question and answer
+with the context, and `vg judge` refuses one handed back for anything else. Until both have
+landed, don't retry a claim while its judgment pass is running.
 
 ## Cache is authoritative — so version the extractor
 
@@ -822,11 +867,13 @@ own can't be read (a dangling symlink included). With no set at all, the gate sa
 nothing.
 
 What the gate can't see is a reused id once the new question's research has replaced the old
-claim. The claim then matches the set, and the shard's old verdicts apply to it wherever it cites
-the same source. They render green on a claim no verifier judged, because a verdict applies by
-its source alone: nothing compares its claim stamp (#30) with the claim. The gate catches the
-reuse only while the old claim is still in `claims/`, so move a reworded or replaced question to
-a new id before anyone researches it.
+claim. The claim then matches the set, and the shard's old verdicts sit beside it wherever it
+cites the same source. They used to render green on a claim no verifier judged, because a
+verdict applied by its source alone. Each is now compared with the claim through its stamp
+(#30): it judged another question, so it is stale and not applied, and the claim waits on a
+verdict about the new one (see "A verdict is about the answer it judged, too"). That costs a
+judgment pass, and the gate catches the reuse itself only while the old claim is still in
+`claims/`, so still move a reworded or replaced question to a new id before anyone researches it.
 
 This rule replaced `vg remap`, which re-filed claims onto a renumbered question set (declared
 as `maps_from` in `questions.json`) and re-homed their verdicts, and `vg judgments --repair`,

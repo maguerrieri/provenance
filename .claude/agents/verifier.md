@@ -61,8 +61,9 @@ uv run vg judgments --question-id <question_id> --data <run dir>
 Read its last line: `N of M cited source(s) need a verdict (K stale)`. You are done when `N`
 is 0, which is also the only case where the command exits 0. Read that number, and don't count `unreviewed` rows in the table: it wraps, and a grep
 over it has under-reported twice. A `stale` source was judged against an older copy of its
-page — or, for a query citation, an older definition of its query. Judge it again against the
-context you were given. A source listed as having nothing a
+page — or, for a query citation, an older definition of its query — or against another
+question or answer than its claim gives now. Judge it again against the claim and context you
+were given. A source listed as having nothing a
 verifier can judge yet (failed, paywalled, never verified, or changed since `vg verify`) is
 not in `N`, and it is not yours to judge. If the command exits non-zero, you are not done:
 say what it printed.
