@@ -83,8 +83,8 @@ Do not summarize the source rules for them — the agent definition carries them
    `vg archive` replaced the snapshot since. A verdict without a token is refused, a query
    citation's included. A token for an older claim, citation, context or query run means one
    changed while the verifier worked (a re-verify, a retry, a query re-run under a new
-   definition or export, even one printing the same figure): the verifier re-reads what
-   `vg handoff` prints and judges that. A refusal names a wrong id, sid or `--data`, the copy
+   definition, export or database, even one printing the same figure): the verifier re-reads
+   what `vg handoff` prints and judges that. A refusal names a wrong id, sid or `--data`, the copy
    that moved, or what changed; it is never a cue to file the verdict under some other claim.
 
    Judgments are stored in `data/judgments/<qid>.json`, keyed by source id — **not** in the

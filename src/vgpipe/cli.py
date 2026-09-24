@@ -1140,6 +1140,18 @@ def _unjudgeable(s, cache_root: Path, *, seen, last_run) -> str:
     return why or _rebuild_problem(s, cache_root)
 
 
+def _query_run_line(name: str, run) -> str:
+    """The run a query citation's context came from, as `vg handoff` shows it. Facts only: the
+    verifier acts on what the hand-off prints, so it carries no instruction (`describe_export()`
+    tells an operator to rebuild an undated database, which is not a verifier's step)."""
+    from . import queries
+
+    data = queries.dataset(name)
+    export = (f", {data} export of {run.export_date}" if run.export_date
+              else f", undated {data} database") if data else ""
+    return _printable(f"{name} v{run.version}{export}, under {run.cache_root}")
+
+
 # Control, format, surrogate and line/paragraph-separator characters: what can move the cursor,
 # erase a line, reorder text or start a new line in a reader that is not this terminal.
 _UNPRINTABLE = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
@@ -1163,8 +1175,9 @@ def handoff(question_id: str, data: Path = DATA, cache: Path = None):
     the context token `vg judge --context` must hand back.
 
     Claim, context and token come from one read of the claim file, the one `vg judge` checks,
-    so the token names exactly the text printed with it. A source `vg judge` would refuse now
-    gets its reason instead of a token. Read-only.
+    so the token names what is printed with it (a query run's root hashed resolved, as the run
+    check compares it, so one database spelled two ways is one run). A source `vg judge` would
+    refuse now gets its reason instead of a token. Read-only.
     """
     from . import judgments
 
@@ -1199,8 +1212,7 @@ def handoff(question_id: str, data: Path = DATA, cache: Path = None):
             continue
         judgeable += 1
         if s.query is not None:   # the token names the run too, so show which it was
-            line(f"  query run: {s.query.name} "
-                 f"{_printable(judgments.describe_run(s.query.name, v.query_run))}")
+            line(f"  query run: {_query_run_line(s.query.name, v.query_run)}")
         # Every line of it prefixed, so page text can't end the block early and go on to print
         # what reads as this command's own output. splitlines(), not split("\n"): a \r, \x85
         # or U+2028 is a line break to some reader, and each one starts a prefixed line here.
