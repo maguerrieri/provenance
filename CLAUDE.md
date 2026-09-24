@@ -663,8 +663,11 @@ claim moved.
 Progress saved per source is migrated, not reinterpreted. Its ticks are dropped, because they
 name no claim and no excerpt, and a notice says how many until the reviewer dismisses it (shown
 once, a reload hid it for good). The new progress lives under a new storage key, and the old
-one is only read, and only when the new one is absent. An unreadable new store is kept aside
-and reported, never answered by migrating again, which would bring back flags cleared since.
+one is only read, and only when the new one is absent. A new store the page can't read is
+kept aside and reported: one that doesn't parse, and one that parses to anything but this
+version's progress (a later version's, a hand edit). Migrating again would bring back flags
+cleared since, and reading it as empty is a delete, since the first save writes over it. An
+imported file is held to the same rule and refused.
 When you change what a stored key means, decide what each old key means under the new rule.
 Otherwise the whitelist discards them silently, or a loose lookup matches them to every row.
 

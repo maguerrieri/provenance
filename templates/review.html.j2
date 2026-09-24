@@ -262,15 +262,23 @@ let state;
 function load(raw){ state = sanitizeState(raw); showNotice(); }
 function stored(k){ try { return localStorage.getItem(k); } catch (e) { return null; } }
 function parse(text){ try { return JSON.parse(text); } catch (e) { return undefined; } }
-const kept = stored(STORE);
+// What saved progress is: this version's ({v: 2, ...}), an earlier version's (a per-source map,
+// with no `v`), or neither: unparseable, another version's, a hand edit. Neither is never read
+// as empty, because the next save would replace it with nothing.
+function kind(x){
+  if (!x || typeof x !== 'object' || Array.isArray(x)) return null;
+  if (!Object.prototype.hasOwnProperty.call(x, 'v')) return 'legacy';
+  return x.v === 2 ? 'v2' : null;
+}
+const kept = stored(STORE), got = kept === null ? undefined : parse(kept);
 if (kept === null) load(parse(stored(KEY)));
-else if (parse(kept) === undefined){
+else if (kind(got) !== 'v2'){
   // Not a fallback to KEY: that would bring back flags cleared since. The first save replaces
   // this text, so it is kept where a person can recover it.
   try { localStorage.setItem(UNREADABLE, kept); } catch (e) {}
   load({v: 2, notice: {unreadable: true}});
 }
-else load(parse(kept));
+else load(got);
 
 function save(){ try { localStorage.setItem(STORE, JSON.stringify(state)); } catch(e){} }
 function ann(el){
@@ -393,7 +401,11 @@ document.getElementById('file').addEventListener('change', async e => {
   const f = e.target.files[0];
   e.target.value = '';                 // so re-importing the same file fires again
   if (!f) return;
-  try { load(JSON.parse(await f.text())); render(); }
+  try {
+    const raw = JSON.parse(await f.text());
+    if (kind(raw) === null) throw new Error('not progress this page can read');
+    load(raw); render();
+  }
   catch (err) { alert('Bad progress file'); }
 });
 
