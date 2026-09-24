@@ -54,6 +54,17 @@ The support verdict follows the same rule. Build resets every source without a u
 recorded verdict to `unreviewed` before rendering (`judgments.merge()`), so a `support` sitting
 in a claim file never renders. See "A gate is a number the tool prints" below.
 
+**Agent-supplied input can refuse, never grant.** Sometimes only the agent knows a fact the
+pipeline needs. The verifier's context token is one: nothing on disk says which context a
+verifier read, so `vg judge --context` takes it from the agent (see "Tie a verdict to the
+context it was handed" below). That is safe only because the value can do nothing but block.
+A token matching the current context gets exactly what `vg judge` recorded before tokens
+existed, and any other token writes nothing. Nothing an agent passes this way may promote a
+status, mark a source judged, or pick the copy a verdict is checked against. And a refusal must
+not hand back the value that would have passed: a mismatch that printed the current token
+would let a verifier retry blind, with a verdict about text it never read. The same reasoning
+covers the trusted reads of a claim file's `context_page` and `query_run` in `vg judge`.
+
 If you add a command that reads `data/claims/`, decide deliberately which side of that line
 it sits on. Defaulting to trust is how the invariant erodes.
 
@@ -443,7 +454,7 @@ refused marker as "snippet contains [], a page locator". Anything from a page, a
 exception goes through `escape()` before it reaches the console, and text a researcher may
 copy (page text, a query value) is printed as `Text` with `soft_wrap=True`, which also stops
 `:ok:` becoming an emoji and an 80-column wrap putting line breaks in a snippet. `vg fetch`,
-`vg check`, `vg check-claim`, the `vg verify` / `vg judgments` tables, and the
+`vg check`, `vg check-claim`, `vg handoff`, the `vg verify` / `vg judgments` tables, and the
 `vg source-import-curl` and `vg source-access --run-recipe` errors do; other prints in
 `cli.py` (the `[red]{e}[/]` error lines, `vg archive`'s snapshot notes, the query no-match
 note) still don't.
@@ -577,6 +588,27 @@ back from `vg archive` or `vg verify` first. `page_url` is written only when it 
 reads, and checks correctly, in a checkout from before this change. One snapshot verdict makes that
 checkout refuse its whole shard, and so every command that loads it — rather than check the
 verdict against the stub.
+
+**Tie a verdict to the context it was handed.** The copy check reads the claim file as it is when
+`vg judge` runs, so it cannot see what a verifier read earlier. Say a verifier is handed context
+C1, another run re-fetches the page, and a re-verify rebuilds the context as C2 from the new
+copy. The claim file then names a copy that is cached, the check passes, and the verdict about
+C1 renders green on C2. Every fact on disk was consistent; the one that was wrong, which
+context the verifier read, was on no disk. So the verifier says it:
+- `vg handoff <qid>` prints the claim and each source's context with a context token
+  (`judgments.context_token()`, a short hash of the context text), from one read of the claim
+  file `vg judge` checks. The verifier runs it itself, so no transcription sits between the
+  context it reads and the token it hands back. A source `vg judge` would refuse gets the reason
+  instead of a token.
+- `vg judge --context <token>` is required for a page citation, and checked whenever it is
+  given. A query citation needs none: it is tied to its run already (`unjudgeable_query()`).
+  The token is checked last, so a wrong id, sid or copy is still what a refusal names first.
+- A mismatch writes nothing and says to re-read what `vg handoff` prints now. It never prints
+  the current token (see "Agent-supplied input can refuse, never grant" above).
+
+Only the text is hashed. Two copies of a page that give the same context get the same token,
+which is right: the verdict is about those words, and the copy the stamp names is the one
+cached now, which gives them.
 
 `vg judgments` asks the same question `vg judge` does before counting a source as waiting
 (`judgments.unjudgeable_page()`, the page counterpart of `unjudgeable_query()`): a source
