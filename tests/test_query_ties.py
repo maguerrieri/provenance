@@ -135,7 +135,8 @@ def test_a_citation_of_four_of_five_tied_does_not_verify(tmp_path):
 
 def test_the_late_report_check_weighs_every_tied_contributor(tmp_path):
     """A late gift too small to reach the top leaves a five-way tie standing. With four in the
-    tie set, the fifth tied contributor was judged as an outsider who could reach it."""
+    tie set, the fifth tied contributor was judged as an outsider who could reach it, and with
+    form_type=A the tie was held for a person over a late report that cannot move it."""
     root = five_way(tmp_path, late=late_gift("Pellow", "300"))
 
     got = top(root)
@@ -143,14 +144,21 @@ def test_the_late_report_check_weighs_every_tied_contributor(tmp_path):
     assert "not counted — they cannot change the ranking" in got.detail, got.detail
     a = top(root, form_type="A")
     assert a.value == FIVE and "they cannot change the ranking" in a.detail, a.detail
+    assert not a.late, a.unsettled
 
 
 def test_a_late_gift_to_any_tied_contributor_breaks_the_tie(tmp_path):
+    """By default a miss; with form_type=A the tie as filed, held for a person, naming the late
+    report that breaks it."""
     for last in AT_LIMIT:
-        got = top(five_way(tmp_path / last, late=late_gift(last, "100")))
+        root = five_way(tmp_path / last, late=late_gift(last, "100"))
+        got = top(root)
         assert not got.found, f"a tie {last}'s late gift breaks was reported: {got.value}"
         assert f"Rue {last} ($4,750 on schedule-A, $100 late)" in got.note, got.note
         assert FIVE in got.note, got.note
+        a = top(root, form_type="A")
+        assert a.value == FIVE, a.note
+        assert [r.filing_id for r in a.late] == [int(F497)], a.unsettled
 
 
 def test_a_tie_is_in_name_order_whatever_case_a_name_is_filed_in(tmp_path):
