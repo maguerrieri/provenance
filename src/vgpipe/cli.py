@@ -968,25 +968,32 @@ def calaccess_contributions(filer_id: str, data: Path = DATA, cache: Path = None
     _amendment_footer([c.unrestated for c in rows], [c.omitted for c in rows])
 
 
-def _amendment_cell(unrestated, omitted=()) -> Text:
+def _amendment_cell(unrestated, omitted=(), reattributed=None) -> Text:
     """A listing row's 'latest amendment' cell: each of its filings whose latest amendment has
     no such rows (calaccess.Unrestated), each schedule of it a later amendment left out
-    (calaccess.UnrestatedSchedule), or nothing. As Text: filing ids and schedules are export
-    text."""
-    return Text("; ".join([f"{u.filing_id}: a{u.cover_amend} has none"
-                           for u in unrestated or ()]
-                          + [f"{u.filing_id}: a{u.table_amend} has no schedule "
-                             f"{u.schedule or '(blank)'}, not counted" for u in omitted or ()]))
+    (calaccess.UnrestatedSchedule), and, for an expenditure listed under the candidate its own
+    amendment's cover named, who the latest cover names instead (calaccess.Reattributed), or
+    nothing. As Text: filing ids, schedules and names are export text."""
+    cells = ([f"{u.filing_id}: a{u.cover_amend} has none" for u in unrestated or ()]
+             + [f"{u.filing_id}: a{u.table_amend} has no schedule {u.schedule or '(blank)'}, "
+                f"not counted" for u in omitted or ()])
+    if reattributed:
+        cells.append(reattributed.mark() if cells
+                     else f"{reattributed.filing_id}: {reattributed.mark()}")
+    return Text("; ".join(cells))
 
 
-def _amendment_footer(marks: list, omitted: list = ()) -> None:
+def _amendment_footer(marks: list, omitted: list = (), reattributed: list | None = None) -> None:
     """Say what a marked row means, or that this database cannot mark any. `omitted` is each
-    row's left-out schedules, for a listing that has them (receipts)."""
+    row's left-out schedules, for a listing that has them (receipts); `reattributed` is the
+    independent-expenditure listing's, one per row."""
     if any(m is None for m in marks):
-        con.print("[yellow]This database cannot tell whether a filing's latest amendment "
-                  "dropped any of these rows: its covers carry no amendment ids, or it has no "
-                  "covers at all. Rebuild it from a complete export: uv run vg calaccess "
-                  "build[/]")
+        also = (", or list rows an earlier amendment's cover gave this candidate"
+                if reattributed is not None else "")
+        con.print(f"[yellow]This database cannot tell whether a filing's latest amendment "
+                  f"dropped any of these rows{also}: its covers carry no amendment ids, or it "
+                  f"has no covers at all. Rebuild it from a complete export: uv run vg calaccess "
+                  f"build[/]")
     elif flagged := sum(1 for m in marks if m):
         con.print(f"[yellow]{flagged} row(s) come from an amendment a later one did not restate "
                   f"(the 'latest amendment' column). That later amendment withdrew them, or "
@@ -1002,6 +1009,13 @@ def _amendment_footer(marks: list, omitted: list = ()) -> None:
                   f"amendment' column). It withdrew them, or left that schedule unchanged, and "
                   f"only the filing says which: open it before using the row. A figure that "
                   f"leaves one out goes to human_review.[/]")
+    if moved := sum(1 for r in reattributed or () if r):
+        con.print(f"[yellow]{moved} row(s) are listed under the candidate their own amendment's "
+                  f"cover named, though the filing's latest cover, which decides whose money a "
+                  f"row is, names another candidate or none (the 'latest amendment' column). No "
+                  f"total for this candidate counts them, and only the filing says which cover "
+                  f"is right: open it before using the row. A total that leaves one out goes to "
+                  f"human_review.[/]")
 
 
 @calaccess_app.command("independent-expenditures")
@@ -1035,9 +1049,10 @@ def calaccess_ie(candidate_last: str, data: Path = DATA, cache: Path = None, fir
         t.add_row(Text(amt), Text(r["stance"]), Text((r.get("FILER_NAML") or "")[:28]),
                   Text(" ".join(x for x in (r.get("CAND_NAMF"), r.get("CAND_NAML")) if x)[:22]),
                   Text(r.get("EXP_DATE") or ""), Text(r["cite_url"]),
-                  _amendment_cell(r["unrestated"]))
+                  _amendment_cell(r["unrestated"], reattributed=r["reattributed"]))
     con.print(t)
-    _amendment_footer([r["unrestated"] for r in rows])
+    _amendment_footer([r["unrestated"] for r in rows],
+                      reattributed=[r["reattributed"] for r in rows])
 
 
 @app.command(name="query")
@@ -1094,6 +1109,8 @@ def run_query(name: str = typer.Argument(""), param: list[str] = None, data: Pat
             con.print(Text(f"  {queries.share_text(u)}", style="yellow"), soft_wrap=True)
         for r in result.late[queries.LATE_SHOWN:]:
             con.print(Text(f"  {queries.late_text(r)}", style="yellow"), soft_wrap=True)
+        for u in result.reattributed[queries.UNSETTLED_SHOWN:]:
+            con.print(Text(f"  {queries.left_out_text(u)}", style="yellow"), soft_wrap=True)
     # What the review page prints beside the command, so a reviewer can see they reproduced
     # the figure under the same definition and against the same export — or that they didn't.
     where = f"{_export_line(root)}, " if queries.dataset(name) == "CAL-ACCESS" else ""

@@ -195,7 +195,8 @@ def test_calaccess_independent_expenditures_print_names_as_filed(tmp_path, monke
         {"AMOUNT": "250", "stance": "support", "FILER_NAML": f"{MARK} PAC",
          "CAND_NAMF": "[b]Pat", "CAND_NAML": "Doe", "EXP_DATE": "1/2/2030",
          "cite_url": calaccess.filing_url("2002"),
-         "unrestated": (calaccess.Unrestated("2002[/]", rows_amend=0, cover_amend=1),)}])
+         "unrestated": (calaccess.Unrestated("2002[/]", rows_amend=0, cover_amend=1),),
+         "reattributed": None}])   # every listed row carries one (#89)
     code, out = _vg("calaccess", "independent-expenditures", "Doe", "--data", tmp_path)
     assert code == 0, out
     assert f"$250 support {MARK} PAC [b]Pat Doe 1/2/2030" in out
