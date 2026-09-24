@@ -15,8 +15,10 @@ whether a citation is real.** Never let a model set a verification status.
    question — with stable IDs: `q1`, `q2a`, `q2b`. A subagent handling two claims at once
    produces citations that support one of them. IDs are **never reused or renumbered**: claims
    and verdicts are filed by id, and nothing moves them. If a question is split or reworded
-   later in a run, give each new question a new id and retire the old one: move its claim
-   file out of `claims/` (to `claims-archive/`), or it still renders beside its replacement.
+   later in a run, give each new question a new id and retire the old one. Move its claim
+   file out of `claims/` (to `claims-archive/`) and its verdict shard out of `judgments/`, and
+   point any `derives_from` that names it at the new id. A claim left behind still renders
+   beside its replacement. A reused id hands its old verdicts to the new claim.
 3. Write `data/questions.json` as `[{"id", "text", "claim_type", "parent", "rationale"}]`.
 4. Mark `claim_type: "adversarial"` for anything negative or contested about a candidate
    (settlements, donor influence, opposition to a popular measure). Adversarial claims

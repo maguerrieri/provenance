@@ -477,13 +477,22 @@ recreate the stray on every run (see "A verdict is about a source as cached at j
 ## Question ids are stable and never reused
 
 A question id names one question for the life of a run. **A split or reworded question gets a
-new id, and the old id is retired**: never given to another question. Retiring it means moving
-its claim file out of `claims/` (to `claims-archive/`), and its verdict shard out of
-`judgments/`, by hand. `vg build` renders every claim in `claims/`, so a claim left on a retired
-id still shows beside its replacement. Nothing in the pipeline moves a claim between ids.
+new id, and the old id is retired**: never given to another question. Retiring it is done by
+hand, in three parts:
+- move its claim file out of `claims/`, to `claims-archive/`;
+- move its verdict shard out of `judgments/`;
+- point any `derives_from` that names the old id at the new one.
+
+`vg build` renders every claim in `claims/`, so a claim left on a retired id still shows beside
+its replacement. A dependent still naming the old id goes to `human_review` with the input
+missing. Nothing in the pipeline moves a claim between ids.
 
 Nothing checks the rule yet: no command compares `claims/` with `questions.json` (#112). Until
-one does, a claim on a retired id or a reused id goes through every command with exit 0.
+one does, every command exits 0 on a claim left on a retired id, and on a reused id. A reused id
+is worse than a leftover claim: its shard's verdicts apply to the new claim wherever it cites the
+same source, and they render green on a claim no verifier judged, because a verdict names only
+its source (#30). A `maps_from` still pending in a `questions.json`, declared and never applied,
+is never applied now: settle it by hand before anyone researches on those ids.
 
 This rule replaced `vg remap`, which re-filed claims onto a renumbered question set (declared
 as `maps_from` in `questions.json`) and re-homed their verdicts, and `vg judgments --repair`,
@@ -503,12 +512,15 @@ What is left:
   `previous_question` field, so it is ignored on load and the next `vg verify` write-back drops
   it, as it always has (#85, closed with remap, since nothing writes it now).
 - A `judgments-backup/` that an interrupted re-home left behind still stops every command that
-  reads verdicts, because the shards may be half-rewritten. The message says how to undo it:
-  `vg judgments --rollback`, run from a checkout of `judgments.LAST_WITH_ROLLBACK`, with the
-  run's absolute path, since a relative `--data` there names that checkout's own data/.
+  reads verdicts, `vg remap` included, because the shards may be half-rewritten. The message
+  says how to undo it: run `vg judgments --rollback` from a checkout of
+  `judgments.LAST_WITH_ROLLBACK`, with the run's absolute path, since a relative `--data` there
+  names that checkout's own data/. The rollback leaves the migration pending, so then re-run the
+  interrupted command from that same checkout to finish it.
   `judgments-backup.partial/` and `judgments-backup.discard/` are different: one was still being
   built and had touched no shard, and the other was already retired after its re-home finished.
-  Nothing clears them now, and nothing reads them. Delete them; never restore from them.
+  Nothing reads them, and nothing clears them now, so `vg judgments` names them
+  (`judgments.leftovers()`). Delete them; never restore from them.
 - Question-id validation was never remap's and stays: the id pattern (`models.QID_PATTERN`,
   checked again in `judgments.path_for()`), and `vg judgments` counting a shard the disk opens
   under a claim's id as that claim's (`judgments.opened_as()`).
@@ -531,8 +543,11 @@ Lessons from it that still apply:
   new name and then unlinking the old one deleted what had just been written. For the same
   reason, names inside one directory must differ in more than case. CI's disk is case-sensitive,
   so the case-insensitive path never runs there: pin it with a test that patches the disk's
-  answer (`judgments._same_file()`). When a change touches names, run the suite on both kinds of
-  disk: a Mac's default volume, and `pytest --basetemp=<dir>` on a case-sensitive one.
+  answer (`judgments._same_file()`), as
+  `test_vg_judgments_counts_a_shard_a_case_folding_disk_opens_as_the_claims` does. When a change
+  touches names, run the suite on both kinds of disk: a Mac's default volume, and
+  `pytest --basetemp=<dir>` on a case-sensitive one. A case-sensitive APFS disk image
+  (`hdiutil create -fs "Case-sensitive APFS"`) gives a Mac one.
 
 ## A real citation to the wrong document passes every check
 
