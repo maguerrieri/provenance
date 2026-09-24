@@ -9,12 +9,17 @@ that context. `vg handoff` now prints the claim and each source's context with a
 judge --context` hands the token back, and a token for anything else writes nothing. A query
 citation's token also names the run that produced its context, since a re-run under another
 definition can print exactly the same text.
+
+The token covers the hand-off as a whole: every field it prints but the ids and the statuses,
+the claim's other sources included. A list of fields drifted four times, each fix finding one
+more the hand-off printed and the token did not cover.
 """
 
 from __future__ import annotations
 
 import json
 import re
+from dataclasses import fields, is_dataclass, replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -28,7 +33,6 @@ from vgpipe.models import (
     Claim,
     PageCache,
     QueryCitation,
-    QueryRun,
     Source,
 )
 
@@ -97,9 +101,17 @@ def _claim(run) -> Claim:
     return cli.load_claims(run / "claims", trust_machine_fields=True)[0]
 
 
-def _token(run) -> str:
+def _handoff(run, root=None) -> judgments.Handoff:
+    """The hand-off `vg handoff q1` prints for this run, as the value it prints from."""
+    root = run if root is None else root
     claim = _claim(run)
-    return judgments.context_token(claim, claim.sources[0])
+    cli._apply_archive_rows(run, claim.sources, root)
+    return cli._handed(claim, root)
+
+
+def _token(run) -> str:
+    handed = _handoff(run)
+    return judgments.context_token(handed, handed.sources[0].sid)
 
 
 def _edit(run, **fields) -> None:
@@ -171,7 +183,7 @@ def test_a_verdict_on_a_claim_rewritten_since_the_hand_off_is_refused(tmp_path, 
     [(token1, _)] = _handed(run).values()
     _edit(run, **edit)
     code, out = _vg("judge", "q1", s.sid, "supports", "--context", token1, "--data", run)
-    assert code == 1 and "different claim, citation or context" in out, out
+    assert code == 1 and "different hand-off" in out, out
     assert _shards(run) == {}
 
 
@@ -209,8 +221,12 @@ def test_a_context_the_cache_does_not_give_gets_no_token_and_no_verdict(tmp_path
     run, s = _run(tmp_path), _source()
     forged = STORY.replace("objection", "full support")
     _edit(run, sources__0__verification__context=forged)
-    claim = _claim(run)
-    token = judgments.context_token(claim, claim.sources[0])   # what a verifier could compute
+    # what a verifier could compute: the hand-off with the claim file's context in it
+    handed = _handoff(run)
+    token = judgments.context_token(replace(handed, sources=(replace(
+        handed.sources[0], context=judgments.HandedContext(forged, None), unjudgeable=""),)),
+        s.sid)
+    assert token
 
     code, out = _vg("handoff", "q1", "--data", run)
     assert code == 0 and f"sid {s.sid}  nothing to judge yet" in out, out
@@ -337,13 +353,28 @@ def test_a_refusal_is_not_wrapped_mid_command(tmp_path):
     assert res.exit_code == 1 and str(run / "claims") in res.output, res.output
 
 
+def _shown(*sources: judgments.HandedSource, **claim) -> judgments.Handoff:
+    """A hand-off as a value, without a run behind it: the token is a function of it alone."""
+    d = dict(question_id="q1", claim_type="mechanical", required_sources=1,
+             question="How did the council vote on the tideland lease?",
+             answer="It adopted the lease 5-2.", sources=sources)
+    d.update(claim)
+    return judgments.Handoff(**d)
+
+
+def _shown_source(sid="a" * 12, **kw) -> judgments.HandedSource:
+    d = dict(sid=sid, status="verified", publisher="Bay Courier", author="M. Reporter",
+             date="2030-03-04", source_type="bylined_journalism", url=URL, page=3,
+             snippet=SNIPPET, context=judgments.HandedContext(STORY, None), unjudgeable="")
+    d.update(kw)
+    return judgments.HandedSource(**d)
+
+
 def test_a_lone_surrogate_does_not_stop_the_token():
     """json.loads keeps a lone surrogate from a claim file, and strict UTF-8 refuses to encode
     it: every verdict on that source would crash instead of recording."""
-    s = _source()
-    s.verification.context = "the lease \ud800 was adopted"
-    claim = Claim(question_id="q1", question="?", answer="a", sources=[s])
-    assert len(judgments.context_token(claim, s)) == 16
+    s = _shown_source(context=judgments.HandedContext("the lease \ud800 was adopted", None))
+    assert len(judgments.context_token(_shown(s), s.sid)) == 16
 
 
 TOTAL = "calaccess.test_total"
@@ -469,19 +500,24 @@ def test_a_query_verdict_without_a_token_is_refused(tmp_path, total):
     assert _shards(run) == {}
 
 
-def test_a_query_context_nothing_says_was_run_gets_no_token(total):
+def test_a_query_context_nothing_says_was_run_gets_no_token(tmp_path, total):
     """A query context with no recorded run could come from any definition, so no token can
     name it: judge refuses every token for it, and never has one to match."""
     s = total.source
+    s.verification.status = "verified"
     s.verification.context = f"{TOTAL}(filer_id=7) = 4321.0  [3 filings]"
     claim = Claim(question_id="q1", question="?", answer="a", sources=[s])
-    assert judgments.context_token(claim, s) == ""
+    (tmp_path / "cache").mkdir()
+    handed = cli._handed(claim, tmp_path)
+    assert handed.sources[0].context is None and "no recorded query run" in (
+        handed.sources[0].unjudgeable)
+    assert judgments.context_token(handed, s.sid) == ""
     tokens = set()
     for version, export, root in ((1, "2030-01-02", "a"), (2, "2030-01-02", "a"),
                                   (1, "2030-02-03", "a"), (1, "2030-01-02", "b")):
-        s.verification.query_run = QueryRun(version=version, export_date=export,
-                                            cache_root=root)
-        tokens.add(judgments.context_token(claim, s))
+        run = judgments.HandedRun(TOTAL, version, "CAL-ACCESS", export, root)
+        shown = _shown_source(s.sid, context=judgments.HandedContext(s.verification.context, run))
+        tokens.add(judgments.context_token(_shown(shown), s.sid))
     assert len(tokens) == 4 and "" not in tokens
 
 
@@ -539,3 +575,174 @@ def test_a_query_verdict_is_stamped_with_the_run_it_was_checked_against(tmp_path
                     "--cache", root)
     assert code == 0, out
     assert judgments.load(run, "q1")[s.sid].export_date == "2030-01-02"
+
+
+# The token covers the hand-off as a whole. Each case below is a field a hand-listed token missed.
+
+def _printed(handed: judgments.Handoff) -> str:
+    with cli.con.capture() as out:
+        cli._print_handoff(handed, "")
+    return out.get()
+
+
+def _leaves(value, path=()):
+    """The path to every plain value in a hand-off, found by walking it, never listed."""
+    if isinstance(value, tuple):
+        for i, v in enumerate(value):
+            yield from _leaves(v, (*path, i))
+    elif is_dataclass(value):
+        for f in fields(value):
+            yield from _leaves(getattr(value, f.name), (*path, f.name))
+    elif value is not None:
+        yield path
+
+
+def _changed(value, path):
+    """`value` with the plain value at `path` replaced by another of its kind."""
+    head, *rest = path
+    if isinstance(value, tuple):
+        return tuple(_changed(v, rest) if i == head else v for i, v in enumerate(value))
+    old = getattr(value, head)
+    new = _changed(old, rest) if rest else old + 1 if isinstance(old, int) else old + "x"
+    return replace(value, **{head: new})
+
+
+def test_every_field_the_hand_off_prints_moves_the_token():
+    """The gate on the rule. The token used to hash a list of fields kept beside the hand-off's
+    print statements, and four fixes each found a printed field the list lacked. Now a field
+    is in the token unless it is named as left out, and this walks every field of a hand-off
+    (the judged source's, a sibling's, the claim's) rather than listing them: each one either
+    moves the token and the print, or is one of the ids and statuses the token leaves out. A
+    field added to the hand-off is covered here without anyone adding it."""
+    run = judgments.HandedRun(TOTAL, 1, "CAL-ACCESS", "2030-01-02", "/runs/root")
+    handed = _shown(
+        _shown_source("a" * 12),
+        _shown_source("b" * 12, url="https://harbor-ledger.example/totals", page=5,
+                      context=judgments.HandedContext("the committee raised $4,321", run)),
+        claim_type="adversarial", required_sources=2)
+    judged = "a" * 12
+    token, printed = judgments.context_token(handed, judged), _printed(handed)
+    left_out = {"question_id", "sid", "status", "unjudgeable"}
+    paths = [p for p in _leaves(handed) if p != ("sources", 0, "sid")]  # the one judge is given
+    for path in paths:
+        other = _changed(handed, path)
+        if path[-1] in left_out:
+            assert judgments.context_token(other, judged) == token, path
+        else:
+            assert judgments.context_token(other, judged) != token, path
+            assert _printed(other) != printed, f"{path} is hashed but not printed"
+    walked = {p[-1] for p in paths}
+    every = {f.name for cls in (judgments.Handoff, judgments.HandedSource,
+                                judgments.HandedContext, judgments.HandedRun)
+             for f in fields(cls)} - {"sources", "context", "query_run"}
+    assert walked == every, "give every field a value above, or this walks past it"
+
+
+def test_a_verdict_on_a_claim_whose_type_changed_since_the_hand_off_is_refused(tmp_path):
+    """#91. The hand-off prints the claim type, and the type sets what the verifier is asked:
+    an adversarial claim's verifier also judges whether its sources are independent. A retry
+    that changes only the type keeps the question, answer, citation and context, so the token
+    printed before it recorded a verdict formed under the old type."""
+    run, s = _run(tmp_path), _source()
+    [(token1, _)] = _handed(run).values()
+    _edit(run, claim_type="adversarial")
+    code, out = _vg("handoff", "q1", "--data", run)
+    assert code == 0 and "q1 (adversarial, needs 2 source(s))" in out, out
+    [(token2, _)] = _handed_from(out).values()
+    assert token2 != token1
+
+    code, out = _vg("judge", "q1", s.sid, "supports", "--context", token1, "--data", run)
+    assert code == 1 and "not recorded" in out and "different hand-off" in out, out
+    assert _shards(run) == {}, "refused, writing nothing"
+    code, out = _vg("judge", "q1", s.sid, "supports", "--context", token2, "--data", run)
+    assert code == 0 and "supports recorded for q1" in out, out
+
+
+LEDGER = _source(url="https://harbor-ledger.example/tideland-vote", publisher="Harbor Ledger",
+                 author="R. Stringer", snippet="approved the tideland lease on a 5-2 vote")
+LEDGER_STORY = ("After a long hearing, council members approved the tideland lease on a 5-2 "
+                "vote, according to minutes the Ledger obtained.\n")
+# A reprint of the Courier's story under another outlet's name, on another host.
+REPRINT = _source(url="https://coast-daily.example/tideland-lease", publisher="Coast Daily",
+                  author="Staff", snippet=SNIPPET)
+
+
+def _adversarial_run(tmp_path, *sources: Source):
+    """A run with one adversarial claim, every page it could cite cached, verified offline."""
+    fetched = datetime.now(UTC) - timedelta(hours=6)
+    for url, text in ((URL, STORY), (LEDGER.url, LEDGER_STORY), (REPRINT.url, STORY)):
+        _cache(tmp_path, text, fetched, url=url)
+    (tmp_path / "claims").mkdir(exist_ok=True)
+    (tmp_path / "claims" / "q1.json").write_text(Claim(
+        question_id="q1", question="How did the council vote on the tideland lease?",
+        answer="It adopted the lease 5-2.", claim_type="adversarial",
+        sources=list(sources)).model_dump_json())
+    code, out = _vg("verify", "--data", tmp_path)
+    assert code == 0, out
+    return tmp_path
+
+
+@pytest.mark.parametrize("change", ["replaced", "added", "dropped", "context"])
+def test_a_verdict_beside_other_sources_than_it_was_handed_is_refused(tmp_path, change):
+    """#98. The verifier is handed every source of a claim together, and for an adversarial
+    claim it judges whether they are independent, saying which in its note. A retry that swaps
+    the Ledger's own reporting for a reprint of the Courier's story on another host, under
+    another name (which the corroboration check does not catch), leaves the Courier's citation,
+    context and claim as they were. So did adding or dropping a source, or a re-fetch that
+    rebuilt the Ledger's context. The token for the Courier did not move, and its verdict and
+    independence note recorded against sources no verifier saw together."""
+    s = _source()
+    run = _adversarial_run(tmp_path, s, LEDGER)
+    handed = _handed(run)
+    assert list(handed) == [s.sid, LEDGER.sid]
+    token1, context1 = handed[s.sid]
+
+    if change == "context":   # another run re-fetches the Ledger's page; this one re-verifies
+        _cache(run, LEDGER_STORY.replace("according to minutes the Ledger obtained",
+                                         "citing the Courier's report"),
+               datetime.now(UTC), url=LEDGER.url)
+        assert _vg("verify", "--data", run)[0] == 0
+    else:                     # a retry rewrites the claim, and it is re-verified
+        _adversarial_run(run, *{"replaced": (s, REPRINT), "added": (s, LEDGER, REPRINT),
+                                "dropped": (s,)}[change])
+    token2, context2 = _handed(run)[s.sid]
+    assert context2 == context1, "the Courier's own context is as it was"
+    assert token2 != token1
+
+    code, out = _vg("judge", "q1", s.sid, "supports", "--context", token1, "--data", run)
+    assert code == 1 and "another source printed with it" in out, out
+    assert _shards(run) == {}, "refused, writing nothing"
+    code, out = _vg("judge", "q1", s.sid, "supports", "--context", token2, "--data", run)
+    assert code == 0 and "supports recorded for q1" in out, out
+
+
+def test_a_token_names_the_source_it_was_printed_beside(tmp_path):
+    """Every block is in every token, so a token also says which block it came from: a verdict
+    on one source, handed back under the other's sid, is refused."""
+    s = _source()
+    run = _adversarial_run(tmp_path, s, LEDGER)
+    handed = _handed(run)
+    assert handed[s.sid][0] != handed[LEDGER.sid][0]
+    code, out = _vg("judge", "q1", s.sid, "supports", "--context", handed[LEDGER.sid][0],
+                    "--data", run)
+    assert code == 1 and "different hand-off" in out, out
+    assert _shards(run) == {}
+
+
+def test_text_moved_across_a_field_boundary_changes_the_token(tmp_path):
+    """#99. The fields were joined with NUL, which json.loads keeps inside a string, so text
+    moved across the separator from one field into the next left the joined bytes, and the
+    token, as they were. The hand-off prints the two citations differently (the NUL shows as
+    an escape inside whichever field holds it), and the token now tells them apart too."""
+    before = {"publisher": "Bay Courier\x00Weekly", "author": "M. Reporter"}
+    after = {"publisher": "Bay Courier", "author": "Weekly\x00M. Reporter"}
+    assert "\x00".join(before.values()) == "\x00".join(after.values()), "joined, one text"
+    run, s = _run(tmp_path, _source(**before)), _source()
+    [(token1, _)] = _handed(run).values()
+    _edit(run, sources__0__publisher=after["publisher"], sources__0__author=after["author"])
+    [(token2, _)] = _handed(run).values()
+    assert token2 != token1
+
+    code, out = _vg("judge", "q1", s.sid, "supports", "--context", token1, "--data", run)
+    assert code == 1 and "different hand-off" in out, out
+    assert _shards(run) == {}
