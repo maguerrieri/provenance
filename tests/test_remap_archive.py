@@ -219,8 +219,8 @@ def test_a_remap_killed_after_archiving_is_undone_by_rollback(tmp_path, monkeypa
     assert "put back" in out
     # the operator is told the archive run went: a directory they may already have opened. A
     # claims-archive/ the run made goes with it.
-    removed = tmp_path / "claims-archive" / begun if earlier else tmp_path / "claims-archive"
-    assert f"removed {removed}, which it had begun" in out
+    removed = [tmp_path / "claims-archive" / begun] + [tmp_path / "claims-archive"] * (not earlier)
+    assert f"removed {', '.join(map(str, removed))}, which it had begun" in out
     assert _files(tmp_path / "claims") == claims_before
     assert _files(tmp_path / "judgments") == shards_before
     assert _archive_unchanged(tmp_path, archive_before)
@@ -293,3 +293,76 @@ def test_a_rehome_removes_only_the_directories_it_made(tmp_path):
         judgments.rehome(tmp_path, [], then=make_then_fail, creates=(run,))
     assert sorted(p.name for p in kept.iterdir()) == ["older"]
     assert not judgments.backup_dir(tmp_path).exists()
+
+
+def _lapsing_run(root: Path) -> None:
+    """q1's verdict on a source its claim no longer cites: a re-home archives it."""
+    s = _src()
+    _claim(root, "q1", "a")
+    judgments.record(root, "q1", s.sid, "supports", "lapsed")
+
+
+def test_a_rehome_refuses_a_stamp_whose_archive_run_exists(tmp_path):
+    """A restore deletes the archive run it began. Named by the caller, the run could already
+    hold an earlier re-home's verdicts, and a failure would have deleted them."""
+    _lapsing_run(tmp_path)
+    earlier = judgments.archive_dir(tmp_path) / "20200101T000000.000000Z"
+    earlier.mkdir(parents=True)
+    (earlier / "q7.json").write_text("[]")
+    shards_before = _files(tmp_path / "judgments")
+    claims = [Claim(question_id="q1", question="?", answer="a")]
+
+    with pytest.raises(FileExistsError):
+        judgments.rehome(tmp_path, claims, stamp=earlier.name)
+    assert (earlier / "q7.json").read_text() == "[]"
+    assert _files(tmp_path / "judgments") == shards_before
+    assert not judgments.backup_dir(tmp_path).exists()
+    with pytest.raises(ValueError, match="one path component"):
+        judgments.rehome(tmp_path, claims, stamp="../elsewhere")
+
+
+def _killed(monkeypatch, root: Path, then, creates) -> None:
+    """A re-home killed partway through `then`, with no restore: the backup stays."""
+    def die(*a):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(judgments, "_restore", die)
+    with pytest.raises(KeyboardInterrupt):
+        judgments.rehome(root, [], then=then, creates=creates)
+    monkeypatch.undo()
+
+
+def test_a_rollback_reports_only_what_it_removed(tmp_path, monkeypatch):
+    """Killed before `then` made anything, the rollback has nothing of it to remove, and saying
+    it removed the archive run would send the operator looking for a directory never made."""
+    _lapsing_run(tmp_path)
+
+    def killed():
+        raise KeyboardInterrupt
+
+    _killed(monkeypatch, tmp_path, killed, (tmp_path / "claims-archive" / "run",))
+    assert judgments.rollback(tmp_path)[2] == []
+
+
+def test_a_rollback_keeps_what_was_put_beside_the_archive_run_since(tmp_path, monkeypatch):
+    """The first run's claims-archive/ is the re-home's too, but a file put there after the kill
+    is not: the rollback removes the run and leaves the directory holding it."""
+    _lapsing_run(tmp_path)
+    run = tmp_path / "claims-archive" / "run"
+
+    def killed():
+        run.mkdir(parents=True)
+        (run / "q9.json").write_text("{}")
+        raise KeyboardInterrupt
+
+    _killed(monkeypatch, tmp_path, killed, (run,))
+    (tmp_path / "claims-archive" / "by-hand.json").write_text("{}")
+    assert judgments.rollback(tmp_path)[2] == ["claims-archive/run"]
+    assert sorted(p.name for p in (tmp_path / "claims-archive").iterdir()) == ["by-hand.json"]
+
+
+def test_load_claims_collects_origins_without_reading_them_as_duplicates(tmp_path):
+    _claim(tmp_path, "q1", "a")
+    origin = {"q1": "from an earlier load"}
+    assert [c.question_id for c in cli.load_claims(tmp_path / "claims", origin=origin)] == ["q1"]
+    assert origin == {"q1": "q1.json"}

@@ -242,7 +242,7 @@ def load_claims(claims_dir: Path, *, trust_machine_fields: bool = False,
     claim came from, by question id.
     """
     out: list[Claim] = []
-    origin = {} if origin is None else origin
+    seen: dict[str, str] = {}
     skipped = [] if skipped is None else skipped
     for p in sorted(claims_dir.glob("*.json")):
         try:
@@ -269,15 +269,17 @@ def load_claims(claims_dir: Path, *, trust_machine_fields: bool = False,
                           f"{escape(str(e))}")
                 skipped.append(qid)
                 continue
-            if claim.question_id in origin:
+            if claim.question_id in seen:
                 # save_claims() writes <qid>.json, so a claim first written under another
                 # filename leaves a duplicate behind. Silently loading both double-counts
                 # the question in every status total and renders it twice for review.
                 raise ValueError(
-                    f"duplicate question_id {claim.question_id!r} in {origin[claim.question_id]} "
+                    f"duplicate question_id {claim.question_id!r} in {seen[claim.question_id]} "
                     f"and {p.name} — delete the stale file (claims are stored as <qid>.json)")
-            origin[claim.question_id] = p.name
+            seen[claim.question_id] = p.name
             out.append(claim)
+    if origin is not None:
+        origin.update(seen)
     if skipped:
         con.print(f"[yellow]{len(skipped)} claim(s) skipped as unreadable: "
                   f"{', '.join(skipped)} — fix or re-run those questions[/]")
@@ -1087,8 +1089,8 @@ def show_judgments(data: Path = DATA, question_id: str = "", repair: bool = Fals
             con.print(f"[green]put back {restored} shard(s)"
                       + "".join(f", {escape(str(data / name))}" for name in also)
                       + " as they were before the interrupted re-home[/]"
-                      + "".join(f"; removed {escape(str(data / name))}, which it had begun"
-                                for name in removed))
+                      + (f"; removed {', '.join(escape(str(data / n)) for n in removed)}, which "
+                         f"it had begun" if removed else ""))
         return
 
     cache_root = _verdict_cache_root(data, cache)
@@ -1927,9 +1929,10 @@ def remap(data: Path = DATA, apply: bool = False, archive_stranded: bool = False
     # identity moved, so the old thing must not be assumed gone. One --archive-stranded moves
     # out of the way first is no collision, in the dry run as in the apply.
     sources = {m[0] for m in moves}
+    # Asked of the disk, not the names: q3.json IS Q3.json where the disk folds case.
+    out_of_the_way = {_file_id(p) for p in leaving} - {None}
     collisions = [(dst, srcp) for srcp, dst, _q in moves
-                  if dst.exists() and dst not in sources
-                  and not any(os.path.samefile(dst, p) for p in leaving)]
+                  if dst.exists() and dst not in sources and _file_id(dst) not in out_of_the_way]
     if collisions:
         con.print("\n[red]refusing to apply: these destinations already hold research that "
                   "nothing maps away from, and would be overwritten:[/]")
@@ -2052,6 +2055,15 @@ def remap(data: Path = DATA, apply: bool = False, archive_stranded: bool = False
                  "that never ran"
                  if n_retired else "")
               + ".\nRe-run `vg verify` and `vg build`.")
+
+
+def _file_id(p: Path) -> tuple[int, int] | None:
+    """The file `p` opens, as (device, inode); None if there is none."""
+    try:
+        s = p.stat()
+    except FileNotFoundError:
+        return None
+    return s.st_dev, s.st_ino
 
 
 def _fsync_file(p: Path) -> None:

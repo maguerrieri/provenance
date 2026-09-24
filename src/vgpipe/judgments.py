@@ -455,15 +455,13 @@ def rehome(root: Path, claims, moved: Mapping[str, str | None] | None = None,
     and appends its re-apply marker there, so verdicts, claims and marker roll back together —
     rolling back only the shards put verdicts on old ids under claims on new ones. `creates`
     names what `then` makes inside `root` that is not there yet: remap's claims-archive/<stamp>/,
-    where it archives stranded claims. A restore removes each one, with any directory above it
-    the re-home made, so the stranded files, put back in claims/ from the backup, are not left
-    behind as a second copy too. `stamp` names
-    the verdict archive's run directory, so remap files an archived claim and its verdicts under
-    one name. All of it happens under the directory lock, so a `vg judge` cannot land between
-    the read and the rewrite and be lost. Returns a Rehomed.
+    where it archives stranded claims. A restore removes each one, and any directory above it
+    the re-home made while that is still empty, so the stranded files, put back in claims/ from
+    the backup, are not left behind as a second copy too. `stamp` names the verdict archive's
+    run directory, so remap files an archived claim and its verdicts under one name. All of it
+    happens under the directory lock, so a `vg judge` cannot land between the read and the
+    rewrite and be lost. Returns a Rehomed.
     """
-    for path in creates:
-        _created_name(root, path)       # refuses a path outside the run before anything else
     with _lock(root):
         # Every shard is read before anything is written, so an unreadable one raises while
         # the directory is still intact.
@@ -687,11 +685,18 @@ def _rewrite(root: Path, before: dict[str, dict[str, Judgment]],
       runs the same _restore().
     """
     backup, building = backup_dir(root), _building_dir(root)
+    # A restore deletes the archive run it names, so it must not be there yet: one that is holds
+    # an earlier run's verdicts. A fresh stamp can't collide; one from the caller could.
+    stamp = stamp or new_stamp()
+    if not _plain_name(stamp):
+        raise ValueError(f"an archive run is named by one path component, not {stamp!r}")
+    if orphans and (archive_dir(root) / stamp).exists():
+        raise FileExistsError(errno.EEXIST, "a re-home archives here, and it already exists",
+                              str(archive_dir(root) / stamp))
     # Asked here, under the lock, rather than by the caller: what a rollback removes is what the
     # transaction makes, so it is decided at the moment the transaction begins.
-    made = [_first_missing(root, path) for path in creates]
+    made = [m for path in creates for m in _made_by(root, path)]
     shutil.rmtree(building, ignore_errors=True)     # a build that died: no shard was touched
-    stamp = stamp or new_stamp()
     building.mkdir()
     try:
         for qid in before:
@@ -704,7 +709,7 @@ def _rewrite(root: Path, before: dict[str, dict[str, Judgment]],
             # The same for what `then` creates: remap's stranded claims go back into claims/
             # from the snapshot, and a copy left in claims-archive/ would be archived again.
             _durable_text(building / _CREATES_NAME,
-                          "\n".join(_created_name(root, p) for p in made))
+                          "\n".join(f"{kind} {name}" for kind, name, _p in made))
         if also:
             _snapshot(root, also, building)
         _fsync_dir(building)
@@ -735,12 +740,13 @@ def _rewrite(root: Path, before: dict[str, dict[str, Judgment]],
             then()
             for path in also:
                 _fsync_dir(path if path.is_dir() else root)
-            for path in made:
-                # Every directory it made, whose entries are the renames into it, then the
-                # directory holding it: its own entry.
+            for kind, _name, path in made:
+                # Every directory it made — for the created path, with everything under it: the
+                # renames into it — then the directory holding each one: its own entry.
                 if path.is_dir() and not path.is_symlink():
-                    for d, _dirs, _files in os.walk(path):
-                        _fsync_dir(Path(d))
+                    below = [Path(d) for d, _, _ in os.walk(path)] if kind == "tree" else [path]
+                    for d in below:
+                        _fsync_dir(d)
                 _fsync_dir(path.parent)
     except BaseException:
         _restore(root)
@@ -775,8 +781,12 @@ def rollback(root: Path) -> tuple[int, list[str], list[str]]:
         except FileNotFoundError:
             return 0, [], []
         also = [name for _kind, name in _read_also(backup_dir(root))]
-        removed = [_created_name(root, p) for p in _read_created(root, backup_dir(root))]
-        return _restore(root), also, removed
+        # Reported only if it was there and now is not: a re-home killed before `then` made
+        # nothing, and a removal that failed partway removed nothing a reader should trust.
+        there = [(name, p) for _kind, name, p in _read_created(root, backup_dir(root))
+                 if p.exists() or p.is_symlink()]
+        restored = _restore(root)
+        return restored, also, [name for name, p in there if not (p.exists() or p.is_symlink())]
 
 
 def _restore(root: Path) -> int:
@@ -796,11 +806,16 @@ def _restore(root: Path) -> int:
     _fsync_dir(root)
     if stamp := _read_name(backup / _ARCHIVE_NAME):
         shutil.rmtree(archive_dir(root) / stamp, ignore_errors=True)
-    for made in _read_created(root, backup):
-        # Absent when the re-home began (_rewrite() checked), so whatever is there now it made.
-        # Best effort, like the archive above: what is left is a second copy of what the restore
-        # just put back, and failing here would hide the error that started the restore.
-        if made.is_dir() and not made.is_symlink():
+    for kind, _name, made in _read_created(root, backup):
+        # Absent when the re-home began (_rewrite() checked). Best effort, like the archive
+        # above: what is left is a second copy of what the restore just put back, and failing
+        # here would hide the error that started the restore. A directory above it the re-home
+        # made goes only while empty: the created path is its own, but anything put beside it
+        # since is not.
+        if kind == "dir":
+            with suppress(OSError):
+                made.rmdir()
+        elif made.is_dir() and not made.is_symlink():
             shutil.rmtree(made, ignore_errors=True)
         else:
             with suppress(OSError):
@@ -875,20 +890,21 @@ def _plain_name(name: str) -> bool:
     return bool(name) and name not in (".", "..") and "/" not in name
 
 
-def _first_missing(root: Path, path: Path) -> Path:
-    """What creating `path` makes: the topmost of it and its ancestors below `root` that does
-    not exist yet. A rollback removes that, so `path` itself must not exist: whatever is there
+def _made_by(root: Path, path: Path) -> list[tuple[str, str, Path]]:
+    """What creating `path` makes, as the backup's CREATES marker lists it, deepest first:
+    `path` itself (`tree`, removed whole), then each directory above it, below `root`, that does
+    not exist yet (`dir`, removed only while empty). `path` must not exist: whatever is there
     belongs to something else, and the rollback would delete it."""
-    _created_name(root, path)
+    name = _created_name(root, path)
     if path.exists() or path.is_symlink():
         raise FileExistsError(errno.EEXIST, "a re-home creates this, and it already exists",
                               str(path))
-    top = path
+    made = [("tree", name, path)]
     for d in path.parents:
         if d == root or d.exists() or d.is_symlink():
-            return top
-        top = d
-    return top
+            break
+        made.append(("dir", _created_name(root, d), d))
+    return made
 
 
 def _created_name(root: Path, path: Path) -> str:
@@ -904,15 +920,20 @@ def _created_name(root: Path, path: Path) -> str:
     return "/".join(parts)
 
 
-def _read_created(root: Path, backup: Path) -> list[Path]:
-    """The paths a backup's CREATES marker lists; malformed lines are ignored rather than
-    trusted, since each is deleted."""
+def _read_created(root: Path, backup: Path) -> list[tuple[str, str, Path]]:
+    """The (kind, name, path) entries a backup's CREATES marker lists, in its order; malformed
+    lines are ignored rather than trusted, since each names something to delete."""
     try:
         text = (backup / _CREATES_NAME).read_text(encoding="utf-8")
     except FileNotFoundError:
         return []
-    lines = [line.split("/") for line in text.splitlines()]
-    return [root.joinpath(*parts) for parts in lines if all(map(_plain_name, parts))]
+    out = []
+    for line in text.splitlines():
+        kind, _, name = line.partition(" ")
+        parts = name.split("/")
+        if kind in ("tree", "dir") and all(map(_plain_name, parts)):
+            out.append((kind, name, root.joinpath(*parts)))
+    return out
 
 
 def _read_name(marker: Path) -> str | None:
