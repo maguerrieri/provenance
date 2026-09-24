@@ -54,19 +54,24 @@ Do not summarize the source rules for them — the agent definition carries them
    detection. No model in this loop.
 2. Spawn one `verifier` subagent per claim that passed the mechanical checks, for the
    judgment half: does the cached context actually support *this* claim, and (for
-   adversarial claims) are the two sources genuinely independent? Feed it the claim text
-   and each source's `verification.context`. Record each verdict with:
+   adversarial claims) are the two sources genuinely independent? Give it the question id
+   and the run dir, not a copy of the claim: it reads the claim and each source's context
+   from `uv run vg handoff <qid> --data <run>`, which prints every context with its sid and a
+   **context token** naming that context. Record each verdict with:
 
    ```
-   uv run vg judge <qid> <sid> supports|topic_only|contradicts|superseded --note "..."
+   uv run vg judge <qid> <sid> supports|topic_only|contradicts|superseded --context <token> --note "..."
    ```
 
    `vg judge` refuses, writing nothing, unless that claim (exact id, case included) cites
-   that sid and the cache still holds the copy of the page `vg verify` built its context from
-   (the snapshot, for a `verified_via_archive` source) — so run it after `vg verify`, and
-   re-verify if another run re-fetched the page or `vg archive` replaced the snapshot since.
-   A refusal names a wrong id, sid or `--data`, or the copy that moved; it is never a cue to
-   file the verdict under some other claim.
+   that sid, the cache still holds the copy of the page `vg verify` built its context from
+   (the snapshot, for a `verified_via_archive` source), and the token names the context the
+   claim file has now — so run it after `vg verify`, and re-verify if another run re-fetched
+   the page or `vg archive` replaced the snapshot since. A page verdict without a token is
+   refused. A token for an older context means `vg verify` rebuilt it while the verifier
+   worked: the verifier re-reads what `vg handoff` prints and judges that. A refusal names a
+   wrong id, sid or `--data`, the copy that moved, or the context that changed; it is never a
+   cue to file the verdict under some other claim.
 
    Judgments are stored in `data/judgments/<qid>.json`, keyed by source id — **not** in the
    claim file, which `vg verify` reloads with stripping on. A verdict written into the claim is

@@ -20,6 +20,17 @@ extend them any charity. An authoring agent reviewing its own citations rational
 
 ## For each source you are given (claim text + snippet + cached context window)
 
+You are given a question id and a run dir. Read what to judge from the pipeline itself:
+
+```
+uv run vg handoff <question_id> --data <run dir>
+```
+
+It prints the claim, then each source: its `sid`, its snippet, the context window between
+`----- context -----` and `----- end of context -----`, and a **context token** that names
+that exact context. Judge the context it prints, not a copy from anywhere else. A source it
+lists as "nothing to judge yet" is not yours to judge.
+
 Return one of:
 
 - `superseded` — the citation is sound but the document is not the current one; name the
@@ -36,20 +47,26 @@ Plus one line of reasoning. Be specific about what the context *does* say.
 Record each verdict — do not just report it in prose, or it will not reach the pipeline:
 
 ```
-uv run vg judge <question_id> <sid> <verdict> --note "<one line>" --data <run dir>
+uv run vg judge <question_id> <sid> <verdict> --context <token> --note "<one line>" --data <run dir>
 ```
 
+`<token>` is the context token `vg handoff` printed with that source. It tells the pipeline
+which context your verdict is about, and a verdict on a cited page is refused without it.
 `<run dir>` is the run you were given, e.g. `data/<candidate-id>` for a per-candidate run. Without
-it, both this command and the check below use the default `data/` run, which is a different
-run with its own `q1`, `q2`, and so on. If `vg judge` exits non-zero it recorded nothing: the
-question id (exact, case included), the sid or the run dir does not match a claim that cites
-that source, or the copy of the page your context came from is no longer the one cached (the
-page was re-fetched, or its snapshot replaced, since `vg verify`). It says which. Fix a typo
-in what you were given, but never file the verdict under an id or sid you were not given;
-otherwise report what it printed — a moved copy means the context you judged is not the
-one the pipeline now has, so the source needs `vg verify` and a fresh look, not a retry. The `sid` is printed with each source you are given. Your verdict decides whether the claim
-can render as verified and whether the source counts toward corroboration, so a claim you
-reject stops being green — which is the entire reason this pass exists.
+it, `vg handoff`, this command and the check below all use the default `data/` run, which is a
+different run with its own `q1`, `q2`, and so on. If `vg judge` exits non-zero it recorded
+nothing: the question id (exact, case included), the sid or the run dir does not match a claim
+that cites that source; or the copy of the page your context came from is no longer the one
+cached (the page was re-fetched, or its snapshot replaced, since `vg verify`); or the context
+was rebuilt since `vg handoff` printed it, so your token names a context the pipeline no longer
+has. It says which. Fix a typo in what you were given, but never file the verdict under an id or
+sid you were not given. For a rebuilt context, run `vg handoff` again, **read the new context**,
+and judge that: the new token is only worth passing with a verdict about the text it came with.
+Otherwise report what it printed. A moved copy means the context you judged is not the one the
+pipeline now has, so the source needs `vg verify` and a fresh look, not a retry. Your verdict
+decides whether the claim can render as verified and whether the source counts toward
+corroboration, so a claim you reject stops being green — which is the entire reason this pass
+exists.
 
 Before you report done, confirm every verdict landed:
 
@@ -61,7 +78,7 @@ Read its last line: `N of M cited source(s) need a verdict (K stale)`. You are d
 is 0, which is also the only case where the command exits 0. Read that number, and don't count `unreviewed` rows in the table: it wraps, and a grep
 over it has under-reported twice. A `stale` source was judged against an older copy of its
 page — or, for a query citation, an older definition of its query. Judge it again against the
-context you were given. A source listed as having nothing a
+context `vg handoff` prints now. A source listed as having nothing a
 verifier can judge yet (failed, paywalled, never verified, or changed since `vg verify`) is
 not in `N`, and it is not yours to judge. If the command exits non-zero, you are not done:
 say what it printed.
