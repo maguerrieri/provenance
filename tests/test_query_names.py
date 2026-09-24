@@ -15,6 +15,7 @@ change the answer; form_type=A, the figure as filed, naming the other names.
 
 from __future__ import annotations
 
+import sqlite3
 import zipfile
 
 from vgpipe import calaccess, queries
@@ -181,6 +182,56 @@ def test_a_late_giver_filed_two_ways_is_one_giver(tmp_path):
     assert not got.found, f"a late giver filed two ways was two givers: {got.value}"
     assert ("Quillon as 'Quillon'/'' ($0 on schedule-A, $3,000 late; could be one giver with "
             "'Quillon'/'Rue' ($0, $2,500 late))") in got.note, got.note
+    # Neither name is on schedule A: the late reports are the cause, and so is the remedy.
+    assert "2 late-report entries" in got.note and "names ranked apart" not in got.note
+    assert "pass form_type=A to rank schedule A alone" in got.note, got.note
+
+
+def test_a_late_gift_that_cannot_change_it_is_not_blamed(tmp_path):
+    """The names could change the ranking and a $10 late gift could not. Both were blamed."""
+    root = build(tmp_path, [(VARDLE, "5000"), (WHOLE, "3000"), (SPLIT, "2500")],
+                 late=[(("Zed", "Ada"), "10")])
+
+    got = run(root, "top_contributor")
+    assert not got.found and "late-report" not in got.note, got.note
+    assert "names ranked apart that could be one giver's could change" in got.note
+    a = run(root, "top_contributor", form_type="A")
+    assert "not counted — they cannot change the ranking" in a.detail, a.detail
+    assert "not counted as one, could change the ranking" in a.detail, a.detail
+
+
+def test_a_late_gift_and_a_name_that_can_only_change_it_together_are_both_named(tmp_path):
+    """$3,000 + $1,000 filed another way + $1,500 late passes $5,000; no two of them do."""
+    root = build(tmp_path, [(VARDLE, "5000"), (WHOLE, "3000"), (SPLIT, "1000")],
+                 late=[(SPLIT, "1500")])
+
+    got = run(root, "top_contributor")
+    assert not got.found, got.value
+    assert "1 late-report entry" in got.note and "names ranked apart" in got.note, got.note
+
+
+def test_one_chain_is_one_line_in_a_refusal(tmp_path):
+    """A name holding nothing is still on its giver's chain: listed apart, it read as a second
+    giver, and "and N more" counted it."""
+    root = build(tmp_path, [(VARDLE, "5000"), (WHOLE, "4000"), (SPLIT, "0"),
+                            (("Quillon", ""), "1500")])
+
+    got = run(root, "top_contributor")
+    assert not got.found, got.value
+    assert got.note.count("could be one giver with") == 1, got.note
+
+
+def test_a_missing_last_name_groups_with_a_blank_one(tmp_path):
+    """A NULL name part read back as None, which cannot be sorted against text. It is no name,
+    as a blank is, so the two are one name as filed."""
+    root = build(tmp_path, [(VARDLE, "5000"), (("", "Rue"), "3000"), (("", "Rue"), "2500")])
+    con = sqlite3.connect(calaccess.db_path(root))
+    con.execute("UPDATE RCPT_CD SET CTRIB_NAML = NULL WHERE TRAN_ID = 'A-3'")
+    con.commit()
+    con.close()
+
+    got = run(root, "top_contributor")
+    assert got.value == "Rue" and got.detail.startswith("$5,500 across 2"), got.note
 
 
 def test_a_refusal_reads_the_same_whatever_order_the_rows_come_in(tmp_path):
@@ -244,6 +295,17 @@ def test_a_miss_names_the_name_the_giver_is_filed_under(tmp_path):
     got = run(root, "contributor_total", contributor="Quillon", contributor_first="Rue")
     assert not got.found and got.rows == 0
     assert "1 other name this giver could be filed under ('Rue Quillon'/''" in got.note, got.note
+
+
+def test_more_other_names_than_one_lookup_holds_are_all_named(tmp_path):
+    """The other names are summed in chunks, since each is two SQL variables."""
+    middles = [(f"Rue X{i:03d} Quillon", "") for i in range(600)]
+    root = build(tmp_path, [(SPLIT, "2500")] + [(m, "10") for m in middles])
+
+    got = run(root, "contributor_total", contributor="Quillon", contributor_first="Rue",
+              form_type="A")
+    assert got.value == 2500.0
+    assert "600 other names this giver could be filed under ('Rue X000 Quillon'/''" in got.detail
 
 
 def test_an_unnamed_gift_could_be_anyones(tmp_path):
