@@ -146,6 +146,12 @@ from the data first (`vg calaccess contributions`), because a name that is close
 returns a miss, not a number. Record `expected` exactly as the query prints it: it must match
 to the cent, so a rounded figure ("12000" for 11987.40) fails.
 
+The contribution queries count **schedule A (monetary contributions) only** unless you pass
+`form_type`. The listing shows every receipt: in-kind items, refunds, interest. So a name from it
+can come back a miss whose note names the schedule it is on (`form_type=C`, say). A refund or
+interest is not a contribution. Cite another schedule only when the claim says so ("in-kind
+contributions"), and word the claim to match the schedule you passed.
+
 **Never cite the database as a URL.** A row in a local TSV has no URL a human can open and no text
 they can ⌘F, so a claim resting on one is unverifiable by design. Every result prints the
 filing's own CAL-ACCESS page — cite *that*, with a snippet from it. Use the export to find

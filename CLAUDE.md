@@ -1076,6 +1076,27 @@ So: `contributor_total` can establish an amount and never a rank. Superlatives (
 number reproduces, not that the sentence around it is sound — which is exactly why the
 judgment pass exists.
 
+## A receipt is not a contribution
+
+`RCPT_CD` holds every receipt schedule, not only gifts:
+- monetary contributions (Form 460 schedule A);
+- in-kind items (C);
+- miscellaneous receipts (I), such as a vendor's refund or a bank's interest;
+- Form 401 payments and Form 496 Part 3 reports.
+
+`filer_total` was fixed to default to schedule A after mixing schedules made a total come out
+high. `contributor_total` and `top_contributor` read the same table through the same view, and
+were not fixed with it. So a refund could make a business that gave nothing "the largest
+contributor", and the citation reproduced green. When one query is fixed for what it reads, fix
+the rest with it: search for the table or view (`DEDUPED_RECEIPTS`), not the query's name.
+
+All three now count schedule A unless `form_type` names another schedule (`""` for all of them),
+and the detail names the schedule counted. When a contributor misses on schedule A but has rows
+on other schedules, the miss suggests `form_type=<schedule>` instead of pointing at the name. The
+default has a known gap: a late contribution reported only on Form 496 Part 3, not yet restated
+on a later schedule A, is left out (#66). And `vg calaccess contributions` still lists every
+schedule without saying which (#67).
+
 ## A surname is not a candidate
 
 The same applies to donors: `contributor_total` for a common surname summed unrelated people
