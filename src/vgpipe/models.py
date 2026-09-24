@@ -345,6 +345,11 @@ class Claim(BaseModel):
             if self.corroboration_ok is True:
                 return "verified"
             return "pending" if self.corroboration_ok is None else "human_review"
+        # A source `vg verify` has not reached leaves the claim unsettled, whatever it carries:
+        # a verdict re-applied by sid to a rewritten, not-yet-verified citation included.
+        # Checked before the paywall flag, so it cannot hide behind it.
+        if any(s == "pending" for s in sts):
+            return "pending"
         if any(s == "could_not_verify_paywall" for s in sts):
             # A flag, not a pass: corroboration reads exactly as it does with every source
             # verified, the flag standing in for green. A claim short of the documents it needs
@@ -352,8 +357,6 @@ class Claim(BaseModel):
             if self.corroboration_ok is True:
                 return "could_not_verify_paywall"
             return "pending" if self.corroboration_ok is None else "human_review"
-        if any(s == "pending" for s in sts):
-            return "pending"
         return "human_review"
 
 
