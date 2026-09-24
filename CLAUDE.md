@@ -1600,12 +1600,16 @@ large tie is listed whole, not refused: the whole set is true and reproduces, an
 already says it is no single largest contributor.
 
 Wherever a query picks "the top", select on the value, not a row count, and order equal values
-by something stable. Two orders that look stable are not:
+by something stable. Three orders that look stable are not:
 - **A bare column in a `GROUP BY`** is whichever of the group's rows SQLite reads, so a name's
   spelling (its case, a padded part) changed with the order rows were loaded in. Pick it with
   an aggregate (`MIN`) and trim it.
 - **A set** iterates by hash, which changes from one process to the next. So does anything
   that inherits its order, such as a stable sort on a key where two entries are equal.
+- **A float sum** of money is not exact, so two equal amounts can sort apart:
+  $6,000.01 + $0.02 is 6000.030000000001, above $6,000.03. The name tie-break never ran, and a
+  refusal listed the second name first. Round to the cent before sorting on an amount, as
+  `matches()` compares one within half a cent.
 
 ## A receipt is not a contribution
 
