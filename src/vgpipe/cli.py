@@ -22,7 +22,7 @@ from .fetch import kept_copy_note, no_text_layer, pages_without_text
 from .models import Claim, check_archive_url, strip_machine_fields
 from .races import available as available_races
 from .races import load as load_race
-from .report import render
+from .report import clear_render, render
 from .sources import domain, load_rules
 from .verify import (
     GOOD,
@@ -713,6 +713,15 @@ def build(data: Path = DATA, cache: Path = None, race: str = "", candidate: str 
     from .conflicts import detect
     from .races import candidate as find_candidate
 
+    # First, so that every way this build can stop short (a refusal below, a crash, a kill)
+    # leaves no earlier render for `vg serve` to show as if it were this one.
+    try:
+        clear_render(data / "out")
+    except OSError as e:
+        con.print(f"[red]could not clear the previous render from {escape(str(data / 'out'))}: "
+                  f"{escape(str(e))}. Remove it by hand: `vg serve` must not show a render this "
+                  f"build did not produce.[/]")
+        raise typer.Exit(1) from None
     r = load_race(race or None)
     # The title also keys the review app's saved progress, so it must name the candidate:
     # two candidates sharing a key would show each other's checkmarks.
@@ -766,7 +775,11 @@ def serve(data: Path = DATA, port: int = 8765, open_browser: bool = True):
 
     out = (data / "out").resolve()
     if not (out / "review.html").exists():
-        con.print("[red]No review.html — run `vg build` first.[/]")
+        # A build removes the last render before it can refuse, so this is also what a refused
+        # build leaves: say so, or the next person runs serve, not build, and never sees why.
+        con.print(f"[red]No review.html in {escape(str(out))}: `vg build` has not rendered one, "
+                  f"is still rendering one, or its last run refused and rendered nothing. Run `vg build` and fix what "
+                  f"it reports.[/]")
         raise typer.Exit(1)
     handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(out))
     url = f"http://127.0.0.1:{port}/review.html"

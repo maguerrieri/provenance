@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections import Counter
 from datetime import UTC, datetime
@@ -18,6 +19,38 @@ from . import queries
 from .verify import secondary_host
 
 TEMPLATES = Path(__file__).resolve().parents[2] / "templates"
+
+# What a build leaves in out/. review.html is what `vg serve` serves, so it goes first here and
+# is written last: while it is there, a build finished writing it.
+HTML, JSON = "review.html", "claims.json"
+
+
+def clear_render(out_dir: Path) -> None:
+    """Remove the review app an earlier build rendered, before this build can refuse.
+
+    A build that exits early writes nothing, so the last render stayed in out/ and `vg serve`
+    served it: a reviewer ticked a page the pipeline had just refused to produce. It is
+    regenerable, and the checkboxes live in the browser, keyed by title, so nothing is lost.
+    """
+    for name in (HTML, JSON):
+        (out_dir / name).unlink(missing_ok=True)
+
+
+def _write_whole(p: Path, text: str) -> None:
+    """Replace `p` whole, as `judgments._write()` does: a temp file beside it, on disk, then
+    renamed over it. `vg serve` may be reading review.html while a build writes it, and a
+    build killed mid-write must not leave half a page. The temp name carries the pid, so two
+    builds of one run can't take each other's."""
+    tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())   # otherwise a power loss can keep the rename and lose the text
+        os.replace(tmp, p)
+    finally:
+        tmp.unlink(missing_ok=True)
+
 
 BADGE = {
     "verified": "ok",
@@ -116,10 +149,8 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "voter guide",
         # human_review, and must not be listed under "deliberate, not failure".
         not_found_claims=[c for c in claims if c.status == "not_found"],
     )
-    html_path = out_dir / "review.html"
-    html_path.write_text(html)
 
-    json_path = out_dir / "claims.json"
+    json_path = out_dir / JSON
     # `status` is a computed property, so model_dump_json drops it — and any consumer of
     # claims.json then cannot see the roll-up the HTML displays.
     export = []
@@ -130,5 +161,8 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "voter guide",
             src_json["sid"] = src_obj.sid
             src_json["secondary_host"] = secondary_host(src_obj)
         export.append(d)
-    json_path.write_text(json.dumps(export, indent=2))
+    _write_whole(json_path, json.dumps(export, indent=2))
+
+    html_path = out_dir / HTML
+    _write_whole(html_path, html)   # last: `vg serve` serves it, so it means the rest is written
     return html_path, json_path
