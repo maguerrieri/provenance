@@ -1504,9 +1504,28 @@ credited thousands of dollars to candidates. Neither cover is right in
 general. So the latest cover stays, and the case is flagged instead. Changing which evidence
 decides an ambiguous case only changes who is wrong; flag it instead. A row whose own cover and
 latest cover disagree always comes from a filing whose latest amendment has no rows, so any
-total that counts it is flagged, and so is its listing row (the flag, above). The total its
-own cover would have reached is not flagged yet: it never counts the row, and the update
-filing's rows reach no total at all (#89).
+total that counts it is flagged, and so is its listing row (the flag, above).
+
+**The other side is flagged too.** The total the row's own cover would have reached never
+counts it, and the update filing's rows reach no total at all, so for a while nothing flagged
+that total: it was short by a row nobody mentioned. `ie_total` now also finds the rows its
+window and amount rules would count whose own amendment's cover matches what it asks for, name
+and stance, while no cover of the latest amendment does (`calaccess.left_out_sql()`). They go
+in `QueryResult.reattributed`, and `unsettled` sends the total to `human_review` naming each
+filing and the amount left out, in its own phrase, which the skill also does not retry. A
+total with no counted rows at all is a miss, as before, and its detail names the filings
+instead, so it never reads as "nobody spent on this candidate". The listing shows such a row
+under the candidate its own cover named, marked with who the latest cover names.
+
+Two things made that check cost 0.6s rather than 5s on a synthetic export of 1.5 million
+covers, and both apply to any second pass over these views:
+- **Don't join `CVR_LATEST` again.** Each query that joins it rebuilds the whole view. The
+  check asks per filing through the `FILING_ID` index instead, with `EXISTS`, so a second
+  cover record of one amendment could never count a row twice.
+- **A flattened subquery can run the cheap-looking work first.** SQLite flattened the
+  window test into the correlated one and worked out every expenditure's date before the
+  index lookups that keep a handful of rows: 3s. A `MATERIALIZED` CTE runs the selective
+  test first. `EXPLAIN QUERY PLAN` looked the same both ways, so time it.
 
 Test SQL through `uv run python`, not the `sqlite3` CLI: they are different SQLite builds.
 Python's bundled 3.50 rejects an outer column in a subquery's `ORDER BY` ("no such column"),
@@ -1594,7 +1613,8 @@ began refusing a database whose covers carry no amendment ids, which their earli
 answered from, so each bumped from the version it had: `contributor_total` and
 `top_contributor` to v4, `filer_total` to v3. The unsettled-amendment flag every query now
 carries bumped nothing: it changes no value, and verification acts on it, not the calculation.
-Neither did the receipt queries' flag for a left-out schedule, for the same reason.
+Neither did the receipt queries' flag for a left-out schedule, nor `ie_total`'s for the rows
+it leaves out, for the same reason.
 
 A rule in a comment is one a session can skip, so it has a gate:
 `test_a_query_definition_cannot_change_unnoticed` pins each query's version to a fingerprint
@@ -1605,7 +1625,9 @@ reviewer reads. It counts by **exclusion**: only what is named in `_NOT_A_DEFINI
 The first version hashed a hand-kept list of helpers, and within a day it missed the
 date-window helpers added later — a list of what a query uses goes stale exactly when someone
 adds to it. A shared helper moving every fingerprint at once is deliberate: it changes every
-query.
+query. It hashes code text, so a lint-only edit moves a pin too: dropping a stray `f` prefix
+after pinning once committed a stale pin. Re-run the suite after any edit to either module,
+however cosmetic, before committing.
 
 What the figure was checked against is stamped too, machine-owned inside `verification`
 (`query_run`): the version, the date of the CAL-ACCESS export the database was built from
