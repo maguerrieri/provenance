@@ -12,3 +12,7 @@ Agents find sources and make judgment calls. Deterministic code decides whether 
 ## Status
 
 Not usable yet. The tool is being imported from the private project where it was built. See the epics in this repo's issues for the plan.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
