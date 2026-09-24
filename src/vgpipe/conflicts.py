@@ -13,16 +13,18 @@ from decimal import Decimal
 from .models import Claim
 
 # A unit is a whole word: read as the first letter of the next one, "$5,000 more" was five
-# billion dollars and "$20 by" twenty billion.
+# billion dollars and "$20 by" twenty billion. Nor is it a letter starting a designation like
+# "K-12". The abbreviations are listed because the first-letter read used to catch them.
 MONEY = re.compile(r"\$\s?([\d,]+(?:\.\d+)?)\s*"
-                   r"(?:(k|thousand|m|mn|million|b|bn|billion)(?![a-z]))?", re.I)
+                   r"(?:(k|thousand|m|mm|mn|mil|million|b|bn|bil|billion)(?!\w|-\d))?", re.I)
 YEAR = re.compile(r"\b(19|20)\d{2}\b")
 DATE = re.compile(
     r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+(?:19|20)\d{2}\b"
     r"|\b(?:19|20)\d{2}-\d{2}-\d{2}\b", re.I)
 
-_MULT = {"k": 10**3, "thousand": 10**3, "m": 10**6, "mn": 10**6, "million": 10**6,
-         "b": 10**9, "bn": 10**9, "billion": 10**9}
+_MULT = {"k": 10**3, "thousand": 10**3,
+         "m": 10**6, "mm": 10**6, "mn": 10**6, "mil": 10**6, "million": 10**6,
+         "b": 10**9, "bn": 10**9, "bil": 10**9, "billion": 10**9}
 
 
 def money_values(text: str) -> set[float]:
