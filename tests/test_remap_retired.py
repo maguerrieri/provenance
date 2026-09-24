@@ -209,7 +209,10 @@ def test_vg_judgments_names_the_scratch_an_interrupted_re_home_left(tmp_path):
     for name in ("judgments-backup.partial", "judgments-backup.discard"):
         assert (f"{run / name} is scratch an interrupted re-home by the retired `vg remap` left "
                 f"behind") in out, out
-    assert "delete it, and never restore from it" in out, out
+    # A .partial copied the shards before any was touched, and a .discard is the shards before a
+    # re-home that finished: neither is the run's verdicts now.
+    assert ("holds at most an older copy of the run's verdicts: delete it, and never restore "
+            "from it") in out, out
     assert "was interrupted, and its shards may be half-rewritten" not in out, "not the backup"
 
 
