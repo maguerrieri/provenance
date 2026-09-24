@@ -127,8 +127,9 @@ def test_a_backup_an_interrupted_re_home_left_still_stops_every_reader(tmp_path,
     """No re-home runs any more, but one an older version was running when it died left
     judgments-backup/ behind, with shards that may be half-rewritten. Reading them as the
     verdicts would render whatever is missing as unreviewed, so every reader still refuses,
-    and names a commit whose `--rollback` undoes it. `--rollback` here says the same rather
-    than that it is retired, since that is what the operator asking for it needs.
+    and names a commit whose `--rollback` undoes it. `--rollback`, `--repair` and `vg remap`
+    say the same rather than that they are retired, since that is what an operator retrying the
+    interrupted command needs.
 
     The command runs from that other checkout, so the run is named by its absolute path: a
     relative `--data data` there names that checkout's own data/, which holds no backup, and
@@ -140,30 +141,78 @@ def test_a_backup_an_interrupted_re_home_left_still_stops_every_reader(tmp_path,
     before = _tree(data)
     monkeypatch.chdir(tmp_path)
     for args in (["judgments"], ["judgments", "--rollback"], ["judgments", "--repair"],
-                 ["build"], ["status"], ["verify"]):
+                 ["remap", "--apply"], ["build"], ["status"], ["verify"]):
         code, out = _vg(*args, "--data", run.relative_to(tmp_path))
         assert code == 1, (args, out)
         assert "was interrupted, and its shards may be half-rewritten" in out, (args, out)
         assert (f"run `vg judgments --rollback --data {run.resolve()}` from a checkout of "
                 f"commit {judgments.LAST_WITH_ROLLBACK}, which still has it") in out, (args, out)
+        # after the rollback, the migration is still pending, and only that checkout can apply it
+        assert "Then, from that checkout, re-run the command that was interrupted" in out, out
         assert "is retired" not in out, (args, out)
     assert _tree(data) == before
 
 
 def test_the_commit_named_for_rollback_is_on_main_and_has_it():
-    """The refusal above sends an operator to this commit. It must stay reachable, and its
-    `vg judgments` must still take `--rollback`."""
+    """The refusal above sends an operator to this commit. It must be named in full, stay in
+    this branch's history, and its `vg judgments` must still take `--rollback`. CI's checkout is
+    shallow, so the history half runs where the history is."""
     import subprocess
 
     def git(*args):
         return subprocess.run(["git", *args], capture_output=True, text=True)
 
     commit = judgments.LAST_WITH_ROLLBACK
+    assert re.fullmatch(r"[0-9a-f]{40}", commit), "an abbreviated id can become ambiguous"
     old = git("show", f"{commit}:src/vgpipe/judgments.py")
     if old.returncode != 0:
         pytest.skip(f"no git history with {commit} here: {old.stderr.strip()}")
+    assert git("merge-base", "--is-ancestor", commit, "HEAD").returncode == 0
     assert "\ndef rollback(root: Path)" in old.stdout
     assert "rollback: bool = False" in git("show", f"{commit}:src/vgpipe/cli.py").stdout
+
+
+def test_vg_judgments_names_the_scratch_an_interrupted_re_home_left(tmp_path):
+    """A re-home killed while building its backup left judgments-backup.partial/, and one killed
+    while deleting the retired backup left judgments-backup.discard/. The next re-home cleared
+    them. Nothing does now, so `vg judgments` says what they are, before anyone mistakes one
+    for the backup and restores stale verdicts from it."""
+    data, run, _ = _legacy_run(tmp_path)
+    code, out = _vg("verify", "--data", run)
+    assert code == 0, out
+    for name in ("judgments-backup.partial", "judgments-backup.discard"):
+        (run / name).mkdir()
+        (run / name / "q1.json").write_text("[]")
+    code, out = _vg("judgments", "--data", run)
+    for name in ("judgments-backup.partial", "judgments-backup.discard"):
+        assert (f"{run / name} is scratch an interrupted re-home by the retired `vg remap` left "
+                f"behind") in out, out
+    assert "delete it, and never restore from it" in out, out
+    assert "was interrupted, and its shards may be half-rewritten" not in out, "not the backup"
+
+
+def test_vg_judgments_counts_a_shard_a_case_folding_disk_opens_as_the_claims(tmp_path,
+                                                                           monkeypatch):
+    """On macOS's default disk `vg build` opens Q1.json for claim q1 and applies its verdicts,
+    so `vg judgments` must count them as q1's, or its gate never reaches 0. CI's disk keeps the
+    two names apart, so that branch never ran there once the re-home tests that simulated a
+    folding disk went: this simulates one by answering `_same_file()` as such a disk would."""
+    data, run, _ = _legacy_run(tmp_path)
+    code, out = _vg("verify", "--data", run)
+    assert code == 0, out
+    (claim,) = cli.load_claims(run / "claims", trust_machine_fields=True)
+    page_url, page_at, ver = judgments.judged_copy(claim.sources[0], data)
+    judgments.record(run, "Q1", claim.sources[0].sid, "supports", "judged as Q1",
+                     page_fetched_at=page_at, extractor_version=ver, page_url=page_url)
+    code, out = _vg("judgments", "--data", run)
+    if not (run / "judgments" / "q1.json").exists():   # this disk keeps Q1 and q1 apart
+        assert code == 1 and "under an id no claim has (Q1.json)" in out, out
+        monkeypatch.setattr(judgments, "_same_file", lambda root, stem, qid: (
+            stem.casefold() == qid.casefold() and judgments._on_disk(root, stem).exists()))
+        code, out = _vg("judgments", "--data", run)
+    assert code == 0 and "0 of 1 cited source(s) need a verdict" in out, out
+    assert "Q1.json differ from a claim's id only in case, and this disk opens them" in out, out
+    assert "Rename each to its claim's exact id by hand" in out, out
 
 
 def test_a_verdict_recorded_while_another_is_being_written_is_not_lost(tmp_path, monkeypatch):

@@ -170,10 +170,10 @@ def _lock(root: Path, *, shared: bool = False):
 
     record() reads a shard and then rewrites it, and verifier agents record in parallel, so a
     second `vg judge` that landed in between was never read, and the rewrite deleted it. Writers
-    take the lock exclusively. Readers take
-    it shared, so they wait out a rewrite rather than seeing half of one. It is an flock on the
-    directory itself: no lock file to litter a tracked data dir, and a holder that dies releases
-    it with its process.
+    take the lock exclusively. Readers take it shared, so they read after a write in progress
+    rather than before it; each shard is replaced whole (_write()), so none reads half of one.
+    It is an flock on the directory itself: no lock file to litter a tracked data dir, and a
+    holder that dies releases it with its process.
     """
     d = root / "judgments"
     try:
@@ -206,9 +206,19 @@ def _lock(root: Path, *, shared: bool = False):
             os.close(fd)
 
 
-# A commit on main whose `vg judgments --rollback` undoes an interrupted re-home. Named outright:
-# a lookup such as `git log -S'def rollback('` finds whatever commit last touched that text.
-LAST_WITH_ROLLBACK = "6f73eac"
+# A commit on main whose `vg judgments --rollback` undoes an interrupted re-home. Named outright,
+# and in full: a lookup such as `git log -S'def rollback('` finds whatever commit last touched
+# that text, and an abbreviated id can become ambiguous as the repository grows.
+LAST_WITH_ROLLBACK = "6f73eac879f5ce54a196436c781a8939217c5154"
+
+
+def leftovers(root: Path) -> list[Path]:
+    """Scratch an interrupted re-home by the retired `vg remap` left that no reader uses: a
+    backup still being built, which had touched no shard, or one already retired after its
+    re-home finished. The next re-home used to clear them. Now nothing does, so `vg judgments`
+    names them, and neither is ever to be restored from."""
+    return [d for d in (root / "judgments-backup.partial", root / "judgments-backup.discard")
+            if d.exists()]
 
 
 def refuse_if_interrupted(root: Path) -> None:
@@ -231,7 +241,9 @@ def refuse_if_interrupted(root: Path) -> None:
         f"judgments --repair` was interrupted, and its shards may be half-rewritten. This "
         f"version cannot undo it: run `vg judgments --rollback --data {root.resolve()}` from a "
         f"checkout of commit {LAST_WITH_ROLLBACK}, which still has it. It puts back everything "
-        f"the re-home changed: the verdicts, and the claim files if it was `vg remap --apply`.")
+        f"the re-home changed: the verdicts, and the claim files and questions.json if it was "
+        f"`vg remap --apply`. Then, from that checkout, re-run the command that was interrupted "
+        f"to finish it, since this version cannot apply a migration either.")
 
 
 def load(root: Path, question_id: str) -> dict[str, Judgment]:

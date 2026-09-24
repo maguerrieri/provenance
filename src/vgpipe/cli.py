@@ -1015,6 +1015,10 @@ def show_judgments(data: Path = DATA, question_id: str = "",
         # Every shard, not only those named after current claims: this is the command that
         # shows the gaps, and a malformed shard left under an old id is one.
         every = judgments.load_every(data)
+    for d in judgments.leftovers(data):
+        con.print(f"[yellow]{escape(str(d))} is scratch an interrupted re-home by the retired "
+                  f"`vg remap` left behind. Nothing reads it, and its verdicts are not the run's: "
+                  f"delete it, and never restore from it.[/]")
     selected = [c for c in claims if not question_id or c.question_id == question_id]
     for c in selected:
         for s in c.sources:
@@ -1380,8 +1384,14 @@ def _retired(what: str) -> NoReturn:
 
 @app.command(name="remap", hidden=True,
              context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
-def remap():
+def remap(data: Path = DATA):
     """Retired: question ids are stable, so there is no numbering to migrate."""
+    from . import judgments
+
+    # The run may be one an interrupted `vg remap --apply` left half-moved, and whoever retries
+    # it needs the way back first, as `vg judgments --rollback` gives it.
+    with _judgments_or_exit():
+        judgments.refuse_if_interrupted(data)
     _retired("`vg remap`")
 
 
