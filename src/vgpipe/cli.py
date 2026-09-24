@@ -454,11 +454,12 @@ def verify(data: Path = DATA, cache: Path = None, refresh: bool = False, qid: st
 def _report_stale(stale: list[str]) -> None:
     if not stale:
         return
-    con.print(f"[yellow]{len(stale)} verdict(s) predate the page they judged, or have no cached "
-              f"page to check against, or judged a copy their context no longer comes from (a "
-              f"replaced snapshot), or were formed under another query definition, or judged "
-              f"another question or answer than their claim gives now, and were NOT applied — "
-              f"re-judge those sources (after `vg verify`, where the page is missing):[/]")
+    con.print(f"[yellow]{len(stale)} verdict(s) no longer describe what they judged, and were NOT "
+              f"applied. Each predates its page, or has no cached page to check against, or "
+              f"judged a copy its context no longer comes from (a replaced snapshot), or was "
+              f"formed under another query definition, or judged another question or answer "
+              f"than its claim gives now (or names none) — re-judge those sources (after `vg "
+              f"verify`, where the page is missing):[/]")
     for x in stale[:8]:
         # Escaped: a reason can name a snapshot, whose URL embeds the agent-authored one.
         con.print(f"  {escape(x)}")
@@ -607,10 +608,10 @@ def _report_rearchived_verdicts(claims: list[Claim], data: Path, cache_root: Pat
         # is stale however the snapshot went, and this message says the snapshot is why.
         stale = []
         for c in claims:
-            judged = judgments.load(data, c.question_id)
-            stale += [f"{c.question_id}/{s.sid}" for s in c.sources
-                      if s.verification.status == "verified_via_archive"
-                      and (j := judged.get(s.sid)) is not None
+            rows = [s for s in c.sources if s.verification.status == "verified_via_archive"]
+            judged = judgments.load(data, c.question_id) if rows else {}
+            stale += [f"{c.question_id}/{s.sid}" for s in rows
+                      if (j := judged.get(s.sid)) is not None
                       and judgments.is_stale(j, cache_root, s)]
     except judgments.UnreadableJudgments as e:
         # The archive itself is done and written; an unreadable shard is every reader's to stop on.
@@ -1220,7 +1221,14 @@ def show_judgments(data: Path = DATA, question_id: str = "",
         for s, j, why in rows:
             last_run = s.verification.query_run   # the run `vg judge` checks, before build's
             seen = s.verification.context_page    # the copy it checks, likewise
+            drawn = (s.verification.context, s.verification.context_offset,
+                     s.verification.matched_offset)
             revalidate_from_cache(s, cache_root)
+            # Revalidation redrew a page citation's excerpt: it drops any verdict on the one
+            # `vg verify` wrote, stale or not, so one recorded now would be dropped too.
+            redrawn = s.query is None and drawn != (s.verification.context,
+                                                    s.verification.context_offset,
+                                                    s.verification.matched_offset)
             total += 1
             unjudgeable = s.verification.support == "unreviewed" and (
                 judgments.unjudgeable_query(s.query, last_run, cache_root) if s.query is not None
@@ -1234,9 +1242,11 @@ def show_judgments(data: Path = DATA, question_id: str = "",
                 blocked += 1
                 v = f"[dim]unreviewed ({s.verification.status})[/]"
                 note = s.verification.reason
-            elif j is not None and not why:
-                # Revalidation dropped a usable verdict: the context moved since `vg verify`
-                # wrote the claim file. Re-judging can't fix that; re-verifying does.
+            elif j is not None and redrawn:
+                # Revalidation dropped a verdict: the context moved since `vg verify` wrote the
+                # claim file. Re-judging can't fix that; re-verifying does. Asked of the context,
+                # not of whether the verdict applied: a stale one (another answer, or none named)
+                # never applies, and on this row a fresh one would be dropped the same way.
                 blocked += 1
                 v = "[dim]unreviewed (run vg verify)[/]"
                 note = "verdict recorded, but the context changed since vg verify"
@@ -1291,11 +1301,11 @@ def show_judgments(data: Path = DATA, question_id: str = "",
     if stale:
         # Not "all need judging again": one with no page to check against has no context to
         # judge either, so it sits with the blocked sources, and `vg judge` refuses it.
-        con.print(f"[yellow]{stale} verdict(s) predate the page they judged, or have no cached "
-                  f"page to check against, or judged a copy their context no longer comes from "
-                  f"(a replaced snapshot), or were formed under another query definition, or "
-                  f"judged another question or answer than their claim gives now, so `vg build` "
-                  f"will not apply them. "
+        con.print(f"[yellow]{stale} verdict(s) no longer describe what they judged, so `vg build` "
+                  f"will not apply them. Each predates its page, or has no cached page to check "
+                  f"against, or judged a copy its context no longer comes from (a replaced "
+                  f"snapshot), or was formed under another query definition, or judged another "
+                  f"question or answer than its claim gives now (or names none). "
                   + (f"{stale_waiting} are in the count below and need judging again. "
                      if stale_waiting else "")
                   + (f"{stale - stale_waiting} have nothing a verifier can judge yet (above)."

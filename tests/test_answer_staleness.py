@@ -119,7 +119,7 @@ def test_a_supports_about_one_answer_does_not_vouch_for_the_opposite_one(tmp_pat
     # the gate lists it for re-judging, so the judgment pass is not done
     code, need, stale, out = _gate(run)
     assert (code, need, stale) == (1, 1, 1), out
-    assert "judged another question or answer than their claim gives now" in out, out
+    assert "judged another question or answer than its claim gives now" in out, out
 
     # and a verifier's verdict on the answer as it reads now is what renders
     _judge(run, "q1", s, "contradicts", "the minutes record a yes vote")
@@ -219,7 +219,7 @@ def test_verify_reports_a_verdict_about_another_answer_as_not_applied(tmp_path):
     _judge(run, "q1", s, "supports")
     _write(run, claim("q1", src(), answer=AGAINST))
     out = _verify(run)
-    assert "1 verdict(s) predate the page they judged" in out, out
+    assert "1 verdict(s) no longer describe what they judged" in out, out
     assert f"q1/{s.sid}: judged another question or answer than this claim gives now" in out, out
 
 
@@ -239,3 +239,27 @@ def test_a_verdict_stale_on_both_halves_names_both(tmp_path):
     c = claim("q1", src(), answer=AGAINST)
     [(_s, _j, why)] = judgments.verdicts_for(c, run, cache_root=run)
     assert "judged another question or answer" in why and "re-fetched since" in why, why
+
+
+def test_a_stale_verdict_on_a_redrawn_context_waits_on_verify_not_a_verifier(tmp_path):
+    """Revalidation redraws an excerpt that moved since `vg verify`, and drops any verdict on
+    the old one. The gate sent such a row to `vg verify` only when its verdict had applied, so
+    once a rewritten answer made the verdict stale, the row counted as a verifier's to close:
+    `vg judge` accepted a verdict on the claim file's outdated excerpt, and build dropped it."""
+    from vgpipe.fetch import cache_path
+
+    s = src()
+    run = _verified_run(tmp_path / "run", claim("q1", s))
+    _judge(run, "q1", s, "supports")
+    p = run / "claims" / "q1.json"
+    raw = json.loads(p.read_text())
+    raw["answer"] = AGAINST                    # edited in place: the verification stays
+    p.write_text(json.dumps(raw))
+    page = PageCache.model_validate_json(cache_path(run, s.url).read_text())
+    page.text = f"A different lead-in. {s.snippet}."     # same copy, fetch time unchanged
+    cache_path(run, s.url).write_text(page.model_dump_json())
+
+    code, need, stale, out = _gate(run)
+    assert (code, need, stale) == (0, 0, 0), out       # not waiting on a verifier...
+    assert "1 more source(s) have nothing a verifier can judge yet" in out, out
+    assert "unreviewed (run vg verify)" in out, out     # ...but on `vg verify`
