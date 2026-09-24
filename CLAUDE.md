@@ -676,10 +676,31 @@ and `vg source-import-curl` turns a browser "copy as cURL" into an entry. Negati
 belong here too — "probed, needs a session, retrieve by hand" stops the next run from
 re-litigating it and from substituting silently.
 
-**Credentials never enter the registry.** The importer drops `Cookie`/`Authorization` and
-`run()` refuses a recipe carrying them, because an endpoint that only works with someone's
-session is a manual retrieval, not a pipeline capability — recording it as one would be both
-a leak and a lie about what the pipeline can do unattended.
+**Credentials never enter the registry.** The importer drops session headers and `run()`
+refuses a recipe carrying them, because an endpoint that only works with someone's session is
+a manual retrieval, not a pipeline capability — recording it as one would be both a leak and a
+lie about what the pipeline can do unattended.
+
+The importer let credentials through in two ways. Both were fixed by failing closed, not by
+listing more names:
+- **A parser that skips what it doesn't know has to know how much to skip.** The importer
+  skipped a curl option it didn't know without skipping that option's value. So
+  `curl --user name:password URL` recorded `name:password` as the recipe's URL, and as the
+  name of the registry file. `parse_curl()` now knows the arity of every option it accepts and
+  refuses any other option. It also refuses `--user` and curl's other credential options, a
+  login in the URL, and a second URL, which is the shape a misread value takes. No refusal
+  repeats the value, and that includes a `-H` with no colon: it is all value.
+- **A deny-list of names can't anticipate what a site calls its session.** Only `Cookie`,
+  `Authorization` and a few more were dropped, so `x-csrf-token` and `x-xsrf-token` reached
+  disk. Credential headers now match by pattern (`credential_header()`), and `run()` uses the
+  same test. On import that is only the first check: a header is kept only if it is in
+  `SAFE_HEADERS`, and every other header is dropped and named. A human can add a header the
+  endpoint needs back by hand, and `run()` still refuses it if it looks like a credential. A
+  safe name can still carry a session in its value: `referer` is the full URL of the page, so
+  it is kept only as far as the page, without its query or `;jsessionid=` parameters.
+
+Still open: a credential in the recipe URL's query string or in the body (#52). Parameter names
+need their own rule, because `session` is often a legislative session.
 
 The habit worth keeping: when a source looks browser-only, open dev tools and see what the
 UI is calling. The FPPC portal is JS; its data is a cookieless JSON POST.
