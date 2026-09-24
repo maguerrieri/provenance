@@ -69,32 +69,42 @@ BADGE = {
     "pending": "mut",
 }
 
-# The review app records which ROW each check was made on (one source as cited by one claim,
-# `<question id>/<source id>`), to say when that row's evidence has changed since. The page
-# whitelists stored values to this shape; `/` is outside QID_PATTERN, so it is unambiguous.
-ROW_KEY_RE = QID_PATTERN.removesuffix("$") + "/[0-9a-f]{12}$"
+# The review app records which ROW each check was made on, to say when that row's evidence has
+# changed since: `<question id>/<source id>`, plus `/<n>` on the n-th citation of one source in
+# one claim, so every row has its own. The page whitelists stored values to this shape; `/` is
+# outside QID_PATTERN, so it is unambiguous.
+ROW_KEY_RE = QID_PATTERN.removesuffix("$") + "/[0-9a-f]{12}(/[1-9][0-9]{0,3})?$"
 
 
-def review_fingerprint(claim: Claim, source: Source, context: str) -> str:
-    """What a reviewer's "verified by me" on one row attests: this source, as shown, supports
-    this claim. `context` is the highlighted excerpt as rendered, "" when there is none.
+def review_fingerprint(claim: Claim, source: Source) -> str:
+    """What a reviewer's "verified by me" on one row attests: this source, as cited and shown,
+    supports this claim.
 
     The page counts a row as checked only while some recorded check carries this fingerprint.
     The source id alone covers just the url and snippet, so a check keyed by it counted for
     every question citing the source, and survived a re-fetch or new snapshot that changed the
-    text around the snippet. Hashing the claim makes the check one claim's; hashing the
-    evidence clears it when what the reviewer read changes: the excerpt, the page locator, and
-    where a row shows no excerpt (a paywall, a scan), the snapshot offered in its place. A query
-    row adds the definition and export its figure was checked against, not the printed command,
-    whose `--cache` path moves with how the build was invoked.
+    text around the snippet. So this hashes the claim, the citation as the researcher asserted
+    it and the row shows it, and the evidence: the highlighted excerpt; where a row shows none
+    (a paywall, a scan), the snapshot offered in its place; for a query row, the definition and
+    export its figure was checked against.
 
-    It is content, not position, so a claim renumbered by `vg remap` without changing keeps
-    its check, while a reworded one loses it.
+    It hashes identity, never display: the excerpt's own text and offsets, not the markup around
+    them, and not the printed command or the query's note, which move with a `--cache` spelling
+    or a reworded message while the evidence stays put. And it is content, not position, so a
+    claim renumbered by `vg remap` without changing keeps its check, while a reworded one loses
+    it. Pipeline verdicts (status, support) are left out: they don't change what was read.
     """
-    run = source.verification.query_run
-    parts = [source.sid, claim.question, claim.answer, str(source.page or ""), context,
-             "" if context else (source.archive_url or ""),
-             f"{run.version}\x00{run.export_date}" if run else ""]
+    v = source.verification
+    if source.query is not None:
+        run = v.query_run
+        evidence = [str(run.version), run.export_date] if run else [""]
+    elif context_html(source) is not None:
+        evidence = [v.context, *map(str, v.context_offset)]
+    else:
+        evidence = [source.archive_url or ""]
+    parts = [source.sid, claim.question, claim.answer, source.publisher, source.author,
+             source.date or "", str(source.page or ""), source.secondary_host_ack or "",
+             *evidence]
     return hashlib.sha256("\x00".join(parts).encode()).hexdigest()[:16]
 
 
@@ -142,18 +152,22 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "voter guide",
     env = Environment(loader=FileSystemLoader(TEMPLATES), autoescape=True)
     tpl = env.get_template("review.html.j2")
 
-    def source_view(c: Claim, s) -> SimpleNamespace:
-        ctx = context_html(s)
-        command = (queries.human_command(
-            s.query.name, dict(s.query.params),
-            s.verification.query_run.cache_root if s.verification.query_run
-            else (str(cache_root) if cache_root else None)) if s.query else "")
-        provenance = query_provenance(s)
-        return SimpleNamespace(
-            **s.model_dump(), sid=s.sid, row_key=f"{c.question_id}/{s.sid}",
-            fingerprint=review_fingerprint(c, s, str(ctx or "")),
-            context_html=ctx, badge_class=BADGE.get(s.verification.status, "bad"),
-            secondary=secondary_host(s), query_command=command, query_provenance=provenance)
+    def source_views(c: Claim) -> list[SimpleNamespace]:
+        views, seen = [], Counter()
+        for s in c.sources:
+            seen[s.sid] += 1
+            row_key = f"{c.question_id}/{s.sid}" + (f"/{seen[s.sid]}" if seen[s.sid] > 1 else "")
+            command = (queries.human_command(
+                s.query.name, dict(s.query.params),
+                s.verification.query_run.cache_root if s.verification.query_run
+                else (str(cache_root) if cache_root else None)) if s.query else "")
+            views.append(SimpleNamespace(
+                **s.model_dump(), sid=s.sid, row_key=row_key,
+                fingerprint=review_fingerprint(c, s), context_html=context_html(s),
+                badge_class=BADGE.get(s.verification.status, "bad"),
+                secondary=secondary_host(s), query_command=command,
+                query_provenance=query_provenance(s)))
+        return views
 
     # Build explicit view objects rather than writing render-only attributes onto the
     # models: assigning into a pydantic instance's __dict__ shadows computed properties
@@ -163,7 +177,7 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "voter guide",
             question_id=c.question_id, question=c.question, answer=c.answer,
             claim_type=c.claim_type, confidence=c.confidence, status=c.status,
             corroboration_ok=c.corroboration_ok, corroboration_note=c.corroboration_note,
-            conflicts=c.conflicts, sources=[source_view(c, s) for s in c.sources],
+            conflicts=c.conflicts, sources=source_views(c),
         )
         for c in claims
     ]

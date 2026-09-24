@@ -633,28 +633,40 @@ marked it under the other, and could mark that claim done, though nobody had rea
 against it. That is the pooling `rehome()` was fixed for ("A verdict is per question"), one
 layer later, at the layer meant to be last.
 
-So a check is recorded by what it attests, `report.review_fingerprint()`: the source, the claim,
-and the evidence the row shows (the highlighted excerpt and page; where there is no excerpt, the
-snapshot offered instead; for a query row, the definition and export it was checked against).
-A row reads checked while its fingerprint is recorded. Another question citing the source has
-another fingerprint, and a re-fetch, new snapshot, moved highlight or reworded claim gives this
-row a new one, so it reads unchecked and says why. Hash what was *attested*, not where it was
-shown: the first cut keyed checks by row (`<question id>/<source id>`), and `vg remap`
-renumbering a claim then lost every check and flag on it, while one claim citing the same
-snippet on two pages shared one check between them. The row key is kept only to say which row
-a check was made on. And hash identity, not display: the printed query command carries the
-`--cache` path, so hashing it went stale whenever the build was invoked differently.
+So a check is recorded by what it attests, `report.review_fingerprint()`: the claim, the
+citation as the researcher asserted it and the row shows it (source id, publisher, author,
+date, page, secondary-host ack), and the evidence (the excerpt's text and highlight; where there
+is no excerpt, the snapshot offered instead; for a query row, the definition and export it was
+checked against). A row reads checked while its fingerprint is recorded. Another question citing
+the source has another fingerprint, and a re-fetch, new snapshot, moved highlight or reworded
+claim gives this row a new one, so it reads unchecked and says why. Two rules came out of
+getting there:
+- **Hash what was attested, not where it was shown.** The first cut keyed checks by row
+  (`<question id>/<source id>`), and `vg remap` renumbering a claim then lost every check and
+  flag on it. The row key now only says which row a check was made on, so the "changed since"
+  warning lands on the right row. It is unique per row (a second citation of one source in one
+  claim gets `/2`), and `render()` re-points a check to the row showing it now, since a check
+  that followed a renumbered claim still named the old row.
+- **Hash identity, not display.** The printed query command carries the `--cache` path, the
+  query's context carries its note (a message), and the excerpt's markup is ours. Hashing any of
+  them cleared every check when the build was invoked differently or a message was reworded,
+  and that teaches reviewers to re-tick without reading. Pipeline verdicts (status, support)
+  are left out for the same reason: they don't change what the reviewer read.
+
+A new snapshot does clear a check on a row with no excerpt, by the same rule the verdict layer
+uses: a fresh snapshot is a different copy.
 
 Flags and notes stay per source, shown wherever the source is cited. They are warnings, not
 attestations: shared, one fails toward a second look, while keyed per row they vanished when a
 claim moved.
 
 Progress saved per source is migrated, not reinterpreted. Its ticks are dropped, because they
-name no claim and no excerpt, and the page says how many. The new progress lives under a new
-storage key, and the old one is only read, so an open tab of either version can't overwrite
-the other. When you change what a stored key means, decide what each old key means under the
-new rule. Otherwise the whitelist discards them silently, or a loose lookup matches them to
-every row.
+name no claim and no excerpt, and a notice says how many until the reviewer dismisses it (shown
+once, a reload hid it for good). The new progress lives under a new storage key, and the old
+one is only read, and only when the new one is absent. An unreadable new store is kept aside
+and reported, never answered by migrating again, which would bring back flags cleared since.
+When you change what a stored key means, decide what each old key means under the new rule.
+Otherwise the whitelist discards them silently, or a loose lookup matches them to every row.
 
 The tests run the page's own script under node (`tests/review_app_harness.js`) against a
 minimal DOM that supports single-class selectors only and throws on anything else, so a
