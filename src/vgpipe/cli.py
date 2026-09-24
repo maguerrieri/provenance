@@ -1050,24 +1050,79 @@ def _claim_or_exit(data: Path, question_id: str, needed: str) -> tuple[Claim, li
     raise typer.Exit(1)
 
 
+def _run_args(data: Path, cache: Path | None) -> str:
+    """` --data <run> [--cache <root>]`, quoted for a shell: printed into every command this run's
+    output tells an agent to run, since without it that command reads the default run."""
+    return f" --data {shlex.quote(str(data))}" + (
+        f" --cache {shlex.quote(str(cache))}" if cache is not None else "")
+
+
+def _apply_archive_rows(data: Path, sources, cache_root: Path) -> None:
+    """Put the run's snapshots on the sources that are `verified_via_archive`, whose context and
+    verdict both come from one. Only there, and the records read only if there is one: no other
+    row depends on them, and a damaged records file should not stop every verdict in the run."""
+    rows = [s for s in sources if s.verification.status == "verified_via_archive"]
+    if rows:
+        records = _archive_records(data)
+        for s in rows:
+            apply_archive(s, records, cache_root)
+
+
+def _rebuild_problem(s, cache_root: Path) -> str:
+    """Why `vg build` would not keep a verdict on `s` as the claim file has it now, or "".
+
+    Build rebuilds every row from the cache, and drops a verdict whose context that changes
+    (`revalidate_from_cache()`). A verdict on the claim file's context was then kept only until
+    the next `vg verify` rewrote the file, and from then on it applied to the rebuilt context,
+    which no verifier had read. Asked by running that code on a copy, not by re-deriving its
+    rule. Apply the run's snapshots first (`_apply_archive_rows()`)."""
+    rebuilt = s.model_copy(deep=True)
+    rebuilt.verification.support = "supports"   # would build keep a verdict on this row?
+    revalidate_from_cache(rebuilt, cache_root)
+    v = rebuilt.verification
+    if v.status not in GOOD:
+        return (f"the cache does not confirm this citation as the claim file has it ({v.status}: "
+                f"{v.reason or 'no reason given'}), so there is no context to judge")
+    if v.support == "unreviewed":
+        return ("its context is not what the cached page gives now, so `vg build` would drop a "
+                "verdict on it. Run `vg verify` for this run, then judge the context it gives")
+    return ""
+
+
+def _unjudgeable(s, cache_root: Path, *, seen, last_run) -> str:
+    """Why `vg judge` would refuse a verdict on `s` now, or "": one answer for `vg handoff`,
+    `vg judge` and `vg judgments`, so a hand-off never offers what judge refuses or the gate
+    waits on. `seen` and `last_run` are the claim file's `context_page` and `query_run`,
+    captured before anything rebuilt the verification: `vg judge` reads the file."""
+    from . import judgments
+
+    if s.query is None:
+        why = judgments.unjudgeable_page(s, seen, cache_root)
+    else:
+        why = judgments.unjudgeable_query(s.query, last_run, cache_root)
+    return why or _rebuild_problem(s, cache_root)
+
+
+def _one_line(text: str) -> str:
+    """Agent-authored text on one line, so it cannot print a line that reads as `vg handoff`'s
+    own framing (a fake source header, a fake context)."""
+    return text.replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n")
+
+
 @app.command()
 def handoff(question_id: str, data: Path = DATA, cache: Path = None):
     """Print what a verifier judges for one claim: the claim, and each source's context with
     the context token `vg judge --context` must hand back.
 
-    Context and token come from one read of the claim file, the one `vg judge` checks, so the
-    token names exactly the text printed above it. A source `vg judge` would refuse now gets its
-    reason instead of a token. Read-only.
+    Claim, context and token come from one read of the claim file, the one `vg judge` checks,
+    so the token names exactly the text printed with it. A source `vg judge` would refuse now
+    gets its reason instead of a token. Read-only.
     """
     from . import judgments
 
     cache_root = _verdict_cache_root(data, cache)
     claim, _ = _claim_or_exit(data, question_id, "so what it cites cannot be shown")
-    if any(s.verification.status == "verified_via_archive" for s in claim.sources):
-        records = _archive_records(data)   # as `vg judge` does: only archive rows need them
-        for s in claim.sources:
-            if s.verification.status == "verified_via_archive":
-                apply_archive(s, records, cache_root)
+    _apply_archive_rows(data, claim.sources, cache_root)
 
     def line(text: str, style: str = "") -> None:
         # Everything here is agent- or page-authored: as Text, so no bracket reads as markup,
@@ -1075,44 +1130,37 @@ def handoff(question_id: str, data: Path = DATA, cache: Path = None):
         con.print(Text(text, style=style), soft_wrap=True)
 
     line(f"{claim.question_id} ({claim.claim_type}, needs {claim.required_sources} "
-         f"source(s)): {claim.question}", "bold")
-    line(f"claim: {claim.answer}")
+         f"source(s)): {_one_line(claim.question)}", "bold")
+    line(f"claim: {_one_line(claim.answer)}")
     judgeable = 0
     for n, s in enumerate(claim.sources, 1):
         v = s.verification
-        if v.status not in GOOD:
-            # judge's own refusal for it reads "run `vg verify`", which a failed citation
-            # doesn't need: it has no context because its checks failed.
-            why = (f"its citation has no confirmed context ({v.status}: {v.reason or 'no reason'})"
-                   f" — that is the retry loop's, `vg archive`'s or `vg verify`'s to fix")
-        elif s.query is None:
-            why = judgments.unjudgeable_page(s, v.context_page, cache_root)
-        else:
-            why = judgments.unjudgeable_query(s.query, v.query_run, cache_root)
-        token = "" if why else judgments.context_token(v.context)
+        why = _unjudgeable(s, cache_root, seen=v.context_page, last_run=v.query_run)
+        token = "" if why else judgments.context_token(claim, s)
         line("")
         line(f"[{n}/{len(claim.sources)}] sid {s.sid}  "
              + (f"context token {token}" if token else "nothing to judge yet"), "bold")
-        line(f"  {s.publisher} · {s.author} · {s.date or 'undated'} · {s.source_type}")
+        byline = _one_line(" · ".join((s.publisher, s.author, s.date or "undated")))
+        line(f"  {byline} · {s.source_type}")
         line(f"  {s.url}" + (f"  (page {s.page})" if s.page else ""))
         line(f"  status: {v.status}")
-        line(f"  snippet: {s.snippet}")
+        line(f"  snippet: {_one_line(s.snippet)}")
         if not token:
-            line(f"  {why or 'it has no context'}", "yellow")
+            line(f"  {_one_line(why or 'it has no context')}", "yellow")
             continue
         judgeable += 1
-        line("----- context -----")
-        con.print(Text(v.context), soft_wrap=True, end="" if v.context.endswith("\n") else "\n")
-        line("----- end of context -----")
+        # Every line of it prefixed, so page text can't end the block early and go on to print
+        # what reads as this command's own output.
+        line("  context:")
+        for text in v.context.removesuffix("\n").split("\n"):
+            line(f"  | {text}")
     line("")
     if not judgeable:
         line("Nothing in this claim can be judged yet.", "yellow")
         return
-    where = f" --data {shlex.quote(str(data))}" + (
-        f" --cache {shlex.quote(str(cache))}" if cache is not None else "")
     line(f"Record each verdict: uv run vg judge {shlex.quote(claim.question_id)} <sid> "
          f"supports|topic_only|contradicts|superseded --context <token> --note \"<one line>\""
-         f"{where}")
+         f"{_run_args(data, cache)}")
 
 
 @app.command()
@@ -1156,6 +1204,10 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
         con.print(f"[red]{msg}[/]")
         raise typer.Exit(1)
 
+    if verdict not in judgments.VERDICTS:
+        # First, with the id: a mistake in the command itself is named before any check of what
+        # it refers to, so one call with two mistakes does not take two refusals to fix.
+        refuse(f"{escape(verdict)} is not a verdict: use one of {', '.join(judgments.VERDICTS)}")
     cache_root = _verdict_cache_root(data, cache)
     claim, claims = _claim_or_exit(data, question_id,
                                    f"so whether it cites {escape(sid)} cannot be checked")
@@ -1177,12 +1229,9 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
     # that no longer exists. Same root, same lookup as the check in `apply_to()`, or the stamp
     # describes a page the check never looks at.
     page_url, page_at, ver, query_ver, export = "", "", 0, 0, ""
+    # An archive-verified context comes from the snapshot the run's records name.
+    _apply_archive_rows(data, [source], cache_root)
     if source.query is None:
-        # An archive-verified context comes from the snapshot the run's records name. Only
-        # there: no other row's context depends on the records, and a damaged records file
-        # should not stop every verdict in the run.
-        if source.verification.status == "verified_via_archive":
-            apply_archive(source, _archive_records(data), cache_root)
         try:
             page_url, page_at, ver = judgments.judged_copy(source, cache_root)
         except judgments.Unjudgeable as e:
@@ -1196,10 +1245,15 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
                                               cache_root):
             refuse(f"not recorded: {escape(why)}")
         query_ver, export = judgments.query_stamp(cache_root, source.query)
+    # A context build would not keep, the claim file's own copy notwithstanding: a verdict on it
+    # would outlive the next `vg verify` and apply to the context that one gives.
+    if why := _rebuild_problem(source, cache_root):
+        refuse(f"not recorded: {escape(why)}")
     # Last, so a wrong id, sid or copy is still what a refusal names first. The copy check above
     # passes a re-verify that rebuilt the context from a newer cached copy; this is what doesn't.
-    if why := judgments.wrong_context(source, context, question_id,
-                                      required=source.query is None):
+    if why := judgments.wrong_context(
+            claim, source, context, required=source.query is None,
+            handoff=f"vg handoff {shlex.quote(question_id)}{_run_args(data, cache)}"):
         refuse(f"not recorded: {escape(why)}")
     try:
         # And stamp the claim it judged, so a retry that rewrites the claim later can be seen to
@@ -1305,8 +1359,10 @@ def show_judgments(data: Path = DATA, question_id: str = "",
         rows = list(judgments.verdicts_for(c, data, recorded, cache_root=cache_root))
         stale += len(judgments.merge(rows))
         for s, j, why in rows:
-            last_run = s.verification.query_run   # the run `vg judge` checks, before build's
-            seen = s.verification.context_page    # the copy it checks, likewise
+            # Asked of the claim file, before build's rebuild below, since that is what
+            # `vg judge` reads: the same answer `vg handoff` gives.
+            refused = _unjudgeable(s, cache_root, seen=s.verification.context_page,
+                                   last_run=s.verification.query_run)
             drawn = (s.verification.context, s.verification.context_offset,
                      s.verification.matched_offset)
             revalidate_from_cache(s, cache_root)
@@ -1316,9 +1372,7 @@ def show_judgments(data: Path = DATA, question_id: str = "",
                                                     s.verification.context_offset,
                                                     s.verification.matched_offset)
             total += 1
-            unjudgeable = s.verification.support == "unreviewed" and (
-                judgments.unjudgeable_query(s.query, last_run, cache_root) if s.query is not None
-                else judgments.unjudgeable_page(s, seen, cache_root))
+            unjudgeable = s.verification.support == "unreviewed" and refused
             if s.verification.support != "unreviewed":
                 v = f"[{'green' if j.verdict == 'supports' else 'red'}]{j.verdict}[/]"
                 note = j.note
