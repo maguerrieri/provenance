@@ -86,7 +86,8 @@ Do not summarize the source rules for them — the agent definition carries them
    the pass is finished when `N` is 0. **Read the number; don't count rows off the table.**
    The table wraps, and `grep -c unreviewed` has under-reported twice. A stale verdict
    predates the page it judged (or, for a query citation, the query definition), or judged
-   another question or answer than the claim gives now (a retry rewrote it), and
+   another question or answer than the claim gives now (a retry rewrote it), or was recorded
+   before verdicts named their claim (a one-time re-judge of every such verdict), and
    `vg build` won't apply it, so it counts in `N` until the source is judged again. A source a verifier has nothing to judge on is not in `N`. That
    means its citation failed, is paywalled, was never verified, or changed since the last
    `vg verify`. Those are counted on a separate line, and each one's table row names its
