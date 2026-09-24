@@ -1588,13 +1588,15 @@ contribution reported only on Form 496 Part 3, not yet restated on a later sched
 out (#66). And `vg calaccess contributions` still lists every schedule without saying which
 (#67).
 
-The schedule handling is two helpers, not a copy in each query. `queries._schedule()` holds the
-filter, its args, the label, and the refusal of a padded `form_type` (`" "` is truthy, so it
-filtered to the receipts with no schedule). `queries._elsewhere()` holds the miss's note and
-suggestion. They were copies, and the same miss happened one level down: the refusal went into
-two queries, and `filer_total` still returned `" "`'s sum as found. Fixing every query by hand
-only works until someone adds a guard to one copy. A new query over the receipts calls the
-helpers.
+The schedule handling is shared helpers, not a copy in each query. `queries._schedule()` holds
+the filter, its args, and the refusal of a padded `form_type` (`" "` is truthy, so it filtered to
+the receipts with no schedule), and returns the label from `_schedule_label()`. `_elsewhere()`
+holds the miss's note and suggestion. The label and the miss are display only, so they sit in
+the fingerprint test's `_NOT_A_DEFINITION`, and rewording them moves no pin. They were copies,
+and the same miss happened one level down: the refusal went into two queries, and `filer_total`
+still returned `" "`'s sum as found. Fixing every query by hand only works until someone adds a
+guard to one copy. A new query over the receipts calls the helpers, and
+`test_every_receipt_query_is_tested_for_its_schedule_handling` fails until its tests cover it.
 
 ## A surname is not a candidate
 

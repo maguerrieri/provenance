@@ -262,8 +262,7 @@ def share_text(u) -> str:
 
 def _schedule(form_type: str) -> tuple[str, list[str], str]:
     """The receipt-schedule filter every contribution query applies (a condition on `r`), its
-    args, and how the detail names what was counted: `schedule-<CODE>` (upper-cased, as the
-    filter matches and as a miss names the other schedules), or `every-schedule` for "".
+    args, and the label for the detail (`_schedule_label`).
 
     One helper for all three, not a copy in each: filer_total kept an unguarded copy after the
     other two were fixed. It ran form_type=" " (truthy) as a filter for the receipts with no
@@ -272,10 +271,23 @@ def _schedule(form_type: str) -> tuple[str, list[str], str]:
     if form_type != form_type.strip():
         raise ValueError(f"form_type must be a schedule code, or '' for every schedule, "
                          f"not {form_type!r}")
+    label = _schedule_label(form_type)
     if not form_type:
-        return "", [], "every-schedule"
-    return (" AND UPPER(TRIM(r.FORM_TYPE)) = UPPER(TRIM(?))", [form_type],
-            f"schedule-{form_type.upper()}")
+        return "", [], label
+    return " AND UPPER(TRIM(r.FORM_TYPE)) = UPPER(TRIM(?))", [form_type], label
+
+
+def _schedule_label(form_type: str) -> str:
+    """How a detail names the schedules counted: `schedule-<CODE>`, or `every-schedule` for "".
+
+    The code is upper-cased as the filter matches it and as a miss names the other schedules,
+    so "f401a" reads schedule-F401A, not a schedule of its own. ASCII letters only, as SQLite's
+    UPPER() does: Python upper-cases "ß" to "SS", which would name a schedule nothing matched.
+    Display only, so it is not part of a query's definition fingerprint.
+    """
+    if not form_type:
+        return "every-schedule"
+    return "schedule-" + "".join(c.upper() if c.isascii() else c for c in form_type)
 
 
 def _other_schedules(con: Any, filer_id: str, form_type: str, who: str = "",
@@ -306,9 +318,10 @@ def _elsewhere(con: Any, filer_id: str, form_type: str, who: str = "",
     """For a miss on `form_type`: the note naming the other schedules this filer's receipts are
     on (`_other_schedules`), and the one suggestion to count them. ("", []) when there are none.
 
-    One suggestion for every schedule, not one each: the note shows four, and a hint per
-    schedule pushed out the near-name the researcher needed. Display only, like
-    `_other_schedules`.
+    A slate mailer's receipts are all on Form 401, and "no schedule-A contributions" alone read
+    as a committee that received nothing. One suggestion for every schedule, not one each: the
+    note shows four, and a hint per schedule pushed out the near-name the researcher needed.
+    Display only, like `_other_schedules`.
     """
     others = _other_schedules(con, filer_id, form_type, who, who_args)
     if not others:
@@ -408,8 +421,6 @@ def _filer_total(root: Path, *, filer_id: str, form_type: str = "A") -> QueryRes
     n, gifts = int(row["n"] or 0), int(row["gifts"] or 0)
     left_out = _unread(gifts - n)
     if n == 0:
-        # A slate mailer's receipts are all on Form 401: "no schedule-A contributions" alone
-        # read as a committee that received nothing.
         note, hint = _elsewhere(con, filer_id, form_type)
         con.close()
         return _no_rows(f"no {label} contributions" + (" counted" if left_out else "")
@@ -454,8 +465,6 @@ def _top_contributor(root: Path, *, filer_id: str, form_type: str = "A") -> Quer
     rows = [r for r in rows if r["amt"] is not None]
     row = rows[0] if rows else None
     if row is None:
-        # A slate mailer's receipts are all on Form 401: "no schedule-A contributions" alone
-        # read as a committee that received nothing.
         note, hint = _elsewhere(con, filer_id, form_type)
         con.close()
         return _no_rows(f"no {label} contributions {'counted' if unread else 'found'} for "
