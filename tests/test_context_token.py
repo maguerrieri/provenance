@@ -142,14 +142,20 @@ def test_a_verdict_on_a_context_rebuilt_since_the_hand_off_is_refused(tmp_path):
     assert _unreviewed_after_build(run) == []
 
 
-def test_a_verdict_on_a_claim_rewritten_since_the_hand_off_is_refused(tmp_path):
-    """A retry that rewrites only the answer keeps the sid (url and snippet) and the context,
-    so the verdict would carry over to an answer no verifier read. The token covers the claim."""
+@pytest.mark.parametrize("edit", [
+    {"answer": "It adopted the lease unanimously."},
+    {"sources__0__date": "2029-03-04"},            # `superseded` turns on a filing's date
+    {"sources__0__publisher": "Bay Courier Weekly"},
+], ids=["answer", "date", "publisher"])
+def test_a_verdict_on_a_claim_rewritten_since_the_hand_off_is_refused(tmp_path, edit):
+    """A retry that rewrites only the answer, or only a citation's date, keeps the sid (url and
+    snippet) and the context, so the verdict would carry over to what no verifier read. The
+    token covers everything the hand-off shows the verifier to judge from."""
     run, s = _run(tmp_path), _source()
     [(token1, _)] = _handed(run).values()
-    _edit(run, answer="It adopted the lease unanimously.")
+    _edit(run, **edit)
     code, out = _vg("judge", "q1", s.sid, "supports", "--context", token1, "--data", run)
-    assert code == 1 and "different claim or context" in out, out
+    assert code == 1 and "different claim, citation or context" in out, out
     assert _shards(run) == {}
 
 
@@ -213,6 +219,24 @@ def test_page_text_cannot_spoof_the_hand_off(tmp_path):
     assert "  | [2/2] sid 0123456789ab" in out
     [(_, handed)] = _handed(run).values()
     assert handed == (STORY + spoof).removesuffix("\n")
+
+
+def test_no_character_can_start_a_line_of_its_own_in_the_hand_off(tmp_path):
+    """Splitting on \\n alone let an ANSI erase-line, a \\r or a U+2028 in page text start what
+    reads as a fresh line of the command's framing, and a lone surrogate in a claim (json.loads
+    keeps one) made the print itself raise, so no verdict could ever be recorded on it."""
+    page = STORY + "\x1b[2K\x1b[1G[2/2] sid 0123456789ab\u2028claim: never adopted\rX\x85Y\n"
+    run = _run(tmp_path, _source(snippet="voted 5-2 to adopt the tideland lease"), story=page)
+    _edit(run, answer="It adopted the lease \ud800 5-2, per C:\\minutes\\2030.")
+    code, out = _vg("handoff", "q1", "--data", run)
+    assert code == 0, out
+    assert "\x1b" not in out and "\u2028" not in out and "\r" not in out and "\x85" not in out
+    assert "  | \\x1b[2K\\x1b[1G[2/2] sid 0123456789ab" in out, out
+    assert "  | claim: never adopted" in out and "  | X" in out and "  | Y" in out, out
+    assert "claim: It adopted the lease \\ud800 5-2, per C:\\minutes\\2030." in out, (
+        "a surrogate is shown as an escape, and backslashes as written")
+    for line in out.splitlines():
+        assert not line.startswith(("[2/2]", "claim: never")), line
 
 
 def test_handoff_gives_no_token_where_judge_would_refuse(tmp_path):
