@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
-import os
 import re
-import shutil
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import NoReturn
+from typing import Annotated, NoReturn
 
 import typer
 import yaml
@@ -76,13 +73,12 @@ def _load_or_exit(claims_dir: Path, **kw) -> list[Claim]:
 def _judgments_or_exit():
     """Stop on an unreadable verdict file, naming it. Like a malformed claim, it is something
     the operator fixes in the data directory — and carrying on without it would render every
-    source it judged as unreviewed, or rewrite the file without its verdicts. A verdict
-    rehome() cannot place is the same kind of stop: the operator decides where it goes."""
-    from .judgments import CannotRehome, UnreadableJudgments
+    source it judged as unreviewed, or rewrite the file without its verdicts."""
+    from .judgments import UnreadableJudgments
 
     try:
         yield
-    except (UnreadableJudgments, CannotRehome) as e:
+    except UnreadableJudgments as e:
         # Escaped: the message quotes the file's own text, and rich reads "[/]" in a verdict as
         # markup — crashing the refusal into a traceback, or silently eating "[supports]".
         con.print(f"[red]{escape(str(e))}[/]")
@@ -127,8 +123,7 @@ def _cache_root(data: Path, cache: Path | None) -> Path:
     # the same trap on a fresh clone, where data/cache is gitignored and absent, so the first
     # run forks before it exists.
     # questions.json is the race's question template, written in Phase 0 before any candidate
-    # exists (new-candidate reads it); no fetch, query or build writes it, and remap only ever
-    # replaces it in place, so no run flips this.
+    # exists (new-candidate reads it); no fetch, query or build writes it, so no run flips this.
     parent = data.parent
     if data.name and (parent / "questions.json").exists():
         # Once per stray: `status` and `archive` resolve the root per source, and a warning
@@ -208,16 +203,14 @@ def _aliased_shards(data: Path, every: dict, claims: list[Claim]) -> dict[str, s
     otherwise — Q1.json for claim q1 on a case-insensitive disk.
 
     Asked of the disk, not guessed from the names: on a case-sensitive one Q1.json is simply a
-    shard no claim has, which `vg build` never reads and `--repair` re-files only when told
-    where it belongs (`--moved Q1:q1`). Where the disk opens it as q1.json, `--repair` renames
-    it to the claim's exact id unasked.
+    shard no claim has, which `vg build` never reads. Where the disk opens it as q1.json, it is
+    q1's shard, and `vg build` applies it to q1.
     """
     from . import judgments
 
     held = {c.question_id for c in claims}
     out: dict[str, str] = {}
     for stem in every:
-        # The re-home's own test, so --repair files the shard where this says it belongs.
         if stem not in held and (qid := judgments.opened_as(data, stem, held)):
             out[qid] = stem
     return out
@@ -983,109 +976,29 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", data: Path =
               + (f": {escape(note)}" if note else ""))
 
 
-def _moved_or_exit(pairs: list[str], gone: list[str], claims: list[Claim], data: Path,
-                   shards: set[str]) -> dict[str, str | None]:
-    """`--moved OLD:NEW` and `--gone OLD` flags as rehome()'s mapping, or stop naming every one
-    that is wrong.
-
-    `--moved OLD:NEW` says the verdicts in shard OLD judged the claim now at NEW; `--gone OLD`
-    says the claim they judged no longer exists (None in the mapping). A mistake here is not a
-    refusal later: a NEW no claim holds files OLD's verdicts nowhere and archives them all, and
-    a repeated OLD would keep only the last of its statements.
-    """
-    from . import judgments
-
-    held = {c.question_id for c in claims}
-    # `shards` is load_every()'s listing, not a glob(): glob reads a directory it cannot list as
-    # empty.
-    mapping: dict[str, str | None] = {}
-    problems: list[str] = []
-
-    def said(old: str, what: str, value: str | None) -> None:
-        if old in mapping:
-            problems.append(f"{what}: {old} is already "
-                            + (f"mapped to {mapping[old]}" if mapping[old] else "said to be gone"))
-        else:
-            mapping[old] = value
-
-    for pair in pairs:
-        old, sep, new = pair.partition(":")
-        if not sep or not old or not new or ":" in new:
-            problems.append(f"{pair!r} is not OLD:NEW")
-            continue
-        if old not in shards:
-            try:
-                judgments.path_for(data, old)
-            except ValueError:
-                problems.append(f"{pair!r}: {old!r} is neither a question id nor a shard in "
-                                f"{data / 'judgments'}")
-                continue
-        if new not in held:
-            if old not in shards:
-                problems.append(f"{pair!r}: no current claim is on {new}, and no shard is named "
-                                f"{old} — check both ids")
-            else:
-                problems.append(f"{pair!r}: no current claim is on {new}, so every verdict in "
-                                f"{old}'s shard would be archived rather than moved"
-                                + (f" — if the claim it judged is gone, say --gone {old}"
-                                   if old == new else ""))
-        else:
-            said(old, repr(pair), new)
-    for old in gone:
-        if old not in shards:
-            problems.append(f"--gone {old!r}: no verdict shard is named {old}")
-        else:
-            said(old, f"--gone {old!r}", None)
-    if problems:
-        con.print(f"[red]not repairing: {escape('; '.join(problems))}. Nothing was changed.[/]")
-        raise typer.Exit(1)
-    for old in sorted(mapping.keys() - shards, key=qid_sort_key):
-        # Not an error: it still says the claim now at NEW came from OLD, so NEW's own shard
-        # judged the one there before. But a typo'd OLD reads exactly like this.
-        new = mapping[old]
-        con.print(f"[yellow]note:[/] no verdict shard is named {escape(old)}, so --moved "
-                  f"{escape(old)}:{escape(new)} moves nothing"
-                  + (f", and only says the claim at {escape(new)} came from there."
-                     if new != old else "."))
-    return mapping
+# A retired flag: still parsed, so an old invocation reaches _retired(), but not in --help. Given
+# through Annotated so the Python default stays a plain value: tests call commands as functions,
+# and a `= typer.Option(...)` default is an OptionInfo there, which is truthy. (Typer does not
+# resolve a `type` alias, so each parameter spells out its Annotated.)
+_HIDDEN = typer.Option(hidden=True)
 
 
 @app.command(name="judgments")
-def show_judgments(data: Path = DATA, question_id: str = "", repair: bool = False,
-                   cache: Path = None, rollback: bool = False, moved: list[str] = None,
-                   gone: list[str] = None):
-    """Show recorded verdicts, and which cited sources still need one.
-
-    --repair re-files verdicts left under a question id their claim no longer has, for a run
-    whose claims moved without them. It never moves a verdict because another question cites
-    the same source — that is not proof of ownership — so a move needs the mapping:
-    `--moved OLD:NEW` (repeatable) says the verdicts in OLD's shard judged the claim now at
-    NEW, and `--moved OLD:OLD` that they judged the claim still on OLD; a verdict that claim no
-    longer cites has lapsed and is archived. `--gone OLD` (repeatable) says the claim they
-    judged no longer exists, even if another claim has since taken its id: all are archived.
-    Several shards may name one claim — what it was judged before it moved and since — and
-    where two judged one source, the later wins, as a re-judgment does. Without a mapping it
-    only archives verdicts no current claim cites, and refuses, naming each, on the rest.
-
-    --rollback undoes a re-home (`vg remap --apply`, `--repair`) that was interrupted, from the
-    backup it left: every command that reads verdicts refuses until then.
-    """
+def show_judgments(data: Path = DATA, question_id: str = "",
+                   repair: Annotated[bool, _HIDDEN] = False, cache: Path = None,
+                   rollback: Annotated[bool, _HIDDEN] = False,
+                   moved: Annotated[list[str], _HIDDEN] = None,
+                   gone: Annotated[list[str], _HIDDEN] = None):
+    """Show recorded verdicts, and which cited sources still need one."""
     from . import judgments
 
-    if (moved or gone) and not repair:
-        con.print("[red]--moved and --gone are the mapping for --repair[/] and do nothing "
-                  "without it.")
-        raise typer.Exit(1)
-    if rollback:
+    if repair or rollback or moved or gone:
+        # Retired with `vg remap`: they re-homed verdicts after claims moved, and claims no longer
+        # move. A backup an interrupted re-home left behind still stops every reader, naming the
+        # checkout that undoes it, so say that first.
         with _judgments_or_exit():
-            restored, also = judgments.rollback(data)
-        if not restored and not also:
-            con.print("[dim]no interrupted re-home to undo[/]")
-        else:
-            con.print(f"[green]put back {restored} shard(s)"
-                      + "".join(f", {escape(str(data / name))}" for name in also)
-                      + " as they were before the interrupted re-home[/]")
-        return
+            judgments.refuse_if_interrupted(data)
+        _retired("`vg judgments --rollback`" if rollback else "`vg judgments --repair`")
 
     cache_root = _verdict_cache_root(data, cache)
     skipped: list[str] = []
@@ -1093,32 +1006,13 @@ def show_judgments(data: Path = DATA, question_id: str = "", repair: bool = Fals
     # As build does, before the verdicts: an archive-verified row is checked against its
     # snapshot, both its verdict and its context, and without the record it has neither. Only
     # read where one exists, as `vg judge` does, so a damaged records file stops a run with
-    # archive rows but not one without; and before --repair, so it stops before any rewrite.
+    # archive rows but not one without.
     records = (_archive_records(data) if any(s.verification.status == "verified_via_archive"
                                              for c in claims for s in c.sources) else {})
-    if repair and skipped:
-        # rehome() re-files every verdict under a claim that cites it and drops the rest, so an
-        # unreadable claim's verdicts would be deleted as orphans.
-        con.print(f"[red]not repairing while claim(s) {', '.join(skipped)} cannot be read — "
-                  f"their verdicts would be discarded as orphans. Fix them first.[/]")
-        raise typer.Exit(1)
     with _judgments_or_exit():
         # Every shard, not only those named after current claims: this is the command that
         # shows the gaps, and a malformed shard left under an old id is one.
         every = judgments.load_every(data)
-    if repair:
-        # For anyone who already ran remap before it re-homed: recover without re-judging.
-        # Global, so it runs before (and regardless of) the --question-id filter below.
-        mapping = _moved_or_exit(moved or [], gone or [], claims, data, set(every))
-        with _judgments_or_exit():
-            done = judgments.rehome(data, claims, moved=mapping)
-            every = judgments.load_every(data)   # what the re-home left
-        # What moved, not what is filed: counting every verdict kept made a mapping that matched
-        # nothing read the same as one that worked.
-        con.print(f"[green]re-homed {done.moved} verdict(s)[/]; {done.filed} filed across "
-                  f"{len(done.questions)} question(s)"
-                  + (f"; archived {done.archived} under {judgments.archive_dir(data)} — lapsed, "
-                     f"their claim gone, or replaced by a later verdict" if done.archived else ""))
     selected = [c for c in claims if not question_id or c.question_id == question_id]
     for c in selected:
         for s in c.sources:
@@ -1202,20 +1096,21 @@ def show_judgments(data: Path = DATA, question_id: str = "", repair: bool = Fals
         con.print(f"[dim]{orphans} recorded verdict(s) no longer match any cited source — "
                   f"their citation changed, so the judgment correctly lapsed.[/]")
     if aliased:
-        # --repair needs no mapping for these: which claim they belong to is not inferred from a
-        # source id but is what this disk already does (rehome()'s resolve()).
+        # Which claim they belong to is not inferred from a source id but is what this disk
+        # already does (judgments.opened_as()).
         con.print(f"[yellow]{escape(_shard_names(aliased.values()))} differ from a claim's id only "
                   f"in case, and this disk opens them under that id, so they count as that "
                   f"claim's — but a case-sensitive checkout of {escape(str(data))} reads nothing "
-                  f"from them. `vg judgments --repair` renames each to its claim's exact id, "
-                  f"along with the rest of what it repairs; or rename each by hand, through a "
-                  f"temporary name.[/]")
+                  f"from them. Rename each to its claim's exact id by hand, through a temporary "
+                  f"name.[/]")
     if unowned:
+        # Question ids are stable, so a claim never moves off its shard: a shard no claim has
+        # judged a claim that is gone, or was written under an id no claim ever had.
         con.print(f"[yellow]{sum(unowned.values())} verdict(s) sit in judgments/ under an id no "
-                  f"claim has ({escape(_shard_names(unowned))}), so nothing reads them. `vg "
-                  f"judgments --repair` archives those no claim cites, and names the rest: "
-                  f"`--moved OLD:NEW` re-files a shard whose claim moved, `--gone OLD` archives "
-                  f"one whose claim is gone.[/]")
+                  f"claim has ({escape(_shard_names(unowned))}), so nothing reads them. Their "
+                  f"claim is gone, or never had that id. Move each out of judgments/ to keep "
+                  f"it, or put back the claim it judged. Do not delete one: that discards its "
+                  f"verdicts.[/]")
     if blocked:
         con.print(f"[dim]{blocked} more source(s) have nothing a verifier can judge yet: the "
                   f"citation failed, is paywalled, was never verified, or changed since "
@@ -1466,583 +1361,26 @@ def check_claim(path: Path, data: Path = DATA, cache: Path = None, race: str = "
     con.print("[green]All sources check out.[/]")
 
 
-def _retired_from(q: dict) -> str | None:
-    """The id a question's claim last moved from, as a retired migration recorded it — or None,
-    including for a hand-edited value that is not an id."""
-    v = q.get("mapped_from")
-    return v if isinstance(v, str) and v else None
+# Question ids are stable and never reused, so a claim never moves between ids and nothing has
+# to re-file it or its verdicts (CLAUDE.md, "Question ids are stable"). The commands that did are
+# retired. Each still answers, hidden, so an old script or habit learns why instead of meeting
+# "No such command".
+_STABLE_IDS = ("question ids are stable and never reused. A split or reworded question gets a "
+               "new id, and the old id is retired, so claims never move between ids and "
+               "nothing re-files them or their verdicts. See \"Question ids are stable\" in "
+               "CLAUDE.md.")
 
 
-def _left_on_old_ids(questions: list[dict], key: str, claims_dir: Path) -> list[str]:
-    """Old ids a pending mapping names under `key` that no current question uses but that still
-    name a claim file. An apply moves every source file that exists and never re-creates an id
-    no question uses, so each one is a move that did not run here. The files can disprove a
-    migration this way, but never prove one: where old and new ids overlap, nothing on disk
-    shows it. (A retired mapping needs the stricter test in _never_arrived: its old ids are from
-    an earlier id space, and later edits reuse them.)"""
-    current = {q["id"] for q in questions}
-    return sorted({q[key] for q in questions
-                   if isinstance(q.get(key), str) and q[key] and q[key] not in current
-                   and (claims_dir / f"{q[key]}.json").exists()},
-                  key=qid_sort_key)
+def _retired(what: str) -> NoReturn:
+    con.print(f"[red]{what} is retired:[/] {_STABLE_IDS}")
+    raise typer.Exit(1)
 
 
-def _never_arrived(questions: list[dict], claims_dir: Path) -> list[str]:
-    """Old ids of retired moves this directory disproves: the claim is still in the old id's
-    file and never reached the question the move brought it to.
-
-    A retired mapped_from names an id in an earlier id space, and later edits reuse ids — in one
-    run, retained entries named 26 of its 38 current ids. So a file on that id, with the id no
-    longer a current question, is NOT evidence on its own: dropping or renaming the question
-    that holds it now leaves exactly that, and was refused as "retired somewhere else". What a
-    move that never ran leaves is its destination empty too. A file a pending pair is about to
-    move is that pair's source, not a leftover. Where old and new ids overlap nothing on disk
-    shows a move either way, which is why the retired file travels with its claims."""
-    current = {q["id"] for q in questions}
-    sources = {q["maps_from"] for q in questions if q.get("maps_from")}
-    return sorted({src for q in questions for src in [_retired_from(q)]
-                   if src and src not in current and src not in sources
-                   and (claims_dir / f"{src}.json").exists()
-                   and not (claims_dir / f"{q['id']}.json").exists()},
-                  key=qid_sort_key)
-
-
-def _retire_maps_from(qpath: Path, questions: list[dict]) -> int:
-    """Rename each pending `maps_from` to `mapped_from`; returns how many.
-
-    maps_from says where a question's claims were BEFORE a migration, so once the migration has
-    run it must stop reading as pending: left in place, the next mapping inherited its pairs and
-    re-ran them. mapped_from keeps the record in the tracked file, beside the claims it
-    describes, without being a move. It is per question: the move that last brought that
-    question's claim to its id. A question this migration doesn't map — or maps to itself, only
-    to adopt new wording — keeps the one an earlier migration recorded, so the file always holds
-    the run's whole mapping state, which is what the re-apply fingerprint hashes (see remap).
-
-    Each key is renamed where it sits and the file is written as the tracked ones already are
-    (indent 1, ASCII-escaped), so the diff is only the rename. Written to a temp file, renamed
-    into place and the rename made durable: this file is the run's migration state, and a torn
-    write would lose it.
-    """
-    def retire(q: dict) -> dict:
-        new = q.get("maps_from")
-        if not new:
-            return q
-        if new == q["id"] and _retired_from(q):
-            # An identity pair adopts new wording and moves nothing, so the move already recorded
-            # stays: overwritten, rewording both halves of a swap erased the swap from the file
-            # and the state, and restoring half of it later went unrecognized.
-            return {k: v for k, v in q.items() if k != "maps_from"}
-        return {("mapped_from" if k == "maps_from" else k): v
-                for k, v in q.items() if k != "mapped_from"}
-
-    out = [retire(q) for q in questions]
-    tmp = qpath.with_name(f".{qpath.name}.{os.getpid()}.tmp")
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(json.dumps(out, indent=1))
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, qpath)
-    finally:
-        tmp.unlink(missing_ok=True)
-    fd = os.open(qpath.parent, os.O_RDONLY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-    return sum(1 for q in questions if q.get("maps_from"))
-
-
-@app.command(name="remap")
-def remap(data: Path = DATA, apply: bool = False, archive_stranded: bool = False,
-          mark_applied: bool = False):
-    """Re-file existing claims onto the current question ids, per each question's `maps_from`.
-
-    Renumbering the split orphans research keyed to the old ids, and guessing the mapping is
-    exactly the "attach a real citation to the wrong claim" failure this pipeline exists to
-    prevent — so the mapping must be declared in questions.json, and this only moves what is
-    declared. Dry-run unless --apply. A finished apply retires the mapping: each maps_from
-    becomes mapped_from, so the next run sees only moves nobody has made yet.
-
-    --mark-applied moves nothing: for a run migrated before remap kept a marker or retired its
-    mapping, it records the marker and retires maps_from. You are asserting the claims sit on
-    the new ids.
-
-    Verdicts move with their claims. Don't run it while a judgment pass is recording them: a
-    verdict judged against the old ids and recorded after this would land on the wrong claim.
-    """
-    if mark_applied and (apply or archive_stranded):
-        con.print("[red]--mark-applied moves nothing[/] — it records that the claims were "
-                  "already moved, so it can't be combined with --apply or --archive-stranded.")
-        raise typer.Exit(1)
-    qpath = data / "questions.json"
-    if not qpath.exists():
-        con.print(f"[red]{qpath} not found[/]")
-        raise typer.Exit(1)
-    questions = json.loads(qpath.read_text())
-
-    # An apply moves claims, marker and verdicts as one transaction. If one was interrupted, its
-    # backup is still here and all three may be mid-move, so neither the marker's record of what
-    # ran nor the moves proposed below can be trusted until `vg judgments --rollback`.
-    from . import judgments as _j
-
-    with _judgments_or_exit():
-        _j.refuse_if_interrupted(data)
-    claims_dir = data / "claims"
-
-    # maps_from and mapped_from each name one question id, and a question id names one question.
-    # Anything else is a hand edit remap can't read — a list or object where an id belongs, or
-    # two questions sharing an id, which passed the dry run and then crashed the apply after the
-    # backup and the archive had run — and every check below would trip over it.
-    malformed = [str(q.get("id")) for q in questions
-                 if any(q.get(k) and not isinstance(q[k], str) for k in ("maps_from", "mapped_from"))]
-    if malformed:
-        con.print(f"[red]refusing to remap:[/] maps_from and mapped_from must each be one "
-                  f"question id, and are not on {escape(', '.join(malformed))} in {qpath}.")
-        raise typer.Exit(1)
-    ids = [q["id"] for q in questions]
-    doubled = sorted({i for i in ids if ids.count(i) > 1}, key=str)
-    if doubled:
-        con.print(f"[red]refusing to remap:[/] {qpath} lists more than one question as "
-                  f"{escape(', '.join(map(str, doubled)))}; a question id names one question.")
-        raise typer.Exit(1)
-
-    # THE GUARD. maps_from describes a migration FROM the ids the claims were on, not a state.
-    # Left in place once applied it still read as pending, so a second --apply moved claims onto
-    # unrelated questions, and a pair added beside the old ones re-ran every old one with it. So:
-    #
-    # 1. A finished apply RETIRES its mapping: each maps_from becomes mapped_from, inside the
-    #    re-home transaction (_retire_maps_from). In normal use nothing stale is ever pending.
-    #
-    # 2. The file then holds the run's MAPPING STATE — per question, its pending move if it
-    #    declares one, else its retired one; identity pairs move nothing and are not part of it,
-    #    and retiring one keeps the move already recorded. The marker lists the state each apply
-    #    left, in order, so it recognizes the edits retirement can't prevent:
-    #    - the same state with a move pending: that migration already ran — an older remap's
-    #      apply that never retired, or maps_from restored on part of a retired mapping (a swap
-    #      restored alone trips no collision check, and moved its claims with exit 0);
-    #    - a recorded state that is not the latest: an older questions.json put back, pending or
-    #      not, whose question set no longer matches the claims.
-    #    Only a mapping that moves a claim is refused as re-applied: an identity-only declaration
-    #    (adopting reworded questions) can't move anything into the wrong place.
-    #
-    # 3. The claim files can DISPROVE a retired mapping (a file still on an id it moved away
-    #    from, which no current question uses) but never prove one.
-    #
-    # What no content check can tell apart — the original report's own finding — is a new
-    # migration that happens to share pairs with an old one, from old pairs restored beside a
-    # new edit. A restored pair plus an unrelated new pair is a new state, and goes through.
-    # The defenses there are retirement itself, the dry run listing every move, the collision
-    # check, and committing questions.json with the claims it describes.
-    pairs = sorted(f"{q['id']}<-{q['maps_from']}" for q in questions
-                   if q.get("maps_from") and q["maps_from"] != q["id"])
-    state = sorted(f"{q['id']}<-{src}" for q in questions
-                   for src in [q["maps_from"] if q.get("maps_from") and q["maps_from"] != q["id"]
-                               else _retired_from(q)]
-                   if src and src != q["id"])
-    fingerprint = hashlib.sha1("\n".join(state).encode()).hexdigest()[:12]
-    marker = data / ".remap-applied"
-    applied = marker.read_text().split() if marker.exists() else []
-    pending = any(q.get("maps_from") for q in questions)
-
-    # (3) — before anything else, since it holds whether or not a new move is pending: adding a
-    # pair must not wave through a questions.json retired in another checkout and brought here
-    # without its claims. (Where old and new ids overlap nothing on disk shows it; hence
-    # committing the retired file with the claims it describes.)
-    unmoved = _never_arrived(questions, claims_dir)
-    if unmoved:
-        con.print(f"[red]refusing:[/] {qpath} records a migration as applied (mapped_from), but "
-                  f"{claims_dir} still holds claims on ids it moved away from that no current "
-                  f"question uses ({escape(', '.join(unmoved))}), and the questions they moved "
-                  "to have none. These claims never went through it: this questions.json was "
-                  "retired somewhere else. Put back the maps_from it retired (the file's "
-                  "history has it) and dry-run remap.")
-        raise typer.Exit(1)
-
-    # (2), an older state. With nothing pending, the file may still be current — a question the
-    # latest migration mapped has since been dropped, say, which returns the state to an earlier
-    # line — so --mark-applied records it as current on the operator's word. With a move pending
-    # there is no such reading: that would retire an older question set over the claims.
-    if fingerprint in applied and fingerprint != applied[-1]:
-        if mark_applied and not pending:
-            with marker.open("a") as f:
-                f.write(f"{fingerprint}\n")
-                f.flush()
-                os.fsync(f.fileno())
-            con.print(f"[green]recorded {fingerprint}[/] in {marker} as the current mapping "
-                      f"state, on your word that {qpath} is the current file. Nothing moved.")
-            return
-        con.print(f"[red]refusing:[/] {qpath} is mapping state {fingerprint}, which is not even "
-                  f"the latest remap here ({escape(applied[-1])} ran after it, per {marker}), so "
-                  "this questions.json is most likely an older copy put back by mistake. Put the "
-                  "current one back"
-                  + ("." if pending else
-                     f" — or, if this IS the current file (a question dropped since, say), "
-                     f"`vg remap --mark-applied --data {data}` records it as current."))
-        raise typer.Exit(1)
-
-    # (1): nothing pending, nothing to do — and nothing to list: read as a whole migration, every
-    # claim file would be "nothing maps to", and --archive-stranded would archive the whole run.
-    if not pending:
-        retired = sum(1 for q in questions if _retired_from(q))
-        if mark_applied and not retired:
-            con.print(f"[red]nothing to mark:[/] no question in {qpath} declares a maps_from "
-                      "that moves a claim.")
-            raise typer.Exit(1)
-        # "Retired", not "recorded": an identity-only apply retires with no marker, and a
-        # retired file can arrive from another checkout without one.
-        con.print(f"{'already retired' if mark_applied else 'nothing to remap'}: no question "
-                  f"in {qpath} declares a maps_from"
-                  + (f"; {retired} record an applied migration as mapped_from" if retired else "")
-                  + ".")
-        return
-
-    if mark_applied:
-        # For a run remapped before the marker existed: its claims already sit on the new ids and
-        # nothing says so, so remap proposes the whole migration again. The claim files can
-        # DISPROVE that a migration ran, but never prove it: the id spaces overlap, so a finished
-        # permutation and an unstarted one look alike. So the operator asserts it, and the files
-        # are only ever grounds to refuse — never to infer "applied" on their own. Re-marking a
-        # retired mapping wrote nothing and returned above; everything past here writes, so
-        # every check applies, even when the marker already lists this mapping.
-        if not pairs:
-            con.print(f"[red]nothing to mark:[/] no question in {qpath} declares a maps_from "
-                      "that moves a claim.")
-            raise typer.Exit(1)
-        # An apply moves every source FILE that exists, whatever it holds, and a file whose id no
-        # current question uses is never re-created. So such a file still present — the same test
-        # apply itself uses — means the move never ran, or ran partway. Checked before the claims
-        # are parsed, so a load error (a duplicate, say) can't pre-empt the more telling refusal.
-        unmoved = _left_on_old_ids(questions, "maps_from", claims_dir)
-        if unmoved:
-            con.print(f"[red]refusing to mark:[/] {claims_dir} still holds claim files on old "
-                      f"ids that no current question uses ({escape(', '.join(unmoved))}), so "
-                      "this migration has not run, or ran partway. Dry-run remap to see its "
-                      "moves.")
-            raise typer.Exit(1)
-        # Parsed, not globbed: a file holding [] or only unreadable rows is not research. Loaded
-        # untrusted, like any agent-authored claim file; only the count is used.
-        if not _load_or_exit(claims_dir):
-            con.print(f"[red]refusing to mark:[/] {claims_dir} holds no claims, so nothing has "
-                      "been migrated. A marker here would block the migration once claims "
-                      "arrive on the old ids.")
-            raise typer.Exit(1)
-        # A marker already listing this state as its latest means an apply recorded it and never
-        # retired it — one run before remap retired mappings — or the file was put back after.
-        # Retiring is all that is left to do, and the marker needs no second line.
-        recorded = bool(applied) and fingerprint == applied[-1]
-        if marker.exists() and not recorded:
-            # Fingerprints here mean this run was remapped under the guard, and the current
-            # maps_from never went through it — marking would skip a pending migration, not
-            # record a finished one. An empty marker is no better: something wrote it, and what
-            # it meant can't be read back. Only an absent marker is this command's to write.
-            # Never point at --apply here: whoever runs this believes the move already happened,
-            # and if they're right, an apply is exactly the re-application the guard prevents.
-            what = f"other mappings ({escape(', '.join(applied))})" if applied else "nothing"
-            con.print(f"[red]refusing to mark:[/] {marker} already exists and lists {what}, "
-                      f"not this mapping ({fingerprint}). Check where the claims are first: if "
-                      f"they sit on this mapping's new ids, add {fingerprint} to {marker} by "
-                      "hand and re-run this to retire the mapping; if they are still on the ids "
-                      "it moves from, the migration is pending — dry-run remap to see its moves "
-                      "before applying it.")
-            raise typer.Exit(1)
-        # Marker first, both durable: a failure between them leaves a recorded mapping still
-        # pending, which re-running this retires.
-        if not recorded:
-            with marker.open("a") as f:
-                f.write(f"{fingerprint}\n")
-                f.flush()
-                os.fsync(f.fileno())
-        n = _retire_maps_from(qpath, questions)
-        con.print((f"already recorded: {marker} lists this mapping ({fingerprint}). "
-                   if recorded else
-                   f"[green]recorded {fingerprint}[/] in {marker} for {len(pairs)} maps_from "
-                   "pairs, on your word that the claims already sit on the new ids. ")
-                  + f"Retired {n} maps_from as mapped_from in {qpath}; nothing moved, and "
-                  f"remap now has nothing to re-apply. If {claims_dir} is tracked in git, "
-                  f"commit {qpath} and {marker} with it — never alone.")
-        return
-    # (2), the same state with a move pending. By here the state is the latest recorded one.
-    if pairs and fingerprint in applied:
-        # An apply by this version finishes or is rolled back whole — claims, marker and the
-        # retired mapping together (an interrupted one is refused above) — so a mapping still
-        # pending beside its own marker was applied by an older remap, which didn't retire it,
-        # or was restored or declared again since. Older versions wrote the marker before the
-        # first move, so a partial apply by one leaves three states, each with one way out.
-        # --repair moves a verdict only along a mapping it is given, and this message does not
-        # hand it one: maps_from reads the same after a finished apply, and applying its pairs
-        # to verdicts already re-homed moves them twice — undetectably, for a source both
-        # claims cite. --repair's refusal names each verdict left behind instead.
-        con.print(f"[red]this remap ({fingerprint}) has already been applied[/] — maps_from "
-                  "describes a migration from the ids the claims were on BEFORE it ran, so "
-                  "re-applying it would move claims onto unrelated questions.")
-        con.print("An apply by this version finishes or is rolled back whole, and retires "
-                  "its maps_from as it does. So this mapping ran under an older remap that "
-                  "left it in place, or this questions.json was put back or re-declared. "
-                  "Check where its claims are:\n"
-                  f"  • all on their new ids — `vg remap --mark-applied --data {data}` "
-                  "retires the mapping. If an older apply stopped before printing "
-                  f"\"re-homed\", first run `vg judgments --repair --data {data}` to move the "
-                  "verdicts it left behind: it names each one it cannot place and the --moved "
-                  "flags that would; pass only moves you know this apply made, and fix "
-                  "anything else it reports first;\n"
-                  f"  • some missing — restore {claims_dir} from {data / 'claims-backup'} "
-                  "(the claims as they were before this apply), then as below;\n"
-                  "  • all still on the ids it moves from — it stopped before moving any, or "
-                  f"you declared the same mapping again: remove its line from {marker} and "
-                  "re-run.")
-        raise typer.Exit(1)
-    # A pair left over from an earlier mapping moves its claim a second time. A retired mapping
-    # can't leave one, so warn only when the file shows no retired mapping — a mapping applied
-    # before remap retired them, or a questions.json rewritten from scratch. Warning on every new
-    # mapping would teach people to skim past the one that matters.
-    if applied and pairs and not any(_retired_from(q) for q in questions):
-        con.print(f"[yellow]{marker} records an earlier remap of this run, and {qpath} has no "
-                  "mapped_from to show that remap retired its maps_from.[/] Every maps_from "
-                  "must describe a move from the ids the claims are on NOW — a pair left over "
-                  "from the earlier mapping moves its claim a second time.")
-
-    # One old id mapped into two questions — a split — can't be applied: a claim file moves to
-    # one place, and the second move found its source already gone after the backup and the
-    # archive had run, while the dry run had listed both. Refused before anything is listed.
-    froms = [q["maps_from"] for q in questions if q.get("maps_from")]
-    split = sorted({f for f in froms if froms.count(f) > 1}, key=str)
-    if split:
-        who = "; ".join(f"{', '.join(q['id'] for q in questions if q.get('maps_from') == f)} "
-                        f"from {f}" for f in split)
-        con.print(f"[red]refusing to remap:[/] more than one question maps from the same old id "
-                  f"({escape(who)}), and a claim moves to one question. Keep maps_from on the "
-                  "one that inherits the research and drop it from the others.")
-        raise typer.Exit(1)
-
-    # Once this run has left its first id space, the claim files are on the current ids, so every
-    # question that declares no new move keeps the claim on its own id: one a finished migration
-    # put there, or one researched there after — a question the first migration added, which has
-    # no mapped_from of its own. Read as "nothing maps to", one new pair made every other claim
-    # stranded, and --archive-stranded archived them all — in one run, the 8 claims the
-    # first migration's new questions hold, with their 90 verdicts. A marker line proves the run
-    # migrated as well as a mapped_from does: a new mapping that rewrites every retired entry
-    # leaves none. A run with neither is still read as a whole migration: its claims are on the
-    # old ids, so it has to declare every move, identity pairs included, as before.
-    retired_file = bool(applied) or any(_retired_from(q) for q in questions)
-    moves, unclaimed, keeps = [], [], {}
-    for q in questions:
-        old = q.get("maps_from")
-        if not old:
-            own = claims_dir / f"{q['id']}.json"
-            if retired_file and own.exists():
-                keeps[q["id"]] = own
-            else:
-                unclaimed.append(q["id"])
-            continue
-        srcp = claims_dir / f"{old}.json"
-        if srcp.exists():
-            moves.append((srcp, claims_dir / f"{q['id']}.json", q))
-
-    targets = {m[0] for m in moves}
-    # A retired question whose claim a new pair moves away keeps nothing.
-    unclaimed += [qid for qid, own in keeps.items() if own in targets]
-    kept = {own for own in keeps.values() if own not in targets}
-    stranded = [p.stem for p in sorted(claims_dir.glob("*.json"))
-                if p not in targets and p not in kept]
-
-    t = Table("from", "to", "question", box=None)
-    for srcp, dst, q in moves:
-        t.add_row(srcp.stem, q["id"], q["text"][:58])
-    con.print(t)
-    if unclaimed:
-        con.print(f"[yellow]{len(unclaimed)} question(s) with no prior research:[/] "
-                  + ", ".join(unclaimed))
-    if stranded:
-        con.print(f"[yellow]{len(stranded)} existing claim file(s) nothing maps to:[/] "
-                  + ", ".join(stranded)
-                  + " — these answered questions the template does not ask")
-
-    # Read everything before writing anything: every verdict shard and every claim file, stranded
-    # ones included, before the archive, the backup or any move. A file found unreadable only
-    # after the claims moved used to stop the apply with the claims re-filed under new ids and
-    # their verdicts stranded under the old ones, every moved claim rendering `unreviewed`. And in
-    # the dry run too: a dry run that passes must not be followed by an apply that refuses.
-    with _judgments_or_exit():
-        _j.load_every(data)
-    unread: list[str] = []
-    loaded = _load_or_exit(claims_dir, trust_machine_fields=True, skipped=unread)
-    if unread:
-        # A claim that cannot be read cites nothing as far as rehome() can tell, so its verdicts
-        # would be archived out of the live shards while its file still moves.
-        con.print(f"[red]not remapping while claim(s) {escape(', '.join(unread))} cannot be "
-                  f"read — their verdicts would be archived as citing nothing. Fix them first.[/]")
-        raise typer.Exit(1)
-
-    # A kept claim stays on its id without anyone asking, so say when the question there now reads
-    # differently: a rewording, or a different question put at an existing id — which silently
-    # inherited the old claim, where reading the run as a whole migration had listed it stranded.
-    asks = {c.question_id: c.question for c in loaded}
-    texts = {q["id"]: q.get("text") for q in questions}
-    drifted = sorted((own.stem for own in kept
-                      if asks.get(own.stem) is not None and asks[own.stem] != texts.get(own.stem)),
-                     key=qid_sort_key)
-    if drifted:
-        con.print(f"[yellow]{len(drifted)} claim(s) kept on their ids although the question there "
-                  f"now reads differently:[/] {escape(', '.join(drifted))} — if it was reworded, "
-                  "declare maps_from its own id to adopt the wording; if it is a different "
-                  "question now, move or archive the claim first.")
-
-    # Staged now for the same reason: a source that couldn't be staged used to stop the apply
-    # after --archive-stranded and the backup had already run.
-    staged, moved = {}, {}
-    for srcp, dst, q in moves:
-        claim = json.loads(srcp.read_text())
-        if not isinstance(claim, dict):
-            con.print(f"[red]refusing to remap:[/] {escape(str(srcp))} holds a list of claims, "
-                      "and remap moves one claim per file. Split it into one file per question "
-                      "first.")
-            raise typer.Exit(1)
-        # Keyed by the id the claim carries, not its file name: shards are named by question id,
-        # and a claim file saved under another name would otherwise leave its verdicts behind.
-        moved[claim.get("question_id") or srcp.stem] = q["id"]
-        claim["question_id"] = q["id"]
-        # Keep the researched answer, but adopt the template's wording: the old text is what
-        # drifted, and leaving it would hide the drift from the reviewer. Wording that did not
-        # change keeps the drift an earlier migration recorded, rather than overwriting it with
-        # the current text (an identity pair declared to keep a question's claim, say).
-        if claim.get("question") != q["text"]:
-            claim["previous_question"] = claim.get("question")
-        claim["question"] = q["text"]
-        staged[dst] = claim
-
-    if stranded and archive_stranded and apply:
-        # Preserved, not deleted: a stranded file answered a question the template does not
-        # ask, which is not the same as being worthless — and the tool cannot tell a correct
-        # loss from an accidental one, so it never decides that.
-        arch_dir = data / "claims-archive"
-        arch_dir.mkdir(parents=True, exist_ok=True)
-        for stem in stranded:
-            srcp = claims_dir / f"{stem}.json"
-            if srcp.exists():
-                srcp.rename(arch_dir / f"{stem}.json")
-        con.print(f"[green]archived {len(stranded)} stranded file(s)[/] to {arch_dir} — kept, "
-                  f"not loaded as claims")
-
-    # Old and new id spaces overlap, so a destination can already exist as a file that nothing
-    # maps FROM — and writing it would destroy research the dry run just listed as stranded.
-    # Renaming into an overlapping id space needs the same care as any identity change: the
-    # identity moved, so the old thing must not be assumed gone.
-    sources = {m[0] for m in moves}
-    collisions = [(dst, srcp) for srcp, dst, _q in moves
-                  if dst.exists() and dst not in sources]
-    if collisions:
-        con.print("\n[red]refusing to apply: these destinations already hold research that "
-                  "nothing maps away from, and would be overwritten:[/]")
-        for dst, srcp in collisions:
-            con.print(f"  {dst.name} (would be replaced by {srcp.name})")
-        con.print("Move or archive those files first, then re-run — or pass "
-                  "--archive-stranded to move them to claims-archive/ automatically. They are "
-                  "the same files listed as stranded above.")
-        raise typer.Exit(1)
-
-    if not apply:
-        con.print("[dim]dry run; pass --apply to move them[/]")
-        return
-
-    # Back up unconditionally. The collision guard above prevents the known failure; a backup
-    # covers the ones not yet found, and this operation rewrites research that cost real work.
-    backup = data / "claims-backup"
-    if backup.exists():
-        shutil.rmtree(backup)
-    shutil.copytree(claims_dir, backup)
-    con.print(f"[dim]backed up {claims_dir} -> {backup}[/]")
-
-    relocates = any(srcp != dst for srcp, dst, _q in moves)
-    records = relocates
-
-    # Judgment FILES are named by question id, so a claim that moves leaves its verdicts in
-    # the old shard and the new id finds nothing — an orphaned verdict renders as unreviewed,
-    # which reads as "not yet judged" rather than "lost". Hand over the mapping rather than
-    # letting rehome() infer it from source ids: two claims citing one source each have their
-    # own verdict for it, and only the mapping says which shard judged which claim.
-    #
-    # The claim files move INSIDE the re-home's transaction, against the claims as they will
-    # be, and claims/ is snapshotted into its backup (`also=`). The mapping exists only in this
-    # run, so verdicts and claims have to move — and roll back — together: a re-home that
-    # failed after the claims moved could not be finished, claims that failed to move after a
-    # re-home left verdicts under ids their claims do not have, and a rollback of the verdicts
-    # alone put them back on their old ids under claims already on new ones.
-    will_be = [c.model_copy(update={"question_id": moved.get(c.question_id, c.question_id)})
-               for c in _load_or_exit(claims_dir, trust_machine_fields=True)]
-
-    n_retired = sum(1 for q in questions if q.get("maps_from")) if staged else 0
-
-    def move_claims():
-        for srcp, _dst, _q in moves:
-            srcp.unlink()
-        # Every file is fsynced before the commit makes the move final: rehome() makes the
-        # directories durable, and a power loss after the commit could otherwise keep the new
-        # names with no contents, or lose the marker's new line once the backup is gone —
-        # claims moved with no marker, which a later remap re-applies.
-        for dst, claim in staged.items():
-            dst.write_text(json.dumps(claim, indent=1))
-            _fsync_file(dst)
-        # The re-apply marker and the retired mapping, last and inside the transaction: a failure
-        # before them rolls the claims back with no marker left behind to refuse the retry and
-        # maps_from still pending, and a kill after leaves the backup, which stops remap (and
-        # every reader) until `vg judgments --rollback` puts all of it back. Retiring outside it
-        # could leave claims moved with maps_from pending, or a retired mapping over claims that
-        # never moved. The marker is appended, never rewritten, so an interrupted write can't
-        # erase earlier fingerprints.
-        #
-        # What it records is the mapping state the retire leaves — which is `fingerprint`: each
-        # pending move becomes its question's mapped_from, and an identity pair keeps whatever
-        # move was recorded. So only an apply that moves claims changes the state, and only it
-        # records one (the refusal above guarantees the state is new). An identity-only apply
-        # leaves the state, and the marker, as they were.
-        #
-        # What retires is the whole mapping, pairs with no claim file included: once any claim
-        # has moved, this run's ids are the new ones, and a file that later appears under an id
-        # is new research on that question, not an old claim waiting for a move. Identity pairs
-        # retire too, since they adopted the template's wording. Only an apply that found no
-        # claim at all retires nothing, for the reason --mark-applied refuses a run with no
-        # claims: until one has moved, the run hasn't left the old id space.
-        if records:
-            sep = "\n" if marker.exists() and not marker.read_text().endswith("\n") else ""
-            with marker.open("a") as f:
-                f.write(f"{sep}{fingerprint}\n")
-                f.flush()
-                os.fsync(f.fileno())
-        if staged:
-            _retire_maps_from(qpath, questions)
-
-    try:
-        with _judgments_or_exit():
-            done = _j.rehome(data, will_be, moved=moved, then=move_claims,
-                             also=(claims_dir, marker, qpath), exact=True)
-    except OSError as e:
-        con.print(f"[red]remap failed: {escape(str(e))}. Nothing moved: the verdicts, claim "
-                  f"files and {escape(qpath.name)} were put back as they were. If `vg judgments` "
-                  f"reports an interrupted re-home instead, run `vg judgments --rollback --data "
-                  f"{escape(str(data))}`.[/]")
-        raise typer.Exit(1) from None
-    con.print(f"[green]re-filed {len(staged)} claim(s)[/]; re-homed {done.moved} verdict(s), "
-              f"{done.filed} filed across {len(done.questions)} question(s)"
-              + (f", {done.archived} belong to no current source (retracted or archived), kept "
-                 f"under {_j.archive_dir(data)}" if done.archived else "")
-              + (f".\nRetired {n_retired} maps_from as mapped_from in {qpath}. If "
-                 f"{claims_dir} is tracked in git, commit {qpath}"
-                 + (f" and {marker}" if records else "")
-                 + " with it, in one commit: claims without their retired mapping read as a "
-                 "migration still to apply, and a retired mapping without its claims hides one "
-                 "that never ran"
-                 if n_retired else "")
-              + ".\nRe-run `vg verify` and `vg build`.")
-
-
-def _fsync_file(p: Path) -> None:
-    """Make a file's contents durable, as judgments._write() does before its rename."""
-    fd = os.open(p, os.O_RDONLY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+@app.command(name="remap", hidden=True,
+             context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def remap():
+    """Retired: question ids are stable, so there is no numbering to migrate."""
+    _retired("`vg remap`")
 
 
 @app.command(name="new-candidate")
@@ -2068,9 +1406,8 @@ def new_candidate(candidate: str, data: Path = DATA, race: str = "",
     if src_q.exists() and not dest_q.exists():
         qs = json.loads(src_q.read_text())
         for q in qs:
-            # A new run has no earlier id space. A copied maps_from is a migration that never
-            # applied to it — its researchers write straight onto the new ids — so `remap
-            # --apply` would shift every claim; a copied mapped_from is another run's history.
+            # A new run has no earlier id space: a maps_from or mapped_from left from the
+            # retired `vg remap` is another run's history, so it is not copied.
             q.pop("maps_from", None)
             q.pop("mapped_from", None)
             # The question set is written about a subject; retarget it rather than making
