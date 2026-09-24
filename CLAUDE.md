@@ -1121,9 +1121,18 @@ The queries **flag, and never count**, a late entry that no schedule A restates 
 
 A late entry counts as restated when a schedule-A row carries the same transaction (the
 cross-form key, `tran_base_sql()`), or when a 460 the filer has filed covers its dates, since
-that 460 had to restate it. Anything uncertain leaves it pending: a date or amount that can't be
-read, a name filed another way (matched with `name_match_sql()`, as for a candidate), or a blank
-amount (grouped apart from a stated `0`, which a blank is not).
+that 460 had to restate it. Anything uncertain leaves it pending: a date that can't be read, or
+an amount that isn't a plain number (a blank, `$5,000` and `1,000` never pair with a stated
+`0` or `1`, as a CAST would pair them).
+
+A late entry is held against every contributor it could be. That is `_could_be()`: one name's
+words all appear in the other's, whatever the case, punctuation or field. So "LAST, FIRST" in
+one field, a bare surname, a middle initial and a short form of an organization's name all
+count. This matching is wide on purpose, the reverse of the exact matching the totals use: a
+false match here only makes a query refuse, and a missed one lets a short figure through.
+The first version matched exact spellings only, and a "DOE, JANE" late gift became a new giver
+holding just its own amount, so the ranking stood. What it still can't catch is a name spelled
+*differently* (a typo). That one fails toward green.
 
 The options that were rejected, and why:
 - **Count `F496P3` in the default and let the cross-form dedup collapse it with its schedule-A
