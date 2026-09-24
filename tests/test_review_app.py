@@ -300,16 +300,31 @@ def test_per_source_progress_is_not_spread_to_every_question(tmp_path):
 
 
 def test_unreadable_progress_is_kept_and_not_replaced_by_older(tmp_path):
-    """Progress that can't be parsed is not a cue to migrate the per-source progress again,
+    """Progress this page can't read is not a cue to migrate the per-source progress again,
     which would bring back flags cleared since. The page starts over, says so, and keeps the
     unreadable text where a person can recover it, since its first save replaces it."""
     c = claim("q1", "The council approved the levy.")
     sid = c.sources[0].sid
     legacy = json.dumps({sid: {"done": False, "flag": True, "note": "cleared long ago"}})
-    result = run(tmp_path, [c], storage={STORE: '{"v": 2, "checked": {', LEGACY: legacy})
-    assert not rows(result)[f"q1/{sid}"]["flagged"]
-    assert "could not be read" in result["notice"] and STORE + ":unreadable" in result["notice"]
-    assert result["storage"][STORE + ":unreadable"] == '{"v": 2, "checked": {'
+    # Progress that parses but isn't this version's is unreadable too, per-source progress in
+    # the new store included. Read as empty, a later version's store or a hand-edited one was
+    # saved over with nothing on the first render.
+    later = json.dumps({"v": 3, "checked": {"1" * 16: f"q1/{sid}"}})
+    for text in ('{"v": 2, "checked": {', later, "null", "[]", legacy):
+        result = run(tmp_path, [c], storage={STORE: text, LEGACY: legacy})
+        assert not rows(result)[f"q1/{sid}"]["flagged"], text
+        assert "could not be read" in result["notice"], text
+        assert STORE + ":unreadable" in result["notice"], text
+        assert result["storage"][STORE + ":unreadable"] == text
+
+    # Imported, it is refused, and what the page holds is left alone.
+    ticked = run(tmp_path, [c], actions=[{"do": "tick", "row": f"q1/{sid}", "checked": True}])
+    for text in (later, "null", "[]"):
+        refused = run(tmp_path, [c], storage=ticked["storage"],
+                      actions=[{"do": "import", "text": text}])
+        assert refused["alerts"] == ["Bad progress file"], text
+        assert rows(refused)[f"q1/{sid}"]["checked"], text
+        assert refused["storage"][STORE] == ticked["storage"][STORE], text
 
 
 def test_stored_progress_is_sanitized(tmp_path):
