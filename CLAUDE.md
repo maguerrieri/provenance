@@ -1579,14 +1579,22 @@ were not fixed with it. So a refund could make a business that gave nothing "the
 contributor", and the citation reproduced green. When one query is fixed for what it reads, fix
 the rest with it: search for the table or view (`DEDUPED_RECEIPTS`), not the query's name.
 
-All three now count schedule A unless `form_type` names another schedule (`""` for all of them).
-The two ranking and per-contributor queries name the schedule in their detail. When one misses on
-the schedule asked for but the name or filer has receipts on others, the miss suggests
-`form_type=<schedule>` instead of pointing at the name. It reads those schedules from the raw
-rows: the dedup's collapsed cross-form row keeps only one of its two labels. The default has a
-known gap: a late contribution reported only on Form 496 Part 3, not yet restated on a later
-schedule A, is left out (#66). And `vg calaccess contributions` still lists every schedule
-without saying which (#67).
+All three now count schedule A unless `form_type` names another schedule (`""` for all of them),
+and name what they counted in their detail. When one misses on the schedule asked for but the
+name or filer has receipts on others, the miss suggests `form_type=<schedule>` instead of
+pointing at the name. It reads those schedules from the raw rows: the dedup's collapsed
+cross-form row keeps only one of its two labels. The default has a known gap: a late
+contribution reported only on Form 496 Part 3, not yet restated on a later schedule A, is left
+out (#66). And `vg calaccess contributions` still lists every schedule without saying which
+(#67).
+
+The schedule handling is two helpers, not a copy in each query. `queries._schedule()` holds the
+filter, its args, the label, and the refusal of a padded `form_type` (`" "` is truthy, so it
+filtered to the receipts with no schedule). `queries._elsewhere()` holds the miss's note and
+suggestion. They were copies, and the same miss happened one level down: the refusal went into
+two queries, and `filer_total` still returned `" "`'s sum as found. Fixing every query by hand
+only works until someone adds a guard to one copy. A new query over the receipts calls the
+helpers.
 
 ## A surname is not a candidate
 
