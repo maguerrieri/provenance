@@ -698,6 +698,7 @@ def test_a_verdict_beside_other_sources_than_it_was_handed_is_refused(tmp_path, 
     handed = _handed(run)
     assert list(handed) == [s.sid, LEDGER.sid]
     token1, context1 = handed[s.sid]
+    before = _handoff(run)
 
     if change == "context":   # another run re-fetches the Ledger's page; this one re-verifies
         _cache(run, LEDGER_STORY.replace("according to minutes the Ledger obtained",
@@ -709,6 +710,10 @@ def test_a_verdict_beside_other_sources_than_it_was_handed_is_refused(tmp_path, 
                                 "dropped": (s,)}[change])
     token2, context2 = _handed(run)[s.sid]
     assert context2 == context1, "the Courier's own context is as it was"
+    after = _handoff(run)
+    assert (replace(after, sources=after.sources[:1])
+            == replace(before, sources=before.sources[:1])), (
+        "the claim and the Courier's block are as they were: only the other sources moved")
     assert token2 != token1
 
     code, out = _vg("judge", "q1", s.sid, "supports", "--context", token1, "--data", run)
@@ -731,6 +736,14 @@ def test_a_token_names_the_source_it_was_printed_beside(tmp_path):
     assert _shards(run) == {}
 
 
+def test_a_source_with_nothing_to_judge_is_refused_with_its_reason():
+    """No token names a source the hand-off has nothing to judge on, so sending the verifier
+    back to `vg handoff` for a new one would loop. The refusal says why instead."""
+    s = _shown_source(context=None, unjudgeable="it has no context")
+    why = judgments.wrong_context(_shown(s), s.sid, "0" * 16, handoff="vg handoff q1")
+    assert why == "`vg handoff q1` has nothing to judge on this source: it has no context"
+
+
 def test_a_second_citation_of_one_source_is_judged_as_the_first(tmp_path):
     """`vg judge` finds a source by its sid, so a claim citing one url and snippet twice has one
     verdict, on the first. The hand-off says so on the second, rather than printing a context
@@ -740,7 +753,7 @@ def test_a_second_citation_of_one_source_is_judged_as_the_first(tmp_path):
     code, out = _vg("handoff", "q1", "--data", run)
     assert code == 0, out
     assert f"[2/2] sid {s.sid}  nothing to judge yet" in out, out
-    assert "the same source id as [1/2], where it is judged" in out, out
+    assert "the same source id as [1/2]: a verdict is recorded per source id" in out, out
     assert out.count("  context:\n") == 1, out
     [(token, _)] = _handed_from(out).values()
     code, out = _vg("judge", "q1", s.sid, "supports", "--context", token, "--data", run)

@@ -893,9 +893,11 @@ def wrong_context(handed: Handoff, sid: str, token: str, *, handoff: str) -> str
     if not token:
         return (f"a verdict must name the context it judged: pass --context with the context "
                 f"token `{handoff}` printed beside this source")
+    source = next(s for s in handed.sources if s.sid == sid)
+    if source.context is None:   # no token matches, and re-reading the hand-off won't give one
+        return f"`{handoff}` has nothing to judge on this source: {source.unjudgeable}"
     if token != context_token(handed, sid):
-        source = next(s for s in handed.sources if s.sid == sid)
-        run = ("" if source.context is None or source.context.query_run is None else
+        run = ("" if source.context.query_run is None else
                ", its query run (a re-run under another definition, export or database changes "
                "the token even where its result reads the same)")
         return (f"you were handed a different hand-off (token {token}) from the one this claim "
