@@ -431,8 +431,11 @@ crash, or a kill (a closed terminal or a tool's timeout included, which run no e
 `vg serve` gets a 404. It gets one while any build runs, too, until that build writes the new
 render. Nothing is lost. The render is regenerable, and review progress lives in the browser's
 `localStorage`, keyed by the title, so it comes back with the next build that succeeds. Only the
-files a build writes are removed; anything else in `out/` stays. If they can't be removed, the
-build says so and stops, and they stay until someone removes them by hand.
+files a build writes are removed, along with any temp file a killed build left (`vg serve`
+lists `out/`, dotfiles included, and one can hold a whole page); anything else in `out/` stays.
+If they can't be removed, the build says so and stops, and they stay until someone removes them
+by hand. Two builds of one run at once are not supported: both write the same `out/`, so the
+last to finish decides what is there, and one can remove the other's temp file mid-write.
 
 `render()` writes `claims.json` first and `review.html` last, each whole: a temp file named for
 the process, fsynced, then renamed into place (`report._write_whole()`, the shape of
