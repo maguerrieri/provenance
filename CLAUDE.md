@@ -495,14 +495,21 @@ copy. The claim file then names a copy that is cached, the check passes, and the
 C1 renders green on C2. Every fact on disk was consistent; the one that was wrong, which
 context the verifier read, was on no disk. So the verifier says it:
 - `vg handoff <qid>` prints the claim and each source's context with a context token
-  (`judgments.context_token()`), from one read of the claim file `vg judge` checks. The token
-  is a short hash of everything the hand-off shows the verifier to judge from except the status:
-  the claim's question and answer, the citation's fields, the context, and for a query citation
-  the run that produced it (`query_run`: version, export date, cache root). The claim and the
-  citation are in it because a retry that rewrites only the answer, or only a filing's date,
-  keeps the sid and the context, and `superseded` turns on that date. A field added to the
-  hand-off goes into the token too. The verifier runs the command itself, so no transcription
-  sits between what it reads and the token it hands back.
+  (`judgments.context_token()`), from one read of the claim file `vg judge` checks. The token is
+  a short hash of everything the hand-off shows the verifier to judge from except the status (the
+  question id and sid it prints are the `vg judge` arguments, and checked there): the claim's
+  question, type, the number of sources that type needs, and answer, the citation's fields, the
+  context, and for a query citation the run that produced it (`query_run`: version, export date,
+  cache root). The claim and the citation are in it because a retry that rewrites only the
+  answer, or only a filing's date, keeps the sid and the context, and `superseded` turns on that
+  date. The type is in it for the same reason: it sets how the verifier reads the claim (for an
+  adversarial one it also weighs whether the sources are independent, in the note the review page
+  shows), and a retry can change the type alone. A field added to the hand-off goes into the
+  token too, the claim's header line included: the type and source count were printed there and
+  left out of the token, so a verdict formed under the old type was recorded after the retry.
+  Still left out: the claim's other sources, which the hand-off lists beside each one (#98). The
+  verifier runs the command itself, so no transcription sits between what it reads and the token
+  it hands back.
 - Everything it prints is agent- or page-authored, so it cannot be allowed to start a line.
   Every context line prints behind `| `, split with `splitlines()` (a `\r`, `\x85` or U+2028
   is a line break to some reader). Every control, format, surrogate or separator character

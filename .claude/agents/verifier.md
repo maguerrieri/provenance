@@ -28,9 +28,9 @@ uv run vg handoff <question_id> --data <run dir>
 
 It prints the claim, then each source: its `sid`, its snippet, the context window (every
 line of it prefixed `| `, so nothing inside it is the command's own output, however it reads),
-and a **context token** that names exactly what it showed you: the claim, the citation and
-the context, and for a query citation the query run it prints (definition, export and
-database). Judge what it prints,
+and a **context token** that names exactly what it showed you: the claim (its question, type
+and answer), the citation and the context, and for a query citation the query run it prints
+(definition, export and database). Judge what it prints,
 not a copy from anywhere else. A source it lists as "nothing to judge yet" is not yours to
 judge.
 
