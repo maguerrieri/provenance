@@ -9,6 +9,7 @@ contributions (C), and miscellaneous receipts such as a vendor's refund or inter
 
 from __future__ import annotations
 
+import inspect
 import zipfile
 
 import pytest
@@ -161,6 +162,23 @@ def test_a_receipt_with_no_schedule_is_never_suggested_as_one(tmp_path):
 RECEIPT_QUERIES = (("calaccess.contributor_total", {"contributor": "Brightwater PAC"}),
                    ("calaccess.filer_total", {}),
                    ("calaccess.top_contributor", {}))
+
+
+def test_every_receipt_query_is_tested_for_its_schedule_handling():
+    """RECEIPT_QUERIES is a hand-kept list, and filer_total was the query a hand-kept fix
+    missed. So the list is checked against the registry: a new query over the receipts must be
+    added here, where the tests below hold it to the guards."""
+    reads_receipts = {name for name, q in queries.REGISTRY.items()
+                      if "DEDUPED_RECEIPTS" in inspect.getsource(q.fn)
+                      or "RCPT_LATEST" in inspect.getsource(q.fn)}
+    assert reads_receipts == {name for name, _ in RECEIPT_QUERIES}
+
+
+def test_the_label_upper_cases_as_the_filter_matches():
+    """SQLite's UPPER() folds ASCII only. Python folds "ß" to "SS", naming a schedule the
+    filter never matched."""
+    assert queries._schedule_label("f401a") == "schedule-F401A"
+    assert queries._schedule_label("aß") == "schedule-Aß"
 
 
 def test_a_padded_schedule_is_refused(tmp_path):

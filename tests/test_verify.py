@@ -6472,8 +6472,9 @@ def _definition_fingerprint(name):
 # citations), the export metadata, and the comparison and command a result is checked with.
 _NOT_A_DEFINITION = {
     "vgpipe.queries": {"Query", "QueryResult", "REGISTRY", "UNSETTLED_SHOWN", "_elsewhere",
-                       "_other_schedules", "_unread", "dataset", "describe_export",
-                       "export_date", "human_command", "matches", "share_text"},
+                       "_other_schedules", "_schedule_label", "_unread", "dataset",
+                       "describe_export", "export_date", "human_command", "matches",
+                       "share_text"},
     "vgpipe.calaccess": {"COVER_FALLBACK", "Contribution", "DegradedDatabaseWarning",
                          "EXPORT_META", "EXPORT_URL", "NO_COVERS", "_UNUSABLE", "_export_date",
                          "_read_export_info", "citable_snapshot", "committee_url",
@@ -6487,14 +6488,14 @@ _NOT_A_DEFINITION = {
 QUERY_DEFINITIONS = {
     # contributor_total and top_contributor moved without a bump: _schedule() is their own
     # schedule handling, extracted unchanged
-    "calaccess.contributor_total": (4, "eb4f56d4df79"),
-    "calaccess.filer_total": (4, "f3d06a88d99f"),
-    "calaccess.top_contributor": (4, "b30884ee41d7"),
+    "calaccess.contributor_total": (4, "bcbd65beb4fd"),
+    "calaccess.filer_total": (4, "d396d370b6a0"),
+    "calaccess.top_contributor": (4, "a2a1dedd1fb1"),
     # moved without a bump: amount_sql() is ie_total's own amount expression, extracted
     # unchanged, and DEDUPED_RECEIPTS, which it does not read, changed beside it; then the
     # unsettled-amendment flag and its shared helpers, which change no value it returns; then
     # _schedule(), the receipt queries' schedule filter, which it does not call
-    "calaccess.ie_total": (2, "c61b11e3fd82"),
+    "calaccess.ie_total": (2, "9646e5e11a44"),
 }
 
 
