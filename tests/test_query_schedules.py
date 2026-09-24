@@ -157,27 +157,56 @@ def test_a_receipt_with_no_schedule_is_never_suggested_as_one(tmp_path):
     assert not got.found and "form_type" not in got.note, got.note
 
 
+# Every query over the receipts, with what each needs besides filer_id and form_type.
+RECEIPT_QUERIES = (("calaccess.contributor_total", {"contributor": "Brightwater PAC"}),
+                   ("calaccess.filer_total", {}),
+                   ("calaccess.top_contributor", {}))
+
+
 def test_a_padded_schedule_is_refused(tmp_path):
-    """" " is truthy: it filtered to the receipts with no schedule, under a label naming none."""
-    root = _export(tmp_path, RECEIPTS)
-    for name, params in (("calaccess.contributor_total", {"contributor": "Brightwater PAC"}),
-                         ("calaccess.top_contributor", {})):
+    """" " is truthy: it filtered to the receipts with no schedule, under a label naming none.
+    filer_total ran it and returned that sum as found, after the other two were fixed."""
+    root = _export(tmp_path, RECEIPTS + _row("X-6", "Example Print Shop", "", "300", ""))
+    for name, params in RECEIPT_QUERIES:
         for form_type in (" ", " A"):
             with pytest.raises(ValueError, match="form_type must be a schedule code"):
                 queries.run(name, {"filer_id": FILER, "form_type": form_type, **params}, root)
 
 
 def test_a_filer_with_no_schedule_a_is_not_read_as_receiving_nothing(tmp_path):
-    """A slate mailer's receipts are all Form 401 payments. The ranking misses on schedule A,
-    and says where the receipts are."""
+    """A slate mailer's receipts are all Form 401 payments. The ranking and the total miss on
+    schedule A, and say where the receipts are."""
     root = _export(tmp_path, _row("P-1", "Brightwater PAC", "", "2500", "F401A"))
 
-    got = queries.run("calaccess.top_contributor", {"filer_id": FILER}, root)
-    assert not got.found and "form_type=F401A" in got.note, got.note
+    for name, slate_value in (("calaccess.top_contributor", "Brightwater PAC"),
+                              ("calaccess.filer_total", 2500.0)):
+        got = queries.run(name, {"filer_id": FILER}, root)
+        assert not got.found and got.value is None, f"{name}: {got.value!r}"
+        assert "form_type=F401A" in got.note, f"{name}: {got.note}"
+        assert got.suggestions == ["form_type=F401A"], f"{name}: {got.suggestions}"
 
-    slate = queries.run("calaccess.top_contributor", {"filer_id": FILER, "form_type": "F401A"},
-                        root)
-    assert slate.value == "Brightwater PAC"
+        slate = queries.run(name, {"filer_id": FILER, "form_type": "F401A"}, root)
+        assert slate.value == slate_value, f"{name}: {slate.value!r}"
+
+        # Matched case-insensitively, so named as filed: "schedule-f401a" read as a schedule
+        # other than the F401A a miss suggests.
+        lower = queries.run(name, {"filer_id": FILER, "form_type": "f401a"}, root)
+        assert lower.value == slate_value and "schedule-F401A" in lower.detail, lower.detail
+
+
+@pytest.mark.parametrize("name,params", RECEIPT_QUERIES)
+def test_every_schedule_is_named_as_what_was_counted(tmp_path, name, params):
+    """form_type="" counts every schedule. filer_total's detail read "schedule- gift(s)", naming
+    no schedule at all, where the other two said "every-schedule"."""
+    root = _export(tmp_path, RECEIPTS)
+
+    got = queries.run(name, {"filer_id": FILER, "form_type": "", **params}, root)
+    assert got.found and "every-schedule" in got.detail, got.detail
+    assert "schedule- " not in got.detail, got.detail
+
+    miss = queries.run(name, {"filer_id": "9990099", "form_type": "", **params}, root)
+    assert not miss.found and "every-schedule" in miss.detail, miss.detail
+    assert "schedule- " not in miss.detail and "form_type" not in miss.note, miss.note
 
 
 def test_a_gift_on_two_forms_still_counts_once_across_every_schedule(tmp_path):

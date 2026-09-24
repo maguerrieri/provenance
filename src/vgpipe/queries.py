@@ -260,6 +260,24 @@ def share_text(u) -> str:
             f"(open {u.cite_url})")
 
 
+def _schedule(form_type: str) -> tuple[str, list[str], str]:
+    """The receipt-schedule filter every contribution query applies (a condition on `r`), its
+    args, and how the detail names what was counted: `schedule-<CODE>` (upper-cased, as the
+    filter matches and as a miss names the other schedules), or `every-schedule` for "".
+
+    One helper for all three, not a copy in each: filer_total kept an unguarded copy after the
+    other two were fixed. It ran form_type=" " (truthy) as a filter for the receipts with no
+    schedule and returned their sum as found, labelled "schedule- ", which reproduced green.
+    """
+    if form_type != form_type.strip():
+        raise ValueError(f"form_type must be a schedule code, or '' for every schedule, "
+                         f"not {form_type!r}")
+    if not form_type:
+        return "", [], "every-schedule"
+    return (" AND UPPER(TRIM(r.FORM_TYPE)) = UPPER(TRIM(?))", [form_type],
+            f"schedule-{form_type.upper()}")
+
+
 def _other_schedules(con: Any, filer_id: str, form_type: str, who: str = "",
                      who_args: list[Any] | None = None) -> list[str]:
     """The receipt schedules besides `form_type` that hold this filer's receipts (narrowed by
@@ -283,6 +301,22 @@ def _other_schedules(con: Any, filer_id: str, form_type: str, who: str = "",
     """, [str(filer_id), *(who_args or []), form_type])]
 
 
+def _elsewhere(con: Any, filer_id: str, form_type: str, who: str = "",
+               who_args: list[Any] | None = None) -> tuple[str, list[str]]:
+    """For a miss on `form_type`: the note naming the other schedules this filer's receipts are
+    on (`_other_schedules`), and the one suggestion to count them. ("", []) when there are none.
+
+    One suggestion for every schedule, not one each: the note shows four, and a hint per
+    schedule pushed out the near-name the researcher needed. Display only, like
+    `_other_schedules`.
+    """
+    others = _other_schedules(con, filer_id, form_type, who, who_args)
+    if not others:
+        return "", []
+    return (f"; receipts on schedule {', '.join(others)} not counted",
+            ["form_type=" + ", form_type=".join(others)])
+
+
 def _contributor_total(root: Path, *, filer_id: str, contributor: str,
                        contributor_first: str = "", form_type: str = "A") -> QueryResult:
     """Total itemized contributions from one contributor to one filer.
@@ -298,20 +332,13 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
     """
     from . import calaccess
 
-    if form_type != form_type.strip():
-        # " " is truthy, so it filtered to the rows with no schedule at all, under a label
-        # naming none.
-        raise ValueError(f"form_type must be a schedule code, or '' for every schedule, "
-                         f"not {form_type!r}")
+    schedule, schedule_args, label = _schedule(form_type)
     con = calaccess.connect_citable(root)
     who = " AND UPPER(TRIM(r.CTRIB_NAML)) = UPPER(TRIM(?))"
     who_args: list[Any] = [contributor]
     if contributor_first:
         who += " AND UPPER(TRIM(COALESCE(r.CTRIB_NAMF,''))) = UPPER(TRIM(?))"
         who_args.append(contributor_first)
-    schedule = " AND UPPER(TRIM(r.FORM_TYPE)) = UPPER(TRIM(?))" if form_type else ""
-    schedule_args = [form_type] if form_type else []
-    label = f"schedule-{form_type}" if form_type else "every-schedule"
     args: list[Any] = [str(filer_id)] + who_args + schedule_args
     inner = DEDUPED_RECEIPTS.format(extra=who + schedule)
     # One pass: the dedup is the expensive part, and the first-name count needs it too.
@@ -334,14 +361,12 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
             LIMIT 6
         """, [str(filer_id), f"%{contributor.split()[0]}%" if contributor.split() else "%"]
              + schedule_args)]
-        detail = f"0 itemized {label} gift(s)"
         # The name matched, on a schedule this did not count: say where, rather than leave
         # "no match" to send the researcher off retyping a name that was right.
-        if others := _other_schedules(con, filer_id, form_type, who, who_args):
-            detail += f"; receipts on schedule {', '.join(others)} not counted"
-            near = ["form_type=" + ", form_type=".join(others)] + near
+        note, hint = _elsewhere(con, filer_id, form_type, who, who_args)
         con.close()
-        return QueryResult(value=None, rows=0, found=False, suggestions=near, detail=detail)
+        return QueryResult(value=None, rows=0, found=False, suggestions=hint + near,
+                           detail=f"0 itemized {label} gift(s){note}")
 
     if not contributor_first and people > 1:
         # Summing several people under one surname is how a nonexistent contributor appeared.
@@ -366,14 +391,15 @@ def _filer_total(root: Path, *, filer_id: str, form_type: str = "A") -> QueryRes
 
     `form_type` defaults to A (monetary contributions received). Without it the total mixed
     schedules A, C and I and came out hundreds of thousands of dollars high: a plausible-looking
-    number answering a question nobody asked.
+    number answering a question nobody asked. Pass another schedule to count that one, or ""
+    for every schedule.
     """
     from . import calaccess
 
+    schedule, schedule_args, label = _schedule(form_type)
     con = calaccess.connect_citable(root)
-    extra = " AND UPPER(TRIM(r.FORM_TYPE)) = UPPER(TRIM(?))" if form_type else ""
-    inner = DEDUPED_RECEIPTS.format(extra=extra)
-    args: list[Any] = [str(filer_id)] + ([form_type] if form_type else [])
+    inner = DEDUPED_RECEIPTS.format(extra=schedule)
+    args: list[Any] = [str(filer_id)] + schedule_args
     row = con.execute(f"""
         SELECT SUM(d.AMT) amt, COUNT(d.AMT) n, COUNT(*) gifts,
                GROUP_CONCAT(DISTINCT CASE WHEN d.AMT IS NOT NULL THEN d.FILING_IDS END) ids
@@ -382,13 +408,16 @@ def _filer_total(root: Path, *, filer_id: str, form_type: str = "A") -> QueryRes
     n, gifts = int(row["n"] or 0), int(row["gifts"] or 0)
     left_out = _unread(gifts - n)
     if n == 0:
+        # A slate mailer's receipts are all on Form 401: "no schedule-A contributions" alone
+        # read as a committee that received nothing.
+        note, hint = _elsewhere(con, filer_id, form_type)
         con.close()
-        return _no_rows(f"no schedule-{form_type} contributions"
-                        + (" counted" if left_out else "") + f" for filer {filer_id}{left_out}")
+        return _no_rows(f"no {label} contributions" + (" counted" if left_out else "")
+                        + f" for filer {filer_id}{left_out}{note}", hint)
     unrestated = _receipt_shares(con, inner, args, row["ids"])
     con.close()
     return QueryResult(value=float(row["amt"]), rows=n,
-                       detail=f"{n} itemized schedule-{form_type} gift(s){left_out}",
+                       detail=f"{n} itemized {label} gift(s){left_out}",
                        unrestated=unrestated)
 
 
@@ -406,14 +435,10 @@ def _top_contributor(root: Path, *, filer_id: str, form_type: str = "A") -> Quer
     """
     from . import calaccess
 
-    if form_type != form_type.strip():
-        raise ValueError(f"form_type must be a schedule code, or '' for every schedule, "
-                         f"not {form_type!r}")
+    schedule, schedule_args, label = _schedule(form_type)
     con = calaccess.connect_citable(root)
-    schedule = " AND UPPER(TRIM(r.FORM_TYPE)) = UPPER(TRIM(?))" if form_type else ""
-    label = f"schedule-{form_type}" if form_type else "every-schedule"
     inner = DEDUPED_RECEIPTS.format(extra=schedule)
-    args: list[Any] = [str(filer_id)] + ([form_type] if form_type else [])
+    args: list[Any] = [str(filer_id)] + schedule_args
     # Only gifts with an amount are ranked: read as 0.0, a contributor whose gifts all had blank
     # amounts tied one whose stated total was $0. The rest are counted, by a window over every
     # contributor taken before the LIMIT, so the dedup runs once. A contributor with no readable
@@ -431,13 +456,10 @@ def _top_contributor(root: Path, *, filer_id: str, form_type: str = "A") -> Quer
     if row is None:
         # A slate mailer's receipts are all on Form 401: "no schedule-A contributions" alone
         # read as a committee that received nothing.
-        others = _other_schedules(con, filer_id, form_type)
+        note, hint = _elsewhere(con, filer_id, form_type)
         con.close()
         return _no_rows(f"no {label} contributions {'counted' if unread else 'found'} for "
-                        f"filer {filer_id}{_unread(unread)}"
-                        + (f"; receipts on schedule {', '.join(others)} not counted"
-                           if others else ""),
-                        ["form_type=" + ", form_type=".join(others)] if others else None)
+                        f"filer {filer_id}{_unread(unread)}{note}", hint)
     # Every gift, not only the top contributor's: the ranking is made of all of them, and a
     # gift a later amendment dropped can put someone at the top, or keep someone off it. Not
     # asked while a gift has no amount: that names no largest contributor at all (below).
@@ -606,13 +628,16 @@ REGISTRY: dict[str, Query] = {
     # amendment ids (connect_citable), which the earlier versions answered from. ie_total
     # already refused one, so its value and its refusals are unchanged, and it stays at v2. The
     # unrestated flag every query now carries changes no value: verification acts on it.
+    # v4 of filer_total: a padded form_type is refused (`_schedule`). v3 ran " " as a filter for
+    # the receipts with no schedule and returned their sum.
     "calaccess.contributor_total": Query(
         _contributor_total, ("filer_id", "contributor"),
         "contributions from one contributor (add contributor_first for an individual; "
         "schedule A unless form_type says otherwise)", 4),
     "calaccess.filer_total": Query(
         _filer_total, ("filer_id",),
-        "total itemized contributions received by a filer", 3),
+        "total itemized contributions received by a filer (schedule A unless form_type says "
+        "otherwise)", 4),
     "calaccess.top_contributor": Query(
         _top_contributor, ("filer_id",),
         "the largest contributor to a filer, by itemized total (schedule A unless form_type "

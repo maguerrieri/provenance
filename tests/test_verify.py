@@ -6471,9 +6471,9 @@ def _definition_fingerprint(name):
 # What cannot change a value a query returns: display, messages, listings (finding aids, not
 # citations), the export metadata, and the comparison and command a result is checked with.
 _NOT_A_DEFINITION = {
-    "vgpipe.queries": {"Query", "QueryResult", "REGISTRY", "UNSETTLED_SHOWN", "_other_schedules",
-                       "_unread", "dataset", "describe_export", "export_date", "human_command",
-                       "matches", "share_text"},
+    "vgpipe.queries": {"Query", "QueryResult", "REGISTRY", "UNSETTLED_SHOWN", "_elsewhere",
+                       "_other_schedules", "_unread", "dataset", "describe_export",
+                       "export_date", "human_command", "matches", "share_text"},
     "vgpipe.calaccess": {"COVER_FALLBACK", "Contribution", "DegradedDatabaseWarning",
                          "EXPORT_META", "EXPORT_URL", "NO_COVERS", "_UNUSABLE", "_export_date",
                          "_read_export_info", "citable_snapshot", "committee_url",
@@ -6485,13 +6485,16 @@ _NOT_A_DEFINITION = {
 
 # name -> (version, fingerprint). See test_a_query_definition_cannot_change_unnoticed.
 QUERY_DEFINITIONS = {
-    "calaccess.contributor_total": (4, "af797fffff54"),
-    "calaccess.filer_total": (3, "af5e3af41c29"),
-    "calaccess.top_contributor": (4, "7e41b33cb76b"),
+    # contributor_total and top_contributor moved without a bump: _schedule() is their own
+    # schedule handling, extracted unchanged
+    "calaccess.contributor_total": (4, "eb4f56d4df79"),
+    "calaccess.filer_total": (4, "f3d06a88d99f"),
+    "calaccess.top_contributor": (4, "b30884ee41d7"),
     # moved without a bump: amount_sql() is ie_total's own amount expression, extracted
     # unchanged, and DEDUPED_RECEIPTS, which it does not read, changed beside it; then the
-    # unsettled-amendment flag and its shared helpers, which change no value it returns
-    "calaccess.ie_total": (2, "bed44ba30c13"),
+    # unsettled-amendment flag and its shared helpers, which change no value it returns; then
+    # _schedule(), the receipt queries' schedule filter, which it does not call
+    "calaccess.ie_total": (2, "c61b11e3fd82"),
 }
 
 
