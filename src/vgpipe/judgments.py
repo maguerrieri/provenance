@@ -23,7 +23,7 @@ import re
 import shutil
 import time
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import MISSING, asdict, dataclass, fields
 from datetime import UTC, datetime
 from pathlib import Path
@@ -455,8 +455,9 @@ def rehome(root: Path, claims, moved: Mapping[str, str | None] | None = None,
     and appends its re-apply marker there, so verdicts, claims and marker roll back together —
     rolling back only the shards put verdicts on old ids under claims on new ones. `creates`
     names what `then` makes inside `root` that is not there yet: remap's claims-archive/<stamp>/,
-    where it archives stranded claims. A restore removes each one, so the stranded files, put
-    back in claims/ from the backup, are not left behind as a second copy too. `stamp` names
+    where it archives stranded claims. A restore removes each one, with any directory above it
+    the re-home made, so the stranded files, put back in claims/ from the backup, are not left
+    behind as a second copy too. `stamp` names
     the verdict archive's run directory, so remap files an archived claim and its verdicts under
     one name. All of it happens under the directory lock, so a `vg judge` cannot land between
     the read and the rewrite and be lost. Returns a Rehomed.
@@ -686,12 +687,9 @@ def _rewrite(root: Path, before: dict[str, dict[str, Judgment]],
       runs the same _restore().
     """
     backup, building = backup_dir(root), _building_dir(root)
-    # A rollback removes what `creates` names, so it must not be there yet: one that is belongs
-    # to something else, and the rollback would delete it.
-    for path in creates:
-        if path.exists() or path.is_symlink():
-            raise FileExistsError(errno.EEXIST, "a re-home creates this, and it already exists",
-                                  str(path))
+    # Asked here, under the lock, rather than by the caller: what a rollback removes is what the
+    # transaction makes, so it is decided at the moment the transaction begins.
+    made = [_first_missing(root, path) for path in creates]
     shutil.rmtree(building, ignore_errors=True)     # a build that died: no shard was touched
     stamp = stamp or new_stamp()
     building.mkdir()
@@ -702,11 +700,11 @@ def _rewrite(root: Path, before: dict[str, dict[str, Judgment]],
             # Named up front, so a rollback can remove an archive this run began: its verdicts
             # go back into their shards, and a copy left behind would be archived again.
             _durable_text(building / _ARCHIVE_NAME, stamp)
-        if creates:
+        if made:
             # The same for what `then` creates: remap's stranded claims go back into claims/
             # from the snapshot, and a copy left in claims-archive/ would be archived again.
             _durable_text(building / _CREATES_NAME,
-                          "\n".join(_created_name(root, p) for p in creates))
+                          "\n".join(_created_name(root, p) for p in made))
         if also:
             _snapshot(root, also, building)
         _fsync_dir(building)
@@ -737,16 +735,13 @@ def _rewrite(root: Path, before: dict[str, dict[str, Judgment]],
             then()
             for path in also:
                 _fsync_dir(path if path.is_dir() else root)
-            for path in creates:
-                # Every directory it made, whose entries are the renames into it, then its own
-                # entry in each parent up to the run directory.
+            for path in made:
+                # Every directory it made, whose entries are the renames into it, then the
+                # directory holding it: its own entry.
                 if path.is_dir() and not path.is_symlink():
                     for d, _dirs, _files in os.walk(path):
                         _fsync_dir(Path(d))
-                for d in path.parents:
-                    _fsync_dir(d)
-                    if d == root:
-                        break
+                _fsync_dir(path.parent)
     except BaseException:
         _restore(root)
         raise
@@ -764,10 +759,11 @@ def _retire(root: Path) -> None:
     shutil.rmtree(discard, ignore_errors=True)
 
 
-def rollback(root: Path) -> tuple[int, list[str]]:
+def rollback(root: Path) -> tuple[int, list[str], list[str]]:
     """Undo a re-home that was interrupted, from the backup it left. Returns the number of shards
-    put back (0 if there was nothing to undo) and the names of the other paths it put back —
-    remap's claims/ and its marker.
+    put back (0 if there was nothing to undo), the names of the other paths it put back —
+    remap's claims/ and its marker — and the paths it removed because the re-home created them
+    (remap's claims-archive run), relative to `root`.
 
     The backup is complete by construction (see _rewrite()), so this needs no judgment: it makes
     the shards, and whatever else the re-home was changing, exactly what the backup holds, and
@@ -777,9 +773,10 @@ def rollback(root: Path) -> tuple[int, list[str]]:
         try:
             backup_dir(root).stat()
         except FileNotFoundError:
-            return 0, []
+            return 0, [], []
         also = [name for _kind, name in _read_also(backup_dir(root))]
-        return _restore(root), also
+        removed = [_created_name(root, p) for p in _read_created(root, backup_dir(root))]
+        return _restore(root), also, removed
 
 
 def _restore(root: Path) -> int:
@@ -801,10 +798,13 @@ def _restore(root: Path) -> int:
         shutil.rmtree(archive_dir(root) / stamp, ignore_errors=True)
     for made in _read_created(root, backup):
         # Absent when the re-home began (_rewrite() checked), so whatever is there now it made.
+        # Best effort, like the archive above: what is left is a second copy of what the restore
+        # just put back, and failing here would hide the error that started the restore.
         if made.is_dir() and not made.is_symlink():
-            shutil.rmtree(made)
+            shutil.rmtree(made, ignore_errors=True)
         else:
-            made.unlink(missing_ok=True)
+            with suppress(OSError):
+                made.unlink(missing_ok=True)
         if made.parent.is_dir():
             _fsync_dir(made.parent)
     _retire(root)
@@ -863,10 +863,32 @@ def _read_also(backup: Path) -> list[tuple[str, str]]:
     out = []
     for line in text.splitlines():
         kind, _, name = line.partition(" ")
-        if kind in ("dir", "file", "absent") and name and "/" not in name \
-                and name not in (".", ".."):
+        if kind in ("dir", "file", "absent") and _plain_name(name):
             out.append((kind, name))
     return out
+
+
+def _plain_name(name: str) -> bool:
+    """Whether `name` is one path component a backup marker may name: it is joined to the run
+    directory and then restored or deleted, so nothing that could reach outside it. The one
+    test for it, for every marker."""
+    return bool(name) and name not in (".", "..") and "/" not in name
+
+
+def _first_missing(root: Path, path: Path) -> Path:
+    """What creating `path` makes: the topmost of it and its ancestors below `root` that does
+    not exist yet. A rollback removes that, so `path` itself must not exist: whatever is there
+    belongs to something else, and the rollback would delete it."""
+    _created_name(root, path)
+    if path.exists() or path.is_symlink():
+        raise FileExistsError(errno.EEXIST, "a re-home creates this, and it already exists",
+                              str(path))
+    top = path
+    for d in path.parents:
+        if d == root or d.exists() or d.is_symlink():
+            return top
+        top = d
+    return top
 
 
 def _created_name(root: Path, path: Path) -> str:
@@ -877,7 +899,7 @@ def _created_name(root: Path, path: Path) -> str:
         parts = path.relative_to(root).parts
     except ValueError:
         parts = ()
-    if not parts or any(p in (".", "..") or "\\" in p for p in parts):
+    if not parts or not all(_plain_name(p) for p in parts):
         raise ValueError(f"a re-home creates only inside {root}, not {path}")
     return "/".join(parts)
 
@@ -889,12 +911,8 @@ def _read_created(root: Path, backup: Path) -> list[Path]:
         text = (backup / _CREATES_NAME).read_text(encoding="utf-8")
     except FileNotFoundError:
         return []
-    out = []
-    for line in text.splitlines():
-        parts = line.split("/")
-        if line and all(p and p not in (".", "..") and "\\" not in p for p in parts):
-            out.append(root.joinpath(*parts))
-    return out
+    lines = [line.split("/") for line in text.splitlines()]
+    return [root.joinpath(*parts) for parts in lines if all(map(_plain_name, parts))]
 
 
 def _read_name(marker: Path) -> str | None:
@@ -904,7 +922,7 @@ def _read_name(marker: Path) -> str | None:
         name = marker.read_text(encoding="utf-8").strip()
     except FileNotFoundError:
         return None
-    return name if name and "/" not in name and name not in (".", "..") else None
+    return name if _plain_name(name) else None
 
 
 def _on_disk(root: Path, stem: str) -> Path:

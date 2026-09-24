@@ -1080,13 +1080,15 @@ def show_judgments(data: Path = DATA, question_id: str = "", repair: bool = Fals
         raise typer.Exit(1)
     if rollback:
         with _judgments_or_exit():
-            restored, also = judgments.rollback(data)
+            restored, also, removed = judgments.rollback(data)
         if not restored and not also:
             con.print("[dim]no interrupted re-home to undo[/]")
         else:
             con.print(f"[green]put back {restored} shard(s)"
                       + "".join(f", {escape(str(data / name))}" for name in also)
-                      + " as they were before the interrupted re-home[/]")
+                      + " as they were before the interrupted re-home[/]"
+                      + "".join(f"; removed {escape(str(data / name))}, which it had begun"
+                                for name in removed))
         return
 
     cache_root = _verdict_cache_root(data, cache)
@@ -1868,7 +1870,8 @@ def remap(data: Path = DATA, apply: bool = False, archive_stranded: bool = False
     with _judgments_or_exit():
         _j.load_every(data)
     unread: list[str] = []
-    loaded = _load_or_exit(claims_dir, trust_machine_fields=True, skipped=unread)
+    origin: dict[str, str] = {}
+    loaded = _load_or_exit(claims_dir, trust_machine_fields=True, skipped=unread, origin=origin)
     if unread:
         # A claim that cannot be read cites nothing as far as rehome() can tell, so its verdicts
         # would be archived out of the live shards while its file still moves.
@@ -1972,15 +1975,11 @@ def remap(data: Path = DATA, apply: bool = False, archive_stranded: bool = False
     # failed, while the message said nothing had moved. Each run gets its own directory, named
     # as its verdict archive is: one shared claims-archive/ let the next run that stranded a
     # file of the same name replace the one already there.
-    origin: dict[str, str] = {}
     archived = {p.name for p in leaving}
     will_be = [c.model_copy(update={"question_id": moved.get(c.question_id, c.question_id)})
-               for c in _load_or_exit(claims_dir, trust_machine_fields=True, origin=origin)
-               if origin[c.question_id] not in archived]
+               for c in loaded if origin[c.question_id] not in archived]
     stamp = _j.new_stamp()
     arch_run = data / "claims-archive" / stamp
-    # What a rollback removes: the run's directory, and claims-archive/ too if this makes it.
-    made = arch_run if arch_run.parent.exists() else arch_run.parent
 
     n_retired = sum(1 for q in questions if q.get("maps_from")) if staged else 0
 
@@ -2031,7 +2030,7 @@ def remap(data: Path = DATA, apply: bool = False, archive_stranded: bool = False
         with _judgments_or_exit():
             done = _j.rehome(data, will_be, moved=moved, then=move_claims,
                              also=(claims_dir, marker, qpath), exact=True,
-                             creates=(made,) if leaving else (), stamp=stamp)
+                             creates=(arch_run,) if leaving else (), stamp=stamp)
     except OSError as e:
         con.print(f"[red]remap failed: {escape(str(e))}. Nothing moved: the verdicts, claim "
                   f"files and {escape(qpath.name)} were put back as they were. If `vg judgments` "
@@ -2039,8 +2038,8 @@ def remap(data: Path = DATA, apply: bool = False, archive_stranded: bool = False
                   f"{escape(str(data))}`.[/]")
         raise typer.Exit(1) from None
     if leaving:
-        con.print(f"[green]archived {len(leaving)} stranded file(s)[/] to {arch_run} — kept, "
-                  f"not loaded as claims")
+        con.print(f"[green]archived {len(leaving)} stranded file(s)[/] to "
+                  f"{escape(str(arch_run))} — kept, not loaded as claims")
     con.print(f"[green]re-filed {len(staged)} claim(s)[/]; re-homed {done.moved} verdict(s), "
               f"{done.filed} filed across {len(done.questions)} question(s)"
               + (f", {done.archived} belong to no current source (retracted or archived), kept "

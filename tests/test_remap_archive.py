@@ -211,10 +211,16 @@ def test_a_remap_killed_after_archiving_is_undone_by_rollback(tmp_path, monkeypa
         cli.remap(data=tmp_path, apply=True, archive_stranded=True)
     monkeypatch.undo()
     assert not (tmp_path / "claims" / "q9.json").exists(), "the archive really was under way"
-    assert len(_archived(tmp_path)) == len(archive_before) + 1
+    (begun,) = set(_archived(tmp_path)) - set(archive_before)
+    capsys.readouterr()
 
     cli.show_judgments(data=tmp_path, rollback=True)
-    assert "put back" in _plain(capsys.readouterr().out)
+    out = _plain(capsys.readouterr().out)
+    assert "put back" in out
+    # the operator is told the archive run went: a directory they may already have opened. A
+    # claims-archive/ the run made goes with it.
+    removed = tmp_path / "claims-archive" / begun if earlier else tmp_path / "claims-archive"
+    assert f"removed {removed}, which it had begun" in out
     assert _files(tmp_path / "claims") == claims_before
     assert _files(tmp_path / "judgments") == shards_before
     assert _archive_unchanged(tmp_path, archive_before)
@@ -269,3 +275,21 @@ def test_a_rehome_refuses_to_create_what_is_already_there(tmp_path):
 def test_a_rehome_creates_only_inside_its_run(tmp_path, outside):
     with pytest.raises(ValueError, match="inside"):
         judgments.rehome(tmp_path, [], then=lambda: None, creates=(tmp_path / outside,))
+
+
+def test_a_rehome_removes_only_the_directories_it_made(tmp_path):
+    """Asked when the transaction begins, under the lock: what already exists above a created
+    path stays, and what the re-home made above it goes with it."""
+    kept = tmp_path / "kept"
+    (kept / "older").mkdir(parents=True)
+    run = kept / "made" / "run"
+
+    def make_then_fail():
+        run.mkdir(parents=True)
+        (run / "q5.json").write_text("{}")
+        raise OSError(28, "No space left on device")
+
+    with pytest.raises(OSError, match="No space left"):
+        judgments.rehome(tmp_path, [], then=make_then_fail, creates=(run,))
+    assert sorted(p.name for p in kept.iterdir()) == ["older"]
+    assert not judgments.backup_dir(tmp_path).exists()

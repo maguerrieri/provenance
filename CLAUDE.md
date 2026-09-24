@@ -213,7 +213,9 @@ research archived there. Everything else goes through `_rewrite()`:
   stranded archive once ran before the backup, as a plain rename, so a re-home that refused
   or failed after it left those claims archived under "Nothing moved". Now it is part of
   `then=`, and what it creates is named up front (`creates=`, the backup's `CREATES`), like the
-  verdict archive: a path there must not exist yet, since a restore deletes it.
+  verdict archive: a path there must not exist yet, since a restore deletes it, with whatever
+  directories above it the re-home made. `_rewrite()` decides that itself, under the lock; a
+  caller asking beforehand could be answered by a directory that appeared since.
 - If any step raises, `_restore()` puts back every shard, the claim files (stranded ones
   included), the marker and `questions.json` from the backup, and removes the begun archives,
   verdicts' and claims'. If the process dies, the backup stays and every
