@@ -625,6 +625,42 @@ does not overwrite outlives the failure, and reads as that run's result.**
 Still open: a tab that already has the page open keeps it until it is reloaded, and nothing
 tells the reviewer it is stale (#122).
 
+## A reviewer's check is per claim, and about what it was shown
+
+The review app used to key its "verified by me" check by source id. A source id covers the
+url and snippet, so two questions citing one snippet shared a check: ticking it under one
+marked it under the other, and could mark that claim done, though nobody had read the source
+against it. That is the pooling `rehome()` was fixed for ("A verdict is per question"), one
+layer later, at the layer meant to be last.
+
+So a check is recorded by what it attests, `report.review_fingerprint()`: the source, the claim,
+and the evidence the row shows (the highlighted excerpt and page; where there is no excerpt, the
+snapshot offered instead; for a query row, the definition and export it was checked against).
+A row reads checked while its fingerprint is recorded. Another question citing the source has
+another fingerprint, and a re-fetch, new snapshot, moved highlight or reworded claim gives this
+row a new one, so it reads unchecked and says why. Hash what was *attested*, not where it was
+shown: the first cut keyed checks by row (`<question id>/<source id>`), and `vg remap`
+renumbering a claim then lost every check and flag on it, while one claim citing the same
+snippet on two pages shared one check between them. The row key is kept only to say which row
+a check was made on. And hash identity, not display: the printed query command carries the
+`--cache` path, so hashing it went stale whenever the build was invoked differently.
+
+Flags and notes stay per source, shown wherever the source is cited. They are warnings, not
+attestations: shared, one fails toward a second look, while keyed per row they vanished when a
+claim moved.
+
+Progress saved per source is migrated, not reinterpreted. Its ticks are dropped, because they
+name no claim and no excerpt, and the page says how many. The new progress lives under a new
+storage key, and the old one is only read, so an open tab of either version can't overwrite
+the other. When you change what a stored key means, decide what each old key means under the
+new rule. Otherwise the whitelist discards them silently, or a loose lookup matches them to
+every row.
+
+The tests run the page's own script under node (`tests/review_app_harness.js`) against a
+minimal DOM that supports single-class selectors only and throws on anything else, so a
+template change that needs more fails loudly: extend the harness, don't stub around it. They
+skip without node only outside CI.
+
 ## Race-specific content lives in races/
 
 Nothing about a candidate, an office, or a state belongs in `src/`, the skill, or the agent
@@ -1382,7 +1418,8 @@ suffix*. This template is `review.html.j2` — it ends in `.j2`, so the predicat
 False and autoescaping was off for the whole app while the code read as though it were on.
 Use `autoescape=True`. `report.context_html()` returns `Markup` and escapes its own
 interpolations; it is the only value in the template intended as HTML, and nothing else
-should ever be marked safe.
+should ever be marked safe. (`|tojson` also returns `Markup`, JSON- and HTML-escaped: it is
+how a value reaches the `<script>`, and only a constant from our code goes through it.)
 
 Same reasoning for `models._http_only`: it validates that a URL is http(s) *and* free of
 quotes/whitespace/control characters, because its docstring promises the value is safe to
