@@ -44,11 +44,12 @@ def money(v: float) -> str:
     """A dollar figure as a reader should see it: whole dollars from $10 up, cents below $10
     and on any fractional amount. Whole dollars everywhere printed $0.40 and $0.25 both as
     "$0", so a disagreement read as "$0 vs $0". An amount finer than a cent keeps every place
-    it has, or cents would do the same to $1.1045 and $1.1012."""
+    it has, or cents would do the same to $1.1045 and $1.1012, written out in full: a float's
+    own format prints $0.00001 as "$1e-05", which no one can find on the page."""
     if v >= 10 and v.is_integer():
         return f"${v:,.0f}"
     cents = f"{v:,.2f}"
-    return f"${cents}" if float(cents.replace(",", "")) == v else f"${v:,}"
+    return f"${cents}" if float(cents.replace(",", "")) == v else f"${Decimal(repr(v)):,f}"
 
 
 def _amounts(vals: set[float]) -> str:

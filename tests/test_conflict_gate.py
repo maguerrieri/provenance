@@ -131,6 +131,8 @@ def test_small_and_fractional_amounts_show_cents():
         "$10", "$120,000", "$1,000.50", "$8,200,000"]
     # Finer than a cent keeps its places, or cents would merge these two the same way.
     assert (money(1.1045), money(1.1012)) == ("$1.1045", "$1.1012")
+    # Written out, never in exponent form.
+    assert [money(v) for v in (1e-05, 1_234_567.891)] == ["$0.00001", "$1,234,567.891"]
 
     fare = _source(snippet="raised the ferry fare to $4.40 a ride")
     other = _source(url=WEEKLY, publisher="Harbor Weekly",
