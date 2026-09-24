@@ -521,6 +521,9 @@ What is left:
   built and had touched no shard, and the other was already retired after its re-home finished.
   Nothing reads them, and nothing clears them now, so `vg judgments` names them
   (`judgments.leftovers()`). Delete them; never restore from them.
+- A run's `.remap-applied` marker is read by nothing now. The old instructions said to commit it
+  beside the run's claims, so a tracked one can outlive the command, and `.gitignore` covers only
+  the data root's: delete it in the run's next commit.
 - Question-id validation was never remap's and stays: the id pattern (`models.QID_PATTERN`,
   checked again in `judgments.path_for()`), and `vg judgments` counting a shard the disk opens
   under a claim's id as that claim's (`judgments.opened_as()`).
