@@ -1,0 +1,32 @@
+host: web.archive.org
+name: Wayback Machine — Save Page Now (the pipeline's archive step)
+access: api
+verified: 2026-08-22
+
+naive_fetch: |
+  Anonymous GET of /save/<url> works but rate-limits and 500s aggressively. Measured on a
+  full 31-question run: 58 of ~150 URLs came back with no snapshot at all.
+
+recipes:
+  - id: save-authenticated
+    summary: Snapshot a URL with a much higher quota
+    method: POST
+    url: https://web.archive.org/save
+    headers:
+      Accept: application/json
+      Authorization: LOW $ARCHIVE_ORG_ACCESS_KEY:$ARCHIVE_ORG_SECRET_KEY
+    body: url={target}&skip_first_archive=1
+    params: [target]
+    notes: |
+      Returns {"job_id": ...}; poll /save/status/<job_id> until status=success, then build
+      https://web.archive.org/web/<timestamp>/<original_url>.
+
+      Keys come from https://archive.org/account/s3.php and require an archive.org login, so
+      a human has to create them. They are read from the environment
+      (ARCHIVE_ORG_ACCESS_KEY / ARCHIVE_ORG_SECRET_KEY) and never stored here — the
+      Authorization value above is a placeholder, not a credential.
+
+limits: |
+  Some hosts cannot be archived at all regardless of quota: cal-access.sos.ca.gov returns 500
+  from SPN because its own bot protection blocks the crawler. An unarchivable citation is a
+  fact about the source, not a pipeline failure — record it and move on.

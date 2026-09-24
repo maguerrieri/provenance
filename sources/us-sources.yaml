@@ -1,0 +1,24 @@
+# National / structural source rules. Loaded by every race.
+#
+# Operational test for "human-written": a NAMED AUTHOR or an INSTITUTIONAL
+# AUTHOR-OF-RECORD (a court, an agency, a legislative analyst). A legislative analyst's
+# report has no byline and is exactly what we want; an AI-generated aggregator page has
+# a byline and is not.
+#
+# lead_generator_only: fine for finding leads, NEVER the citation of record.
+# excluded: AI aggregators and content farms. Hard fail.
+
+bylined_journalism:
+  - apnews.com
+  - politico.com
+
+lead_generator_only:
+  - ballotpedia.org
+  - wikipedia.org
+  - en.wikipedia.org
+
+excluded:
+  - factually.co
+  - grokipedia.com
+  - ballotblog.com
+  - digitalchew.com

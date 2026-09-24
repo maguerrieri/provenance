@@ -1,0 +1,95 @@
+"""Source-class enforcement.
+
+Rules live in `sources/<name>-sources.yaml` and are selected per race, so a California
+race loads `us` + `ca`, and a future city guide could add a city list. The lists merge; a
+domain in any loaded list counts.
+"""
+
+from __future__ import annotations
+
+from functools import lru_cache
+from pathlib import Path
+from urllib.parse import urlparse
+
+import yaml
+
+from .models import Source
+
+SOURCES_DIR = Path(__file__).resolve().parents[2] / "sources"
+CATEGORIES = ("excluded", "lead_generator_only", "campaign_statement_only",
+              "primary_document", "bylined_journalism")
+
+
+def available(sources_dir: Path | None = None) -> list[str]:
+    d = sources_dir or SOURCES_DIR
+    return sorted(p.stem.removesuffix("-sources") for p in d.glob("*-sources.yaml"))
+
+
+@lru_cache(maxsize=8)
+def load_rules(names: tuple[str, ...] = ("us",), sources_dir: str | None = None) -> dict[str, tuple[str, ...]]:
+    """Merge the named source lists. Order doesn't matter — classification checks the
+    most restrictive category first, so a domain listed as excluded stays excluded even
+    if another list also names it."""
+    d = Path(sources_dir) if sources_dir else SOURCES_DIR
+    merged: dict[str, list[str]] = {c: [] for c in CATEGORIES}
+    for name in names:
+        p = d / f"{name}-sources.yaml"
+        if not p.exists():
+            raise FileNotFoundError(
+                f"no source list {name!r} in {d} (have: {', '.join(available(d)) or 'none'})")
+        data = yaml.safe_load(p.read_text()) or {}
+        for c in CATEGORIES:
+            merged[c].extend(data.get(c) or [])
+    return {c: tuple(dict.fromkeys(v)) for c, v in merged.items()}
+
+
+def default_rules() -> dict[str, tuple[str, ...]]:
+    """The source lists the active race declares, falling back to `us` alone. Races name
+    their lists (`sources: [us, ca]`) so a CA race sees CalMatters and LegInfo while a
+    future race elsewhere doesn't inherit them."""
+    from .races import load as load_race
+
+    try:
+        return load_rules(tuple(load_race().sources))
+    except (FileNotFoundError, ValueError):
+        return load_rules(("us",))
+
+
+def domain(url: str) -> str:
+    host = (urlparse(url).hostname or "").lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def _matches(host: str, entries: tuple[str, ...]) -> bool:
+    return any(host == e or host.endswith("." + e) for e in entries)
+
+
+def classify(url: str, rules: dict[str, tuple[str, ...]] | None = None) -> str:
+    """One of: bylined_journalism, primary_document, lead_generator_only,
+    excluded, campaign_statement_only, unknown."""
+    r = rules if rules is not None else default_rules()
+    host = domain(url)
+    for key in CATEGORIES:  # most restrictive first
+        if _matches(host, r.get(key, ())):
+            return key
+    return "unknown"
+
+
+def check_source_class(src: Source, rules: dict[str, tuple[str, ...]] | None = None) -> tuple[bool, str | None]:
+    """(ok, reason). Unknown domains are allowed but must carry a named or institutional
+    author — the rule is 'human-written', not 'on our list'. That keeps a good local
+    paper or an agency we haven't listed from being rejected out of hand."""
+    cls = classify(src.url, rules)
+    if cls == "excluded":
+        return False, f"{domain(src.url)} is an excluded AI aggregator / content farm"
+    if cls == "lead_generator_only":
+        return False, (f"{domain(src.url)} is a lead-generator only; cite the underlying "
+                       "primary source it references")
+    if cls == "campaign_statement_only" and src.source_type != "campaign_statement":
+        return False, ("campaign material is citable only for the claim form 'the campaign "
+                       "says X' (source_type must be campaign_statement)")
+    if not src.author or not src.author.strip():
+        return False, "no named or institutional author-of-record"
+    if src.author.strip().lower() in {"staff", "unknown", "n/a", "none", "editorial board"}:
+        return False, f"author {src.author!r} is not a named or institutional author-of-record"
+    return True, None

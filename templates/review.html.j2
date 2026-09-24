@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voter Guide Citation Review — {{ generated }}</title>
+<style>
+:root{--bg:#faf9f7;--fg:#1a1a1a;--mut:#6b6b6b;--line:#e3e0dc;--card:#fff;
+--ok:#1a7f37;--warn:#9a6700;--bad:#b42318;--info:#0b5cad;--hl:#ffe680;--acc:#5b3ea8}
+@media(prefers-color-scheme:dark){:root{--bg:#16161a;--fg:#e9e7e4;--mut:#9b9894;--line:#2e2e34;
+--card:#1e1e23;--ok:#4ac26b;--warn:#d4a72c;--bad:#f2726a;--info:#5aa9f0;--hl:#6b5a00;--acc:#b39ddb}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro Text",Segoe UI,sans-serif}
+.wrap{max-width:920px;margin:0 auto;padding:20px 16px 120px}
+h1{font-size:20px;margin:0 0 4px}
+.sub{color:var(--mut);font-size:13px;margin-bottom:14px}
+.notice{background:color-mix(in srgb,var(--acc) 12%,transparent);border-left:3px solid var(--acc);
+padding:10px 12px;border-radius:6px;font-size:13.5px;margin-bottom:16px}
+.bar{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);
+padding:10px 0;margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+button,select{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);
+border-radius:6px;padding:4px 9px;cursor:pointer}
+button:hover{border-color:var(--acc)}
+.prog{flex:1;min-width:120px;height:8px;background:var(--line);border-radius:4px;overflow:hidden}
+.prog>i{display:block;height:100%;background:var(--ok);width:0}
+.counts{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;font-size:12.5px}
+.counts span{background:var(--card);border:1px solid var(--line);border-radius:99px;padding:2px 10px}
+.claim{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px}
+.claim.done{opacity:.55}
+.q{color:var(--mut);font-size:12.5px;margin-bottom:4px}
+.ans{font-size:15.5px;margin-bottom:9px}
+.badges{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.b{font-size:11.5px;border-radius:99px;padding:1px 9px;border:1px solid currentColor}
+.b.ok{color:var(--ok)}.b.warn{color:var(--warn)}.b.bad{color:var(--bad)}.b.info{color:var(--info)}.b.mut{color:var(--mut)}
+.src{border-top:1px solid var(--line);padding-top:10px;margin-top:10px}
+.src.sel{box-shadow:-3px 0 0 var(--acc);padding-left:9px;border-radius:2px}
+.meta{font-size:12.5px;color:var(--mut);margin-bottom:6px}
+.ctx{background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:9px 11px;
+font-size:13.5px;max-height:11em;overflow:auto;white-space:pre-wrap;margin-bottom:8px}
+mark{background:var(--hl);color:inherit;padding:0 2px;border-radius:2px;font-weight:600}
+.acts{display:flex;gap:7px;flex-wrap:wrap;align-items:center;font-size:13px}
+.acts a{color:var(--info)}
+.chk{display:flex;gap:5px;align-items:center;cursor:pointer;user-select:none}
+.flagged{outline:2px solid var(--bad)}
+.note{width:100%;margin-top:6px;font:inherit;padding:5px 7px;border:1px solid var(--line);
+border-radius:6px;background:var(--bg);color:var(--fg)}
+.conf{background:color-mix(in srgb,var(--bad) 12%,transparent);border-left:3px solid var(--bad);
+padding:8px 11px;border-radius:6px;font-size:13px;margin:8px 0}
+details.section{margin-bottom:14px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+summary{cursor:pointer;font-weight:600}
+kbd{background:var(--card);border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:12px}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Citation review — {{ title }}</h1>
+<div class="sub">{{ claims|length }} claims · {{ n_sources }} sources · generated {{ generated }}</div>
+
+<div class="notice">
+<b>⌘F proves words appear on the page. It does not prove they support the claim.</b>
+Rows marked <span class="b info">query</span> are different: they were checked by re-running a
+data query, so you verify them by running the printed command rather than searching a page.
+Read the highlighted sentence <i>in context</i> against the claim above it — especially on
+<span class="b bad">adversarial</span> rows. On <span class="b ok">verified_via_archive</span>
+rows the live page is paywalled and the quote was confirmed in the snapshot — use the
+archive link, not ⌘F on the live page.
+The pipeline already checked every snippet is present <i>exactly once</i>; your job is the judgment half.
+<div style="margin-top:6px;color:var(--mut)">
+<kbd>j</kbd>/<kbd>k</kbd> move · <kbd>space</kbd> check · <kbd>f</kbd> flag · <kbd>o</kbd> open source · <kbd>a</kbd> open archive · <kbd>c</kbd> copy snippet</div>
+</div>
+
+<div class="counts">
+{% for k, v in status_counts.items() %}<span>{{ k }}: <b>{{ v }}</b></span>{% endfor %}
+</div>
+
+{% if conflict_claims %}
+<details class="section" open><summary style="color:var(--bad)">⚠ Conflicts ({{ conflict_claims|length }}) — most valuable output; resolve these first</summary>
+{% for c in conflict_claims %}<div class="conf"><b>{{ c.question_id }}</b> {{ c.question }}
+{% for x in c.conflicts %}<div>· {{ x }}</div>{% endfor %}</div>{% endfor %}
+</details>
+{% endif %}
+
+{% if not_found_claims %}
+<details class="section"><summary>No source found ({{ not_found_claims|length }}) — deliberate, not failure</summary>
+{% for c in not_found_claims %}<div style="margin:6px 0"><b>{{ c.question_id }}</b> {{ c.question }}
+<div style="color:var(--mut);font-size:13px">{{ c.answer }}</div></div>{% endfor %}
+</details>
+{% endif %}
+
+<div class="bar">
+  <select id="filter">
+    <option value="all">All claims</option>
+    <option value="unchecked">Unchecked only</option>
+    <option value="adversarial">Adversarial only</option>
+    <option value="paywall">Paywalled only</option>
+    <option value="conflict">Conflicts only</option>
+    <option value="review">Needs human review</option>
+  </select>
+  <div class="prog"><i id="pbar"></i></div>
+  <span id="pct" style="font-size:12.5px;color:var(--mut)"></span>
+  <button id="export">Export progress</button>
+  <button id="import">Import</button>
+  <input type="file" id="file" class="hidden" accept="application/json">
+</div>
+
+{% for c in claims %}
+<div class="claim" data-qid="{{ c.question_id }}" data-type="{{ c.claim_type }}"
+     data-status="{{ c.status }}" data-conflict="{{ 1 if c.conflicts else 0 }}"
+     data-paywall="{{ 1 if c.sources|selectattr('paywall')|list else 0 }}">
+  <div class="q">{{ c.question_id }} · {{ c.question }}</div>
+  <div class="ans">{{ c.answer }}</div>
+  <div class="badges">
+    <span class="b {{ 'bad' if c.claim_type=='adversarial' else 'mut' }}">{{ c.claim_type }}</span>
+    <span class="b {{ 'ok' if c.status in ('verified', 'verified_via_archive')
+                       else ('warn' if c.status in ('could_not_verify_paywall', 'pending')
+                             else ('mut' if c.status == 'not_found' else 'bad')) }}">{{ c.status }}</span>
+    <span class="b {{ 'ok' if c.corroboration_ok is true else ('mut' if c.corroboration_ok is none else 'bad') }}">{{ c.corroboration_note or 'corroboration unchecked' }}</span>
+    <span class="b mut">{{ c.confidence }}</span>
+    {% if c.conflicts %}<span class="b bad">conflict</span>{% endif %}
+  </div>
+  {% for x in c.conflicts %}<div class="conf">{{ x }}</div>{% endfor %}
+
+  {% for s in c.sources %}
+  <div class="src" data-sid="{{ s.sid }}">
+    <div class="meta">
+      <b>{{ s.publisher }}</b> · {{ s.author }}{% if s.date %} · {{ s.date }}{% endif %}
+      {% if s.page %} · p.{{ s.page }}{% endif %}
+      · <span class="b {{ s.badge_class }}">{{ s.verification.status }}</span>
+      {% if s.paywall %}<span class="b warn">paywall</span>{% endif %}
+      {% if s.secondary %}<span class="b bad">copy, not the issuing authority</span>{% endif %}
+      {% if s.archive_status == 'archive_unusable' %}<span class="b bad">snapshot unusable</span>
+      {% elif s.archive_status == 'archive_unconfirmed' %}<span class="b warn">snapshot unconfirmed</span>
+      {% elif s.archive_status == 'archive_failed' %}<span class="b warn">not archived</span>{% endif %}
+      {% if s.verification.support and s.verification.support != 'unreviewed' %}
+      <span class="b {{ 'ok' if s.verification.support=='supports' else 'bad' }}">context: {{ s.verification.support }}</span>{% endif %}
+    </div>
+    {% if s.secondary %}<div class="meta" style="color:var(--bad)">Cited from
+      {{ s.url.split('/')[2] }}, which is not the body that issues this record.
+      {{ s.secondary_host_ack or 'No explanation given.' }}
+      Check this copy against the official version.</div>{% endif %}
+    {% if s.verification.reason %}<div class="meta" style="color:var(--warn)">{{ s.verification.reason }}</div>{% endif %}
+    {% if s.archive_status and s.archive_status != 'archived' %}<div class="meta" style="color:var(--warn)">archive: {{ s.archive_note }}</div>{% endif %}
+    {% if s.verification.support_note %}<div class="meta">verifier: {{ s.verification.support_note }}</div>{% endif %}
+    {% if s.context_html %}<div class="ctx">{{ s.context_html }}</div>
+    {% else %}<div class="ctx" style="color:var(--mut)">No cached context — verify on the live page.</div>{% endif %}
+    {% if s.query_command %}
+    <div class="meta" style="color:var(--info)">Verified by re-running a query, not by ⌘F.
+      Check it yourself (sh, bash or zsh):</div>
+    <div class="ctx" style="font-family:ui-monospace,monospace;font-size:12.5px">{{ s.query_command }}</div>
+    {% if s.query_provenance %}<div class="meta qrun">Checked against {{ s.query_provenance }}.</div>{% endif %}
+    {% endif %}
+    <div class="acts">
+      {% if s.query_command %}<button class="copy" data-snippet="{{ s.query_command }}">copy command</button>{% endif %}
+      <a href="{{ s.url }}" target="_blank" rel="noopener" class="open">open ↗</a>
+      {% if s.archive_url %}<a href="{{ s.archive_url }}" target="_blank" rel="noopener" class="arch">archive ↗</a>
+      {% else %}<span style="color:var(--mut)">no archive</span>{% endif %}
+      <button class="copy" data-snippet="{{ s.snippet }}">copy ⌘F snippet</button>
+      <label class="chk"><input type="checkbox" class="cb"> verified by me</label>
+      <button class="flag">flag</button>
+    </div>
+    <input class="note hidden" placeholder="note (saved with your progress)">
+  </div>
+  {% endfor %}
+  {% if not c.sources %}<div class="meta">No sources.</div>{% endif %}
+</div>
+{% endfor %}
+</div>
+
+<script>
+const KEY = "vgpipe:{{ run_id }}";
+const SID_RE = /^[0-9a-f]{12}$/;
+
+// Progress can come from localStorage or from a file someone hands you, so coerce it into
+// a known shape rather than trusting it: a null-prototype object (a stored `__proto__` key
+// would otherwise pollute every lookup), keys whitelisted to the source-id format, and
+// values reduced to the three fields this app actually uses.
+function sanitizeState(raw){
+  const out = Object.create(null);
+  if (!raw || typeof raw !== 'object') return out;
+  for (const k of Object.keys(raw)){
+    if (!SID_RE.test(k)) continue;
+    const v = raw[k];
+    if (!v || typeof v !== 'object') continue;
+    out[k] = {
+      done: v.done === true,
+      flag: v.flag === true,
+      note: typeof v.note === 'string' ? v.note.slice(0, 4000) : "",
+    };
+  }
+  return out;
+}
+
+let state = Object.create(null);
+try { state = sanitizeState(JSON.parse(localStorage.getItem(KEY) || "{}")); }
+catch (e) { state = Object.create(null); }
+const srcs = [...document.querySelectorAll('.src')];
+let cur = 0;
+
+function save(){ try { localStorage.setItem(KEY, JSON.stringify(state)); } catch(e){} }
+function st(sid){
+  if (!Object.prototype.hasOwnProperty.call(state, sid)) state[sid] = {done:false, flag:false, note:""};
+  return state[sid];
+}
+
+function render(){
+  let done = 0;
+  for (const el of srcs){
+    const s = st(el.dataset.sid);
+    el.querySelector('.cb').checked = s.done;
+    el.classList.toggle('flagged', s.flag);
+    const n = el.querySelector('.note');
+    // Don't clobber a note being typed — rewriting .value would jump the caret to the end.
+    if (document.activeElement !== n) n.value = s.note || "";
+    n.classList.toggle('hidden', !s.flag && !s.note);
+    if (s.done) done++;
+  }
+  for (const c of document.querySelectorAll('.claim')){
+    const all = [...c.querySelectorAll('.src')];
+    c.classList.toggle('done', all.length > 0 && all.every(e => st(e.dataset.sid).done));
+  }
+  const pct = srcs.length ? Math.round(100*done/srcs.length) : 0;
+  document.getElementById('pbar').style.width = pct + '%';
+  document.getElementById('pct').textContent = done + '/' + srcs.length + ' (' + pct + '%)';
+  save();
+}
+
+document.addEventListener('change', e => {
+  if (e.target.classList.contains('cb')){
+    st(e.target.closest('.src').dataset.sid).done = e.target.checked; render();
+  }
+});
+document.addEventListener('input', e => {
+  if (e.target.classList.contains('note')){
+    st(e.target.closest('.src').dataset.sid).note = e.target.value; save();
+  }
+});
+document.addEventListener('click', e => {
+  const src = e.target.closest('.src');
+  if (src) { cur = srcs.indexOf(src); focus(false); }
+  if (e.target.classList.contains('copy')){
+    navigator.clipboard.writeText(e.target.dataset.snippet);
+    const t = e.target.textContent; e.target.textContent = 'copied ✓';
+    setTimeout(() => e.target.textContent = t, 1200);
+  }
+  if (e.target.classList.contains('flag')){
+    const s = st(src.dataset.sid); s.flag = !s.flag; render();
+    if (s.flag) src.querySelector('.note').focus();
+  }
+});
+
+function visible(){ return srcs.filter(e => e.closest('.claim').style.display !== 'none'); }
+function focus(scroll = true){
+  srcs.forEach(e => e.classList.remove('sel'));
+  const v = visible(); if (!v.length) return;
+  cur = Math.max(0, Math.min(cur, srcs.length - 1));
+  let el = srcs[cur];
+  if (!v.includes(el)) el = v[0], cur = srcs.indexOf(el);
+  el.classList.add('sel');
+  if (scroll) el.scrollIntoView({block:'center', behavior:'smooth'});
+}
+document.addEventListener('keydown', e => {
+  if (/input|textarea|select/i.test(e.target.tagName)) return;
+  const v = visible(); if (!v.length) return;
+  const i = v.indexOf(srcs[cur]);
+  const go = n => { cur = srcs.indexOf(v[Math.max(0, Math.min(n, v.length-1))]); focus(); };
+  if (e.key === 'j') { e.preventDefault(); go(i < 0 ? 0 : i+1); }
+  else if (e.key === 'k') { e.preventDefault(); go(i < 0 ? 0 : i-1); }
+  else if (e.key === ' ') { e.preventDefault(); const s = st(srcs[cur].dataset.sid); s.done = !s.done; render(); }
+  else if (e.key === 'f') { const s = st(srcs[cur].dataset.sid); s.flag = !s.flag; render(); }
+  else if (e.key === 'o') { srcs[cur].querySelector('.open')?.click(); }
+  else if (e.key === 'a') { srcs[cur].querySelector('.arch')?.click(); }
+  else if (e.key === 'c') { srcs[cur].querySelector('.copy')?.click(); }
+});
+
+document.getElementById('filter').addEventListener('change', e => {
+  const f = e.target.value;
+  for (const c of document.querySelectorAll('.claim')){
+    const all = [...c.querySelectorAll('.src')];
+    let show = true;
+    if (f === 'unchecked') show = all.length === 0 || all.some(x => !st(x.dataset.sid).done);
+    else if (f === 'adversarial') show = c.dataset.type === 'adversarial';
+    else if (f === 'paywall') show = c.dataset.paywall === '1';
+    else if (f === 'conflict') show = c.dataset.conflict === '1';
+    else if (f === 'review') show = ['human_review','pending'].includes(c.dataset.status);   // not_found is deliberate, and has its own section
+    c.style.display = show ? '' : 'none';
+  }
+  focus(false);
+});
+
+document.getElementById('export').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(state, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = 'review-progress.json'; a.click();
+});
+document.getElementById('import').addEventListener('click', () => document.getElementById('file').click());
+document.getElementById('file').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  e.target.value = '';                 // so re-importing the same file fires again
+  if (!f) return;
+  try { state = sanitizeState(JSON.parse(await f.text())); render(); }
+  catch (err) { alert('Bad progress file'); }
+});
+
+render(); focus(false);
+</script>
+</body>
+</html>
