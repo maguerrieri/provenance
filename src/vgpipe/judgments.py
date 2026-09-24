@@ -28,7 +28,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import NamedTuple, get_type_hints
 
-from .models import QID_PATTERN
+from .models import QID_PATTERN, is_question_id
 
 VERDICTS = ("supports", "topic_only", "contradicts", "superseded")
 
@@ -162,11 +162,10 @@ def path_for(root: Path, question_id: str) -> Path:
     Bash) put it. `../claims/q7` made record() create and replace a file outside judgments/,
     and an absolute path discards `root` entirely. So the check lives here, where the path is
     built, and every read or write by question id passes through it. The schema's own shape
-    is enough: no separator and no leading dot means the result is always a direct child of
-    judgments/. It bounds the id, not `root`: choosing the run directory is what `--data` is for.
-    `fullmatch`, because `$` in a `match` also accepts a trailing newline.
+    is enough (models.is_question_id): the result is always a direct child of judgments/. It
+    bounds the id, not `root`: choosing the run directory is what `--data` is for.
     """
-    if not re.fullmatch(QID_PATTERN, question_id):
+    if not is_question_id(question_id):
         raise ValueError(f"refusing question id {question_id!r}: a verdict file is named after "
                          f"it, so it must have the shape every claim's question_id has "
                          f"({QID_PATTERN}) — no path separators, no leading dot.")

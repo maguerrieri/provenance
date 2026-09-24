@@ -262,6 +262,14 @@ class Source(BaseModel):
 QID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
 
 
+def is_question_id(v: object) -> bool:
+    """Whether a value has the shape every claim's question_id has, for a value that never
+    passes through the schema. No separator and no leading dot, so `<dir>/<id>.json` is always
+    a direct child of `<dir>`. `fullmatch`, because `$` in a `match` also accepts a trailing
+    newline."""
+    return isinstance(v, str) and re.fullmatch(QID_PATTERN, v) is not None
+
+
 class Claim(BaseModel):
     question_id: str = Field(pattern=QID_PATTERN)
     question: str

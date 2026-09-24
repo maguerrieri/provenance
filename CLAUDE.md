@@ -671,9 +671,11 @@ still read as a whole migration: every claim file no pair moves is listed as str
 archives it, so declare an identity pair for each question that keeps its claim. An identity pair
 keeps the `previous_question` an earlier migration recorded unless the wording actually changed.
 
-Malformed input is refused up front: a `maps_from` or `mapped_from` that isn't one id, two
-questions sharing an id, or one old id mapped into two questions (a split). Each of these used to
-crash or half-apply. For a split, keep `maps_from` on the question that inherits the research.
+Malformed input is refused up front, in every mode: a question whose `id`, `maps_from` or
+`mapped_from` isn't one id of the question-id shape (see "A schema constraint guards only what
+passes through the schema"), two questions sharing an id, or one old id mapped into two questions
+(a split). Each of these used to crash, half-apply, or reach a file outside `claims/`. For a
+split, keep `maps_from` on the question that inherits the research.
 
 **Commit the retired `questions.json` and the marker in the same commit as the claims they
 describe**, wherever those claims are tracked (`data/<candidate>/claims/`). Claims without their
@@ -1248,6 +1250,17 @@ function that joins it, and check there.
 
 What this bounds is a verdict to `<run>/judgments/`, not the run itself: `--data` is also on
 the agent's command line, but naming the run directory is that flag's whole job.
+
+`vg remap` had the same gap one file over. It reads `questions.json` raw, never through the
+`Question` schema, and joins each question's `id`, `maps_from` and `mapped_from` onto `claims/`.
+So `../victim` as a `maps_from` made an apply unlink a file beside `claims/`, the same value as
+an `id` made it write the moved claim there, and an absolute path reached anywhere. There the
+rule turns around. remap has one door (the file) and many joins, spread through a multi-step
+apply. A check at each join would trip after the backup or the archive had run, which is a
+half-apply, and would let the dry run pass what the apply refuses. So `_unreadable_ids()` checks
+every id at the door, before any file at one is read or touched, in every mode. Put the check
+where every value passes: at the join when one join has many doors, at the door when one door
+feeds many joins. Either way it is one test, `models.is_question_id()`, which both call.
 
 ## Known and accepted: the pipeline fetches whatever a claim cites
 

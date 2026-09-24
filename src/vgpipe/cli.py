@@ -22,7 +22,13 @@ from rich.text import Text
 from . import archive as arch
 from .fetch import fetch as fetch_url
 from .fetch import kept_copy_note, no_text_layer, pages_without_text
-from .models import Claim, check_archive_url, strip_machine_fields
+from .models import (
+    QID_PATTERN,
+    Claim,
+    check_archive_url,
+    is_question_id,
+    strip_machine_fields,
+)
 from .races import available as available_races
 from .races import load as load_race
 from .report import render
@@ -1466,6 +1472,33 @@ def check_claim(path: Path, data: Path = DATA, cache: Path = None, race: str = "
     con.print("[green]All sources check out.[/]")
 
 
+def _unreadable_ids(questions: list) -> list[str]:
+    """One line per entry of questions.json whose ids remap can't use, naming the entry
+    (counting from 0) and each bad value; empty when every entry's ids are question ids.
+
+    Every id in the file becomes a path: remap reads, moves, unlinks and writes
+    claims/<id>.json for a question's own id and for the ids it maps or mapped from. The file
+    is edited by agents and by hand, and remap reads it raw, never through the Question schema,
+    so the ids are untrusted: `../x` as a maps_from named a file beside claims/ for an apply to
+    unlink, as an id the place it wrote the moved claim, and an absolute path discarded claims/
+    entirely. The schema's own shape is the check (models.is_question_id), as in
+    judgments.path_for(). A falsy maps_from or mapped_from reads as absent, as it always has;
+    anything else must be one id, since a list or object there crashed the checks after it.
+    """
+    out = []
+    for i, q in enumerate(questions):
+        if not isinstance(q, dict):
+            out.append(f"entry {i} is {type(q).__name__}, not a question")
+            continue
+        ok = is_question_id(q.get("id"))
+        bad = [] if ok else [f"id {q['id']!r}" if "id" in q else "no id"]
+        bad += [f"{k} {q[k]!r}" for k in ("maps_from", "mapped_from")
+                if q.get(k) and not is_question_id(q[k])]
+        if bad:
+            out.append(f"entry {i}" + (f" (id {q['id']})" if ok else "") + f": {' and '.join(bad)}")
+    return out
+
+
 def _retired_from(q: dict) -> str | None:
     """The id a question's claim last moved from, as a retired migration recorded it — or None,
     including for a hand-edited value that is not an id."""
@@ -1583,23 +1616,31 @@ def remap(data: Path = DATA, apply: bool = False, archive_stranded: bool = False
 
     # An apply moves claims, marker and verdicts as one transaction. If one was interrupted, its
     # backup is still here and all three may be mid-move, so neither the marker's record of what
-    # ran nor the moves proposed below can be trusted until `vg judgments --rollback`.
+    # ran nor the moves proposed below can be trusted until `vg judgments --rollback`. Checked
+    # before questions.json is: the rollback puts that file back too, discarding a fix made first.
     from . import judgments as _j
 
     with _judgments_or_exit():
         _j.refuse_if_interrupted(data)
     claims_dir = data / "claims"
 
-    # maps_from and mapped_from each name one question id, and a question id names one question.
-    # Anything else is a hand edit remap can't read — a list or object where an id belongs, or
-    # two questions sharing an id, which passed the dry run and then crashed the apply after the
-    # backup and the archive had run — and every check below would trip over it.
-    malformed = [str(q.get("id")) for q in questions
-                 if any(q.get(k) and not isinstance(q[k], str) for k in ("maps_from", "mapped_from"))]
-    if malformed:
-        con.print(f"[red]refusing to remap:[/] maps_from and mapped_from must each be one "
-                  f"question id, and are not on {escape(', '.join(malformed))} in {qpath}.")
+    # Every id below becomes a claim-file path, so each is checked before any file at one is
+    # read or touched, in every mode: `../x` or an absolute path named a file outside claims/
+    # for an apply to unlink or write (_unreadable_ids). A question id and a maps_from or
+    # mapped_from each name one question, and the checks below all read them as such.
+    if not isinstance(questions, list):
+        con.print(f"[red]refusing to remap:[/] {qpath} must be a list of questions, and holds "
+                  f"a {type(questions).__name__}. Nothing was touched.")
         raise typer.Exit(1)
+    if unreadable := _unreadable_ids(questions):
+        con.print(f"[red]refusing to remap:[/] {qpath} names claim files by question id "
+                  f"(claims/<id>.json), so a question's id, maps_from and mapped_from must each "
+                  f"be one question id ({escape(QID_PATTERN)}: no path separators, no leading "
+                  f"dot). Not so for {escape('; '.join(unreadable))}. Nothing was touched.")
+        raise typer.Exit(1)
+
+    # Two questions sharing an id passed the dry run and then crashed the apply after the backup
+    # and the archive had run.
     ids = [q["id"] for q in questions]
     doubled = sorted({i for i in ids if ids.count(i) > 1}, key=str)
     if doubled:
