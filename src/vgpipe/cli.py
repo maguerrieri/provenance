@@ -1303,7 +1303,8 @@ def source_access(host: str = typer.Argument(""), run_recipe: str = "",
         try:
             resp = access.run(recipe, params)
         except Exception as e:  # noqa: BLE001
-            con.print(f"[red]{type(e).__name__}: {e}[/]")
+            # Escaped: a refusal names parameters like `auth[token]`.
+            con.print(f"[red]{escape(f'{type(e).__name__}: {e}')}[/]")
             raise typer.Exit(1) from None
         con.print(f"\n[bold]HTTP {resp.status_code}[/] {len(resp.text)} chars")
         con.print(resp.text[:1500])
@@ -1340,10 +1341,11 @@ def source_import_curl(path: Path, name: str = "", write: bool = True):
 
     Cookies, auth and session headers in the paste are your live session. They are dropped
     here and never written to disk, and so is any header not known to be safe (each is
-    named, to add back by hand if it is not a credential). `--user`, a login in the URL, or
-    a curl option the importer doesn't know refuses the import. If the endpoint only works
-    with a credential, it is a manual retrieval, not a pipeline capability: record it as
-    `access: manual`.
+    named, to add back by hand if it is not a credential). `--user`, a login in the URL, a
+    URL parameter or body field named like a credential (`api_key`, `csrf_token`), a body
+    that is neither JSON nor form-encoded, or a curl option the importer doesn't know refuses
+    the import. If the endpoint only works with a credential, it is a manual retrieval, not a
+    pipeline capability: record it as `access: manual`.
     """
     from . import access
 
