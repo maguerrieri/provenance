@@ -12,11 +12,13 @@ the one a researcher is handing on.
 from __future__ import annotations
 
 import json
+import re
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .models import Claim
+from .models import QID_PATTERN, Claim
+from .normalize import normalize
 
 FILE = "questions.json"
 
@@ -40,12 +42,13 @@ class Findings:
     # (id, the question the claim answers, the question the set asks at that id)
     reworded: list[tuple[str, str, str]] = field(default_factory=list)
     pending: list[tuple[str, str]] = field(default_factory=list)   # (id, maps_from) still declared
+    case_of: dict[str, str] = field(default_factory=dict)   # unlisted id -> listed id, but for case
 
     @property
-    def failed(self) -> bool:
-        """A pending `maps_from` alone does not fail: nothing applies it, so no claim moves, and
-        each claim is still checked against the question at the id it sits on."""
-        return bool(self.unlisted or self.reworded)
+    def failing(self) -> set[str]:
+        """The claims that break the rule. A pending `maps_from` alone fails nothing: nothing
+        applies it, so no claim moves, and each is still checked where it sits."""
+        return set(self.unlisted) | {qid for qid, _, _ in self.reworded}
 
 
 def find(data: Path) -> Path | None:
@@ -65,7 +68,10 @@ def find(data: Path) -> Path | None:
 
 def load(path: Path) -> QuestionSet:
     """Read a question set, refusing anything it can't read as one question per id. Every
-    problem is named in one message, so a repair is not a loop of re-runs."""
+    problem is named in one message, so a repair is not a loop of re-runs.
+
+    Only what the gate reads is checked: each entry's id and text, and ids that can't name a
+    claim. A claim_type or rationale it doesn't read is not its to refuse."""
     try:
         raw = json.loads(path.read_text())
     except (OSError, ValueError, RecursionError) as e:
@@ -83,6 +89,11 @@ def load(path: Path) -> QuestionSet:
         qid, asked = q.get("id"), q.get("text")
         if not isinstance(qid, str) or not qid:
             problems.append(f"entry {i} has no id")
+            continue
+        if not re.fullmatch(QID_PATTERN, qid):
+            # No claim can carry it, so every claim meant for it would read as sitting on an
+            # unlisted id, and nothing would name this entry as the cause.
+            problems.append(f"entry {i} has id {qid!r}, which no claim can carry")
             continue
         if not isinstance(asked, str):
             problems.append(f"entry {i} ({qid}) has no text")
@@ -106,26 +117,32 @@ def load(path: Path) -> QuestionSet:
     return QuestionSet(text, maps_from)
 
 
-def _words(s: str) -> list[str]:
-    return unicodedata.normalize("NFC", s).split()
+def same_question(a: str, b: str) -> bool:
+    """Whether two texts are one question: equal once the pipeline's `normalize()` has folded
+    what copy-paste drifts on (whitespace, curly quotes and dashes, Unicode composition, case).
+    Those differences print almost or wholly alike, and a failure nobody can see is one nobody
+    can fix. Any other difference is a rewording, or a misquote the claim's `question` should
+    correct: the gate can't tell which, so both fail.
 
+    Composed first: `normalize()` folds one character at a time, so it never joins an "e" and
+    a combining accent into the "é" they print as."""
+    def folded(s: str) -> str:
+        return normalize(unicodedata.normalize("NFC", s))[0]
 
-def _same(a: str, b: str) -> bool:
-    """The same question, whitespace and Unicode composition aside: an "é" typed as one code
-    point or as "e" plus an accent prints identically, and a failure nobody can see is one
-    nobody can fix. Any other difference is a rewording, or a misquote the claim's `question`
-    should correct: the gate can't tell which, so both fail."""
-    return _words(a) == _words(b)
+    return folded(a) == folded(b)
 
 
 def check(claims: list[Claim], questions: QuestionSet) -> Findings:
     """What in `claims` breaks the stable-id rule against `questions`. Reports only: nothing
     here moves or re-files anything."""
     found = Findings(pending=list(questions.maps_from.items()))
+    by_fold = {qid.casefold(): qid for qid in questions.text}
     for c in claims:
         asked = questions.text.get(c.question_id)
         if asked is None:
             found.unlisted.append(c.question_id)
-        elif not _same(c.question, asked):
+            if (listed := by_fold.get(c.question_id.casefold())) is not None:
+                found.case_of[c.question_id] = listed
+        elif not same_question(c.question, asked):
             found.reworded.append((c.question_id, c.question, asked))
     return found

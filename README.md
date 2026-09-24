@@ -68,8 +68,8 @@ verdict files, so a split or reworded question gets a new id and the old id is r
 retire one, move its claim out of `claims/` (to `claims-archive/`) and its verdict shard out of
 `judgments/`, and point any `derives_from` that names it at the new id. Nothing re-files a claim
 onto another id: `vg remap`, which used to, is retired. `vg build` and `vg status` are the rule's
-gate: each exits 1 on a claim whose id `questions.json` no longer lists, or whose question differs
-from the one its id names, and build renders nothing until they are fixed.
+gate: a claim whose id `questions.json` no longer lists, or whose question differs from the one
+its id names, is left out of the review app, and the command exits 1.
 
 ## Checks
 
@@ -84,7 +84,7 @@ from the one its id names, and build renders nothing until they are fixed.
 | Paywall | `could_not_verify_paywall` — flagged, never failed; `vg archive` then re-checks the snippet against the snapshot and upgrades to `verified_via_archive` when it's readable |
 | Snapshot holds the cited page | a capture of another URL, a bot check, or one missing the snippet is `archive_unusable` (badged, no link); one that won't load, has nothing to compare against, or misses the snippet but has scanned or blank pages it could be on is `archive_unconfirmed` — warnings, never failures |
 | Corroboration: 1 mechanical, 2 independent publishers adversarial | `human_review` |
-| Claim answers the question its id names in `questions.json` | `vg build` and `vg status` exit 1, and build renders nothing; `vg check-claim` fails the one claim |
+| Claim answers the question its id names in `questions.json` | left out of the review app, and `vg build` and `vg status` exit 1; `vg check-claim` fails the one claim |
 
 `uv run pytest` covers all of them offline, including the four failure modes that matter:
 fabricated quote, repeated snippet, smart-quote drift, excluded aggregator.

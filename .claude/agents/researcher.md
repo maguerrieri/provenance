@@ -270,8 +270,8 @@ Pick the span a person would highlight to prove the point, then check it.
 Write `data/claims/<question_id>.json`. Keep the `question_id` exactly as you were given
 it — it must match `[A-Za-z0-9][A-Za-z0-9._-]{0,63}` (it becomes a filename, and the
 schema rejects anything else). Copy `question` exactly too: `vg check-claim` fails any
-difference but whitespace from the question set, and so does `vg build`, for the whole run.
-Never edit `questions.json` to match your claim:
+difference from the run's question set but whitespace, quote and dash style, and case, and
+`vg build` leaves such a claim out of review. Never edit `questions.json` to match your claim:
 
 ```json
 {

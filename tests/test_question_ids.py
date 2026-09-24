@@ -1,7 +1,7 @@
 """Question ids are stable and never reused, and `vg build` and `vg status` are the rule's gate:
 each claim is checked against the question the run's questions.json holds for its id. A claim
-on an id the set no longer lists, or answering another question than its id names, fails
-both commands, and build renders nothing. A `maps_from` nothing will ever apply is reported.
+on an id the set no longer lists, or answering another question than its id names, is left out
+of the review app and fails both commands. A `maps_from` nothing will ever apply is reported.
 `vg check-claim` runs the same check on the one claim a researcher is handing on."""
 
 from __future__ import annotations
@@ -49,34 +49,45 @@ def _rendered(run) -> bool:
     return (run / "out" / "review.html").exists()
 
 
+def _built(run) -> dict[str, dict]:
+    """The claims the review app was rendered with, by id."""
+    return {c["question_id"]: c for c in json.loads((run / "out" / "claims.json").read_text())}
+
+
 def test_a_run_whose_claims_answer_their_ids_questions_builds(tmp_path):
     run = _run(tmp_path / "data", [{"id": "q1", "text": VOTE}, {"id": "q2", "text": FUNDS}],
                [("q1", VOTE), ("q2", FUNDS)])
     code, out = _vg("build", "--data", run)
     assert code == 0, out
-    assert _rendered(run)
-    assert "questions.json" not in out, out
+    assert set(_built(run)) == {"q1", "q2"}
+    assert "questions.json" not in out and "left out" not in out, out
     code, out = _vg("status", "--data", run)
     assert code == 0, out
 
 
-def test_a_claim_on_an_id_the_question_set_does_not_list_fails(tmp_path):
+def test_a_claim_on_an_id_the_question_set_does_not_list_is_left_out_and_fails(tmp_path):
     """A retired id's claim left in claims/ rendered beside its replacement, answering a
-    question the run no longer asks, and every command exited 0."""
+    question the run no longer asks, and every command exited 0. It is left out now, and the
+    command fails; the rest still render, since one mis-filed claim must not cost the run
+    every other one."""
     run = _run(tmp_path / "data", [{"id": "q1", "text": VOTE}, {"id": "q3", "text": FUNDS}],
                [("q1", VOTE), ("q2", FUNDS), ("q3", FUNDS)])
     code, out = _vg("build", "--data", run)
     assert code == 1, out
     assert f"1 claim(s) sit on an id {run / 'questions.json'} does not list: q2." in out, out
     assert "claims-archive/" in out and "derives_from" in out, out
-    assert "review app not rendered" in out and not _rendered(run), out
+    assert out.endswith("1 claim(s) left out of the review app until they answer the question "
+                        "their id names (above): q2"), out
+    assert set(_built(run)) == {"q1", "q3"}
 
     code, out = _vg("status", "--data", run)
     assert code == 1, out
-    assert "does not list: q2." in out, out
+    assert "does not list: q2." in out and "left out of this summary" in out, out
+    table = out.split("does not list")[1]
+    assert " q1 " in table and " q2 " not in table.split("left out")[0], out
 
 
-def test_a_claim_answering_another_question_than_its_id_names_fails(tmp_path):
+def test_a_claim_answering_another_question_than_its_id_names_is_left_out_and_fails(tmp_path):
     """A question reworded or replaced at its id: the claim researched for the old one sits
     under the new one, and the shard's verdicts with it."""
     run = _run(tmp_path / "data", [{"id": "q1", "text": VOTE}, {"id": "q2", "text": FUNDS}],
@@ -87,10 +98,31 @@ def test_a_claim_answering_another_question_than_its_id_names_fails(tmp_path):
     assert ("q2: the claim answers 'Which committees spent against the member?' "
             f"questions.json asks \"{FUNDS}\"") in out, out
     assert "give the new question a new id" in out, out
-    assert not _rendered(run)
+    assert set(_built(run)) == {"q1"}
 
     code, out = _vg("status", "--data", run)
     assert code == 1 and "answer another question than" in out, out
+
+
+def test_a_claim_deriving_from_one_left_out_reads_its_input_as_missing(tmp_path):
+    run = _run(tmp_path / "data", [{"id": "q1", "text": VOTE}, {"id": "q3", "text": FUNDS}],
+               [("q2", VOTE)])
+    (run / "claims" / "q3.json").write_text(Claim(
+        question_id="q3", question=FUNDS, answer="a", confidence="not_found",
+        derives_from=["q2"]).model_dump_json())
+    code, out = _vg("build", "--data", run)
+    assert code == 1, out
+    built = _built(run)
+    assert "q2" not in built
+    assert built["q3"]["unmet_inputs"] and built["q3"]["status"] == "human_review", built
+
+
+def test_an_id_differing_only_in_case_is_named(tmp_path):
+    """The fix there is the claim's id, not archiving its research as a retired id's."""
+    run = _run(tmp_path / "data", [{"id": "q3", "text": VOTE}], [("Q3", VOTE)])
+    code, out = _vg("build", "--data", run)
+    assert code == 1, out
+    assert "does not list: Q3 (the set has q3, which differs only in case)." in out, out
 
 
 def test_whitespace_alone_is_not_another_question(tmp_path):
@@ -100,11 +132,21 @@ def test_whitespace_alone_is_not_another_question(tmp_path):
     assert code == 0 and _rendered(run), out
 
 
+def test_typographic_drift_is_not_another_question(tmp_path):
+    """Curly quotes and dashes, and case, are what copy-paste drifts on, and they print almost
+    alike: the pipeline's own `normalize()` folds them, as it does for a snippet."""
+    run = _run(tmp_path / "data",
+               [{"id": "q1", "text": "What is the member’s record — on the levy?"}],
+               [("q1", "what is the member's record -- on the levy?")])
+    code, out = _vg("build", "--data", run)
+    assert code == 0 and _rendered(run), out
+
+
 def test_unicode_composition_alone_is_not_another_question(tmp_path):
     """"é" as one code point and as "e" plus a combining accent print identically, so a
     failure on it would be one nobody could see to fix."""
-    run = _run(tmp_path / "data", [{"id": "q1", "text": "How did René Sample vote?"}],
-               [("q1", "How did René Sample vote?")])
+    run = _run(tmp_path / "data", [{"id": "q1", "text": "How did Ren\u00e9 Sample vote?"}],
+               [("q1", "How did Rene\u0301 Sample vote?")])
     code, out = _vg("build", "--data", run)
     assert code == 0 and _rendered(run), out
 
@@ -197,20 +239,24 @@ def test_no_question_set_is_said_and_does_not_fail(tmp_path):
     pytest.param('{"q1": "?"}', "is not a list of questions", id="not-a-list"),
     pytest.param(json.dumps([{"id": "q1", "text": VOTE}, "q2", {"text": FUNDS},
                              {"id": "q4"}, {"id": "q1", "text": FUNDS},
-                             {"id": "Q1", "text": "Who endorsed them?"}]),
+                             {"id": "Q1", "text": "Who endorsed them?"},
+                             {"id": " q6", "text": "Who endorsed them?"}]),
                  "entry 1 is not an object; entry 2 has no id; entry 3 (q4) has no text; "
-                 "entry 4 reuses id q1; entry 5 reuses id q1 as Q1", id="bad-entries"),
+                 "entry 4 reuses id q1; entry 5 reuses id q1 as Q1; "
+                 "entry 6 has id ' q6', which no claim can carry", id="bad-entries"),
 ])
 def test_an_unreadable_question_set_fails_rather_than_reading_as_empty(tmp_path, text, expect):
     """Read as empty, every claim would sit on an unlisted id; read as missing, nothing would
     be checked. Either way the operator is told the wrong thing, so it fails, naming every
-    problem at once. A reused id is one: a claim on it answers one of two questions. So are ids
-    differing only in case, which share one claim file and one shard on macOS's default disk."""
+    problem at once, and renders nothing, since no claim could be checked. A reused id is one:
+    a claim on it answers one of two questions. So are ids differing only in case, which share
+    one claim file and one shard on macOS's default disk, and an id no claim can carry, whose
+    claims would otherwise read as unlisted with nothing naming the entry."""
     run = _run(tmp_path / "data", text, [("q1", VOTE)])
     code, out = _vg("build", "--data", run)
     assert code == 1, out
     assert expect in out and str(run / "questions.json") in out, out
-    assert not _rendered(run)
+    assert "review app not rendered" in out and not _rendered(run), out
     code, out = _vg("status", "--data", run)
     assert code == 1 and expect in out, out
 
@@ -281,6 +327,20 @@ def test_check_claim_fails_a_question_build_would_refuse(tmp_path):
     assert code == 1, out
     assert f"question id q9 is not in {root / 'questions.json'}" in out, out
     assert "do not edit it" in out, out
+
+
+def test_check_claim_finds_the_run_from_inside_claims(tmp_path, monkeypatch):
+    """`vg check-claim q1.json` from inside claims/ gave a parent name of "", fell back to
+    --data, found no question set there, and passed without checking the question."""
+    root = tmp_path / "data"
+    root.mkdir()
+    (root / "questions.json").write_text(json.dumps([{"id": "q1", "text": VOTE}]))
+    _cited(root, root, "q1", VOTE.rstrip("?"))
+    monkeypatch.chdir(root / "claims")
+    # The default --data, as a researcher runs it: from here it names claims/data, which has
+    # no question set. --cache only points at the cached page.
+    code, out = _vg("check-claim", "q1.json", "--cache", root)
+    assert code == 1 and "question is not the one" in out, out
 
 
 def test_check_claim_reads_the_question_set_of_the_run_the_claim_is_in(tmp_path):
