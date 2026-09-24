@@ -84,7 +84,7 @@ from the one its id names, and build renders nothing until they are fixed.
 | Paywall | `could_not_verify_paywall` — flagged, never failed; `vg archive` then re-checks the snippet against the snapshot and upgrades to `verified_via_archive` when it's readable |
 | Snapshot holds the cited page | a capture of another URL, a bot check, or one missing the snippet is `archive_unusable` (badged, no link); one that won't load, has nothing to compare against, or misses the snippet but has scanned or blank pages it could be on is `archive_unconfirmed` — warnings, never failures |
 | Corroboration: 1 mechanical, 2 independent publishers adversarial | `human_review` |
-| Claim answers the question its id names in `questions.json` | `vg build` and `vg status` exit 1, and build renders nothing |
+| Claim answers the question its id names in `questions.json` | `vg build` and `vg status` exit 1, and build renders nothing; `vg check-claim` fails the one claim |
 
 `uv run pytest` covers all of them offline, including the four failure modes that matter:
 fabricated quote, repeated snippet, smart-quote drift, excluded aggregator.

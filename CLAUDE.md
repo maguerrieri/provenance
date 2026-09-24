@@ -491,21 +491,30 @@ Nothing in the pipeline moves a claim between ids. A dependent still naming a re
 `questions.json` holds for its id, and exits 1 on either break:
 - a claim on an id the set does not list: a retired id whose claim was left in `claims/`, which
   would otherwise render beside its replacement;
-- a claim whose `question` differs from the text at its id, whitespace aside: a reworded or
-  reused id, or a claim that misquotes its question. On disk the two look alike, so both fail,
-  and the message gives the fix for each.
+- a claim whose `question` differs from the text at its id, whitespace and Unicode composition
+  aside: a reworded or reused id, or a claim that misquotes its question. On disk the two look
+  alike, so both fail, and the message gives the fix for each.
 
 Build renders nothing until both are fixed. Before the gate, `vg build` never read
 `questions.json`, and every command exited 0 on both. A `maps_from` still declared in the set is
 reported without failing: nothing applies it now, so no claim moves, and each is checked against
-the question at the id it sits on. Settle it and delete the key.
+the question at the id it sits on. Settle it and delete the key. An identity pair moved nothing,
+so it is not reported.
+
+`vg check-claim` runs the same comparison on the one claim a researcher is handing on, so a
+misquoted question fails there rather than stopping the whole run's review app at build. It
+checks against the set of the run the claim sits in, the directory holding its `claims/`, not
+`--data`: a researcher on a candidate run checks with the default `--data data`, whose set is
+the root template, not the copy retargeted to the candidate.
 
 Which `questions.json` is the run's is #8. Until a run declares it, the gate reads the run's own
 (`data/<candidate>/questions.json`, which `vg new-candidate` writes), else the data root's. A set
 that can't be read as one question per id fails and names every problem: not a list, an entry
-with no id or text, or one id given twice. Read as empty, it would report every claim as retired.
-Read as missing, it would check nothing. With no set at all, the gate says so and checks
-nothing.
+with no id or text, or one id given twice. Ids differing only in case are one id, since they are
+one claim file and one shard on macOS's default disk. Read as empty, the set would report every
+claim as retired. Read as missing, it would check nothing, and so would falling back to the
+root's when the run's own can't be read (a dangling symlink included). With no set at all, the
+gate says so and checks nothing.
 
 What the gate can't see is a reused id once the new question's research has replaced the old
 claim. The claim then matches the set, and the shard's old verdicts apply to it wherever it cites

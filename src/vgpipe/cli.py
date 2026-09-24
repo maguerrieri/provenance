@@ -660,16 +660,24 @@ def _question_ids_fail(data: Path, claims: list[Claim]) -> bool:
     where = escape(str(path))
     if found.pending:
         pairs = ", ".join(f"{q} from {old}" for q, old in found.pending)
-        con.print(f"[yellow]{where} still declares maps_from ({escape(pairs)}): a migration the "
-                  f"retired `vg remap` never applied, and nothing applies it now. No claim moves, "
-                  f"so each is checked against the question at the id it sits on. Delete the key "
-                  f"once that is settled.[/]")
+        # Not "never applied": an older remap applied some without retiring them, and the file
+        # can't say which.
+        con.print(f"[yellow]{where} still declares maps_from ({escape(pairs)}), a migration for "
+                  f"the retired `vg remap`. Nothing applies it now, and no claim moves, so each is "
+                  f"checked against the question at the id it sits on. Delete the key once that "
+                  f"is settled.[/]")
     if found.unlisted:
+        # Named, so the advice below is read against the migration that meant to move it: the
+        # research is kept in claims-archive/ either way, but the question it answered is the
+        # mapped one's.
+        mapped = {old: q for q, old in found.pending}
+        ids = ", ".join(f"{q} (maps_from of {mapped[q]})" if q in mapped else q
+                        for q in found.unlisted)
         con.print(f"[red]{len(found.unlisted)} claim(s) sit on an id {where} does not list: "
-                  f"{escape(', '.join(found.unlisted))}. If the id was retired, move its claim "
-                  f"from claims/ to claims-archive/ and its shard out of judgments/, and point any "
-                  f"derives_from naming it at the new id. If the question is still asked, put it "
-                  f"back under that id.[/]")
+                  f"{escape(ids)}. If the id was retired, move its claim from claims/ to "
+                  f"claims-archive/ and its shard out of judgments/, and point any derives_from "
+                  f"naming it at the new id. If the question is still asked, put it back under "
+                  f"that id.[/]")
     if found.reworded:
         con.print(f"[red]{len(found.reworded)} claim(s) answer another question than {where} asks "
                   f"at their id. Ids are never reused or reworded: give the new question a new "
@@ -702,12 +710,13 @@ def build(data: Path = DATA, cache: Path = None, race: str = "", candidate: str 
     # Trusted, then immediately re-checked: _settle() discards any status that cannot be
     # reproduced from the cached page, and replaces every support verdict with the recorded
     # one (or `unreviewed`).
-    claims = detect(_load_or_exit(data / "claims", trust_machine_fields=True))
+    claims = _load_or_exit(data / "claims", trust_machine_fields=True)
     if _question_ids_fail(data, claims):
         # Before anything is written: rendered, such a claim reads as an answer to a question
         # the run does not ask, or to one it was never researched for.
         con.print("[red]review app not rendered: fix the claims above first.[/]")
         raise typer.Exit(1)
+    detect(claims)
     records = _archive_records(data)
     _warn_unrecorded_snapshots(data / "claims", records)
     stale_verdicts, recorded = _settle(claims, data, cache_root, rules, records)
@@ -1370,6 +1379,8 @@ def check_claim(path: Path, data: Path = DATA, cache: Path = None, race: str = "
     written twice in testing — so this makes the check mechanical instead of a request.
     Every failure here is one the verifier would have raised anyway, minus a round trip.
     """
+    from . import questions
+
     r = load_race(race or None)
     rules = load_rules(tuple(r.sources))
     cache_root = _cache_root(data, cache)
@@ -1380,12 +1391,40 @@ def check_claim(path: Path, data: Path = DATA, cache: Path = None, race: str = "
         raise typer.Exit(1) from None
 
     ok = True
+    # The question set `vg build` will check this claim against: its run's, where the run is
+    # the directory holding the claim's claims/. Not --data alone: a candidate run's claim is
+    # checked with the default --data, whose set is the root template, not the retargeted copy.
+    run = path.parent.parent if path.parent.name == "claims" else data
+    asked_in, asked = questions.find(run), None
+    if asked_in is None:
+        con.print(f"[dim]no {questions.FILE} for {escape(str(run))}, so the question was not "
+                  f"checked[/]")
+    else:
+        try:
+            asked = questions.load(asked_in)
+        except questions.UnreadableQuestions as e:
+            ok = False
+            con.print(f"[red]cannot check the question:[/] {escape(str(e))}")
     for item in (raw if isinstance(raw, list) else [raw]):
         try:
             claim = Claim.model_validate(strip_machine_fields(item))
         except Exception as e:  # noqa: BLE001
             con.print(f"[red]schema:[/] {escape(str(e))}")
             raise typer.Exit(1) from None
+        # `vg build` refuses a claim whose question isn't the one its id names, so a researcher
+        # who misquotes it hears here rather than stopping the whole run's review app.
+        found = questions.check([claim], asked) if asked is not None else questions.Findings()
+        qid = escape(claim.question_id)
+        if found.unlisted:
+            ok = False
+            con.print(f"  [red]question id[/] {qid} is not in {escape(str(asked_in))}\n"
+                      f"      Use the question_id you were given, exactly. If you did, the "
+                      f"question set changed under you: report that, and do not edit it.")
+        for _qid, answered, text in found.reworded:
+            ok = False
+            con.print(f"  [red]question[/] is not the one {escape(str(asked_in))} asks at {qid}\n"
+                      f"      Copy it exactly as you were given it, into `question`:")
+            con.print(Text(f"      yours: {answered!r}\n      asked: {text!r}"), soft_wrap=True)
         for src_ in claim.sources:
             verify_source(src_, cache_root, rules=rules)
             st = src_.verification.status
