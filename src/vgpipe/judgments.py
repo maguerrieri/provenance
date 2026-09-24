@@ -206,12 +206,18 @@ def _lock(root: Path, *, shared: bool = False):
             os.close(fd)
 
 
+# A commit on main whose `vg judgments --rollback` undoes an interrupted re-home. Named outright:
+# a lookup such as `git log -S'def rollback('` finds whatever commit last touched that text.
+LAST_WITH_ROLLBACK = "6f73eac"
+
+
 def refuse_if_interrupted(root: Path) -> None:
     """Raise if a re-home by the retired `vg remap` or `vg judgments --repair` was interrupted.
     A backup left behind means a rewrite stopped partway: some shards may already hold their new
     contents and others not. Reading that as the verdicts would render whatever is missing as
     unreviewed, which is the silent loss the backup exists to prevent. The command that undoes
-    it retired with them, so the message names the checkout that still has it."""
+    it retired with them, so the message names a commit that still has it, and the run by its
+    absolute path, since the command runs from that other checkout."""
     b = backup_dir(root)
     try:
         b.stat()
@@ -223,10 +229,9 @@ def refuse_if_interrupted(root: Path) -> None:
     raise UnreadableJudgments(
         f"{b} exists, so a re-home of {root / 'judgments'} by the retired `vg remap` or `vg "
         f"judgments --repair` was interrupted, and its shards may be half-rewritten. This "
-        f"version cannot undo it: run `vg judgments --rollback --data {root}` from a checkout "
-        f"of the commit before they were retired (the parent of the commit `git log -1 "
-        f"-S'def rollback(' -- src/vgpipe/judgments.py` shows). It puts back everything the "
-        f"re-home changed: the verdicts, and the claim files if it was `vg remap --apply`.")
+        f"version cannot undo it: run `vg judgments --rollback --data {root.resolve()}` from a "
+        f"checkout of commit {LAST_WITH_ROLLBACK}, which still has it. It puts back everything "
+        f"the re-home changed: the verdicts, and the claim files if it was `vg remap --apply`.")
 
 
 def load(root: Path, question_id: str) -> dict[str, Judgment]:
