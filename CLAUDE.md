@@ -58,7 +58,7 @@ in a claim file never renders. See "A gate is a number the tool prints" below.
 pipeline needs. The verifier's context token is one: nothing on disk says which context a
 verifier read, so `vg judge --context` takes it from the agent (see "Tie a verdict to the
 context it was handed" below). That is safe only because the value can do nothing but block.
-A token matching the current context gets exactly what `vg judge` recorded before tokens
+A token matching the current hand-off gets exactly what `vg judge` recorded before tokens
 existed, and any other token writes nothing. Nothing an agent passes this way may promote a
 status, mark a source judged, or pick the copy a verdict is checked against. And a refusal must
 not hand back the value that would have passed: a mismatch that printed the current token
@@ -607,13 +607,8 @@ C1 renders green on C2. Every fact on disk was consistent; the one that was wron
 context the verifier read, was on no disk. So the verifier says it:
 - `vg handoff <qid>` prints the claim and each source's context with a context token
   (`judgments.context_token()`), from one read of the claim file `vg judge` checks. The token
-  is a short hash of everything the hand-off shows the verifier to judge from except the status:
-  the claim's question and answer, the citation's fields, the context, and for a query citation
-  the run that produced it (`query_run`: version, export date, cache root). The claim and the
-  citation are in it because a retry that rewrites only the answer, or only a filing's date,
-  keeps the sid and the context, and `superseded` turns on that date. A field added to the
-  hand-off goes into the token too. The verifier runs the command itself, so no transcription
-  sits between what it reads and the token it hands back.
+  is a short hash of the hand-off as a whole (next paragraph). The verifier runs the command
+  itself, so no transcription sits between what it reads and the token it hands back.
 - Everything it prints is agent- or page-authored, so it cannot be allowed to start a line.
   Every context line prints behind `| `, split with `splitlines()` (a `\r`, `\x85` or U+2028
   is a line break to some reader). Every control, format, surrogate or separator character
@@ -635,6 +630,37 @@ context the verifier read, was on no disk. So the verifier says it:
   `--data` and `--cache` (without them it reads the default run, whose `q1` is another claim).
   It never prints the current token (see "Agent-supplied input can refuse, never grant" above).
 
+**The token covers the hand-off as a whole, never a field list.** It used to hash a list of
+fields kept beside the hand-off's print statements, and four fixes each found a printed field
+the list lacked:
+- the claim and the citation: a retry that rewrote only the answer, or only a filing's date,
+  kept the sid and the context, and `superseded` turns on that date;
+- a query citation's run (#86);
+- the claim type (#91), which sets what the verifier is asked;
+- the claim's other sources (#98). An adversarial claim's verifier judges them together, so a
+  retry that swapped one for a reprint of the other, under another name on another host, carried
+  an independence verdict onto a pair no verifier saw.
+
+So `cli._handed()` builds what the hand-off prints as one value (`judgments.Handoff`),
+`cli._print_handoff()` reads nothing else, and the token hashes all of it but what
+`judgments._NOT_HASHED` names. That is the ids (`vg judge` takes the question id and the
+judged sid as arguments and checks them itself, and a sid is a hash of a citation whose printed
+fields are hashed), and each source's status and the reason it has nothing to judge.
+Whether it has a context is hashed, as the context; the reason also names the cache root as
+spelled, so hashing it would split one database into two. Every source's block is in every
+token, along with which block the token was printed beside. Any change to one source refuses
+the outstanding verdicts on all of them, and a token handed back under another source's sid is
+refused. `test_every_field_the_hand_off_prints_moves_the_token` walks the value's fields
+rather than listing them: a field added to the hand-off is in the token and in the test
+without anyone adding it, and leaving one out means naming it in `_NOT_HASHED`, in a diff a
+reviewer reads.
+
+The value is serialized as canonical JSON (sorted keys, every string quoted and escaped, every
+list bracketed), never as joined text. The fields were joined with NUL, which json.loads keeps
+inside a string, so text moved across the separator from one field into the next left the
+token as it was (#99). Changing what the token covers changes every outstanding token once: a
+verifier holding one is refused and re-reads the hand-off, and nothing else is lost.
+
 Handing out a token is a prediction that `vg judge` will record the verdict and `vg build` will
 keep it, so `vg handoff`, `vg judge` and `vg judgments` ask one function, `cli._unjudgeable()`.
 It includes build's own rebuild, run on a copy (`_rebuild_problem()`): a claim file whose
@@ -650,9 +676,9 @@ too, and that is not a contradiction: its verdict is about the calculation, not 
 it printed. A re-run under a new definition, export or cache root that returns the same value
 and note prints a context identical to the old one, so a token over the text alone could not
 tell the two runs apart. Hash what the verdict is about, which is not always what the verifier
-reads. The root is hashed resolved, as the run check compares it: hashed as spelled, a re-verify
-naming the same database by an absolute path instead of a relative one changed the token and
-sent the verifier to re-judge identical text. And `vg judge` stamps the run it checked, not a
+reads. The root is hashed resolved, as the run check compares it, and printed that way: hashed
+as spelled, a re-verify naming the same database by an absolute path instead of a relative one
+changed the token and sent the verifier to re-judge identical text. And `vg judge` stamps the run it checked, not a
 second read of the registry and database, which a rebuild between the two could move. A query
 context with no recorded run gets no token at all, since nothing says which calculation printed
 it.
