@@ -634,6 +634,56 @@ def _settle(claims: list[Claim], data: Path, cache_root: Path,
     return stale, recorded
 
 
+def _question_ids_fail(data: Path, claims: list[Claim]) -> bool:
+    """Check every claim against the question its id names in the run's questions.json, print
+    what breaks the stable-id rule, and say whether it failed (CLAUDE.md, "Question ids are
+    stable and never reused").
+
+    `vg build` never read questions.json, so a claim on a retired id rendered beside its
+    replacement, and one on a reworded or reused id rendered under the new question, while every
+    command exited 0. Only a readable question set can pass: an unreadable one fails, and none
+    at all is said out loud, since then nothing was checked.
+    """
+    from . import questions
+
+    path = questions.find(data)
+    if path is None:
+        con.print(f"[yellow]no {questions.FILE} in {escape(str(data))} or "
+                  f"{escape(str(data.parent))}, so no claim was checked against the question its "
+                  f"id names[/]")
+        return False
+    try:
+        found = questions.check(claims, questions.load(path))
+    except questions.UnreadableQuestions as e:
+        con.print(f"[red]{escape(str(e))}[/]")   # escaped: it quotes the file's own ids
+        return True
+    where = escape(str(path))
+    if found.pending:
+        pairs = ", ".join(f"{q} from {old}" for q, old in found.pending)
+        con.print(f"[yellow]{where} still declares maps_from ({escape(pairs)}): a migration the "
+                  f"retired `vg remap` never applied, and nothing applies it now. No claim moves, "
+                  f"so each is checked against the question at the id it sits on. Delete the key "
+                  f"once that is settled.[/]")
+    if found.unlisted:
+        con.print(f"[red]{len(found.unlisted)} claim(s) sit on an id {where} does not list: "
+                  f"{escape(', '.join(found.unlisted))}. If the id was retired, move its claim "
+                  f"from claims/ to claims-archive/ and its shard out of judgments/, and point any "
+                  f"derives_from naming it at the new id. If the question is still asked, put it "
+                  f"back under that id.[/]")
+    if found.reworded:
+        con.print(f"[red]{len(found.reworded)} claim(s) answer another question than {where} asks "
+                  f"at their id. Ids are never reused or reworded: give the new question a new "
+                  f"id, and retire this one as above. If the claim only misquotes its question, "
+                  f"copy the exact text into its `question`.[/]")
+        for qid, answered, asked in found.reworded:
+            # As Text: both are agent-authored, and the difference may be a bracket or an emoji
+            # code that markup would eat.
+            con.print(Text(f"  {qid}: the claim answers {answered!r}\n"
+                           f"  {' ' * len(qid)}  {questions.FILE} asks {asked!r}"),
+                      soft_wrap=True)
+    return found.failed
+
+
 @app.command()
 def build(data: Path = DATA, cache: Path = None, race: str = "", candidate: str = "",
           title: str = ""):
@@ -653,6 +703,11 @@ def build(data: Path = DATA, cache: Path = None, race: str = "", candidate: str 
     # reproduced from the cached page, and replaces every support verdict with the recorded
     # one (or `unreviewed`).
     claims = detect(_load_or_exit(data / "claims", trust_machine_fields=True))
+    if _question_ids_fail(data, claims):
+        # Before anything is written: rendered, such a claim reads as an answer to a question
+        # the run does not ask, or to one it was never researched for.
+        con.print("[red]review app not rendered: fix the claims above first.[/]")
+        raise typer.Exit(1)
     records = _archive_records(data)
     _warn_unrecorded_snapshots(data / "claims", records)
     stale_verdicts, recorded = _settle(claims, data, cache_root, rules, records)
@@ -1446,6 +1501,10 @@ def status(data: Path = DATA, cache: Path = None, race: str = ""):
     claims = _load_or_exit(data / "claims", trust_machine_fields=True)
     if not claims:
         con.print("No claims yet.")
+        # Still read: a pending maps_from, or a question set nothing can read, is worth
+        # settling before anyone researches on those ids.
+        if _question_ids_fail(data, claims):
+            raise typer.Exit(1)
         return
     # Run the same offline checks `vg build` runs, so the summary can't disagree with what
     # the review app will actually show. Nothing is written back — this is a read-only view.
@@ -1466,6 +1525,9 @@ def status(data: Path = DATA, cache: Path = None, race: str = ""):
         t.add_row(c.question_id, c.claim_type, c.status, str(len(c.sources)),
                   c.corroboration_note or "-", str(len(c.conflicts)))
     con.print(t)
+    # After the table, so it is not scrolled away; and failing, as build does.
+    if _question_ids_fail(data, claims):
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":

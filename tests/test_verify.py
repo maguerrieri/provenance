@@ -4118,7 +4118,8 @@ def _candidate_run(tmp_path):
     cache_path(data, s.url).write_text(
         _page(fetched_at=datetime.now(UTC) - timedelta(hours=6),
               extractor_version=EXTRACTOR_VERSION).model_dump_json())
-    (data / "questions.json").write_text("[]")
+    # The question the claim answers: `vg build` and `vg status` check claims against it.
+    (data / "questions.json").write_text(json.dumps([{"id": "q1", "text": "?"}]))
     (cand / "claims").mkdir(parents=True)
     (cand / "claims" / "q1.json").write_text(
         Claim(question_id="q1", question="?", answer="a", sources=[s]).model_dump_json())
