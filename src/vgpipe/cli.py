@@ -1520,9 +1520,9 @@ def _left_on_old_ids(questions: list[dict], key: str, claims_dir: Path) -> list[
                   key=qid_sort_key)
 
 
-def _never_arrived(questions: list[dict], claims_dir: Path) -> list[str]:
-    """Old ids of retired moves this directory disproves: the claim is still in the old id's
-    file and never reached the question the move brought it to.
+def _never_arrived(questions: list[dict], claims_dir: Path) -> list[tuple[str, str]]:
+    """Retired moves this directory disproves, as (old id, question id): the claim is still in
+    the old id's file and never reached the question the move brought it to.
 
     A retired mapped_from names an id in an earlier id space, and later edits reuse ids — in one
     run, retained entries named 26 of its 38 current ids. So a file on that id, with the id no
@@ -1530,14 +1530,19 @@ def _never_arrived(questions: list[dict], claims_dir: Path) -> list[str]:
     that holds it now leaves exactly that, and was refused as "retired somewhere else". What a
     move that never ran leaves is its destination empty too. A file a pending pair is about to
     move is that pair's source, not a leftover. Where old and new ids overlap nothing on disk
-    shows a move either way, which is why the retired file travels with its claims."""
+    shows a move either way, which is why the retired file travels with its claims.
+
+    Nor can the files tell this from a sparse run. An apply retires every pair, including one
+    whose old id had no claim to move, so its question starts empty; if that old id later goes
+    to a new question that is researched and then dropped, the dropped question's claim sits on
+    the old id with the destination still empty. Same files, so the caller names both."""
     current = {q["id"] for q in questions}
     sources = {q["maps_from"] for q in questions if q.get("maps_from")}
-    return sorted({src for q in questions for src in [_retired_from(q)]
+    return sorted({(src, q["id"]) for q in questions for src in [_retired_from(q)]
                    if src and src not in current and src not in sources
                    and (claims_dir / f"{src}.json").exists()
                    and not (claims_dir / f"{q['id']}.json").exists()},
-                  key=qid_sort_key)
+                  key=lambda m: (qid_sort_key(m[0]), qid_sort_key(m[1])))
 
 
 def _retire_maps_from(qpath: Path, questions: list[dict]) -> int:
@@ -1690,14 +1695,30 @@ def remap(data: Path = DATA, apply: bool = False, archive_stranded: bool = False
     # pair must not wave through a questions.json retired in another checkout and brought here
     # without its claims. (Where old and new ids overlap nothing on disk shows it; hence
     # committing the retired file with the claims it describes.)
+    #
+    # A sparse run with a question dropped leaves the same files (_never_arrived), so the
+    # refusal names both readings and the way out of each. It used to name only the first, and
+    # was false for the second. Refusing either way fails safe: nothing moves.
     unmoved = _never_arrived(questions, claims_dir)
     if unmoved:
-        con.print(f"[red]refusing:[/] {qpath} records a migration as applied (mapped_from), but "
-                  f"{claims_dir} still holds claims on ids it moved away from that no current "
-                  f"question uses ({escape(', '.join(unmoved))}), and the questions they moved "
-                  "to have none. These claims never went through it: this questions.json was "
-                  "retired somewhere else. Put back the maps_from it retired (the file's "
-                  "history has it) and dry-run remap.")
+        moves_ = ", ".join(f"{src} (moved to {dst})" for src, dst in unmoved)
+        con.print(f"[red]refusing:[/] {qpath} records migrations as applied (mapped_from), but "
+                  f"{claims_dir} still holds a claim on the id each moved from, which no current "
+                  f"question uses, and the question each moved to has none: {escape(moves_)}. "
+                  "The claim files can't show which of two things happened, so nothing moves:\n"
+                  "  • this questions.json was retired somewhere else and arrived without its "
+                  "claims, which never went through it here: put back the maps_from it retired "
+                  "(the file's history has it) and dry-run remap;\n"
+                  "  • or this is a sparse run: the old id had no claim when the move ran, so "
+                  "the question it led to started empty, and the file on the old id now is the "
+                  f"claim of a later question at that id, since dropped from {qpath}. Nothing "
+                  "maps to it, so move it out of claims/ by hand (into "
+                  f"{data / 'claims-archive'}, under a name not already there) and re-run.\n"
+                  f"Tell them apart by the history of {qpath}, not by the claim's wording, which "
+                  "the migration may have changed: the second holds only if a version after the "
+                  "move put a question at the old id, and that is the question the claim answers. "
+                  "Archiving the file in the first case strands that question's research in the "
+                  "archive.")
         raise typer.Exit(1)
 
     # (2), an older state. With nothing pending, the file may still be current — a question the

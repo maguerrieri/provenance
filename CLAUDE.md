@@ -651,6 +651,18 @@ dropping or renaming a question whose id some other question moved from was refu
 somewhere else", and nothing could get past that refusal. A file a pending pair is about to move
 is that pair's source, not a leftover.
 
+Both traces together are still not proof, and the refusal says so. A sparse run leaves the same
+two. An apply retires every pair, including one whose old id had no claim to move, so that
+question starts empty. If the old id then goes to a new question that is researched and later
+dropped, the dropped question's claim sits on the old id beside an empty destination. The refusal
+used to say the file was "retired somewhere else", which is false there. Nothing on disk tells
+the two apart, so remap still refuses and nothing moves, but the message names both readings and
+the way out of each: put back the retired `maps_from`, or archive the dropped question's file by
+hand. Archiving is also a way past the guard when the first reading is the true one, and then it
+strands the moved question's research. So the message says how to tell them apart, and it is not
+the claim's wording, which the migration may have changed: the sparse reading holds only if the
+history of `questions.json` put a question at the old id after the move.
+
 **What no layer can tell apart** is the original report's own finding: a new migration that
 happens to share pairs with an old one, versus old pairs restored beside a new edit. A restored
 pair plus an unrelated new pair is a new state, and it goes through. The defenses there are:

@@ -164,3 +164,55 @@ def test_ids_of_the_question_id_shape_still_remap(tmp_path, out):
     cli.remap(data=run)
     assert "nothing to remap" in out.getvalue()
 
+
+def _sparse_run_with_a_question_dropped(tmp_path):
+    """A sparse run: q2 had no claim when the first migration mapped it to q5, so nothing moved
+    there, and the apply retired the pair anyway (q5.mapped_from = q2). The id q2 then went to a
+    new question, which was researched and later dropped. So q2.json is that dropped question's
+    claim, no current question uses q2, and q5 has no claim: exactly what a questions.json
+    retired in another checkout, arriving without its claims, leaves too."""
+    run = tmp_path / "run"
+    _claim(run / "claims", "q1", "donations")
+    (run / "questions.json").write_text(json.dumps([
+        _question("q3", maps_from="q1"), _question("q5", maps_from="q2"), _question("q2")]))
+    cli.remap(data=run, apply=True)
+    _claim(run / "claims", "q2", "researched on the new q2")
+    qpath = run / "questions.json"
+    qpath.write_text(json.dumps([q for q in json.loads(qpath.read_text()) if q["id"] != "q2"]))
+    return run
+
+
+def test_a_sparse_run_is_refused_for_the_true_reason(tmp_path, out):
+    """The check that disproves a retired move refused this run saying the questions.json "was
+    retired somewhere else", which is false here. The files can't tell the two apart (both leave
+    a claim on the old id and nothing on the destination), so the refusal stands: it fails safe.
+    But it names both readings and the way out of each, not only the one that's wrong here."""
+    run = _sparse_run_with_a_question_dropped(tmp_path)
+    before = _tree(tmp_path)
+    out.truncate(0)
+    out.seek(0)
+
+    for flags in ({}, {"apply": True, "archive_stranded": True}):
+        with pytest.raises(typer.Exit):
+            cli.remap(data=run, **flags)
+        assert _tree(tmp_path) == before, flags
+    said = " ".join(out.getvalue().split())
+    assert "q2 (moved to q5)" in said, said
+    assert "retired somewhere else" in said, "the first reading, still named"
+    assert "had no claim when the move ran" in said and "since dropped" in said, said
+    assert str(run / "claims-archive") in said, "and where the second reading's file goes"
+    # The claim's wording can't tell them apart when the migration reworded the question, and
+    # archiving the file on the first reading strands the research, so the message says what can.
+    assert f"history of {run / 'questions.json'}" in said, said
+
+
+def test_archiving_a_sparse_runs_dropped_claim_by_hand_gets_past_the_refusal(tmp_path, out):
+    """The way out the refusal gives for the sparse reading works: the file on the old id was a
+    dropped question's research, so once it is archived nothing disproves the retired move."""
+    run = _sparse_run_with_a_question_dropped(tmp_path)
+    (run / "claims-archive").mkdir()
+    (run / "claims" / "q2.json").rename(run / "claims-archive" / "q2.json")
+
+    cli.remap(data=run)
+
+    assert "nothing to remap" in out.getvalue()
