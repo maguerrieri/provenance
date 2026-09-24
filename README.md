@@ -64,8 +64,9 @@ Orchestration lives in `.claude/skills/voter-guide-research/SKILL.md`; agent def
 `.claude/agents/`.
 
 Question ids (`q1`, `q2a`) are **stable and never reused**. They name each question's claim and
-verdict files, so a split or reworded question gets a new id and the old id is retired. Nothing
-re-files a claim onto another id: `vg remap`, which used to, is retired.
+verdict files, so a split or reworded question gets a new id and the old id is retired: move its
+claim out of `claims/` (to `claims-archive/`) so it no longer renders. Nothing re-files a claim
+onto another id: `vg remap`, which used to, is retired.
 
 ## Checks
 

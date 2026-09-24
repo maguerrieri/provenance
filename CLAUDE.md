@@ -105,9 +105,7 @@ file's own text and rich reads brackets as markup.
 
 - **Read everything before acting on any of it.** `vg verify` reads every claim's verdict
   file before it fetches anything, so a malformed shard for a later claim stops the run before
-  any network time is spent, not after the earlier claims' pages are fetched. A command that
-  rewrites several files reads all of them first, so an unreadable one stops it while nothing
-  has been touched.
+  any network time is spent, not after the earlier claims' pages are fetched.
 - **Write only what can be read back.** `record()` refuses an entry `load()` would refuse, so
   one bad `vg judge` call cannot stop every reader of the shard.
 - **Replace a shard whole.** `_write()` writes and fsyncs a temp file, then `os.replace`s it
@@ -479,9 +477,13 @@ recreate the stray on every run (see "A verdict is about a source as cached at j
 ## Question ids are stable and never reused
 
 A question id names one question for the life of a run. **A split or reworded question gets a
-new id, and the old id is retired**: never given to another question. Its claim and verdicts
-stay where they are, or are archived by hand, never re-filed. Nothing in the pipeline moves a
-claim between ids.
+new id, and the old id is retired**: never given to another question. Retiring it means moving
+its claim file out of `claims/` (to `claims-archive/`), and its verdict shard out of
+`judgments/`, by hand. `vg build` renders every claim in `claims/`, so a claim left on a retired
+id still shows beside its replacement. Nothing in the pipeline moves a claim between ids.
+
+Nothing checks the rule yet: no command compares `claims/` with `questions.json` (#112). Until
+one does, a claim on a retired id or a reused id goes through every command with exit 0.
 
 This rule replaced `vg remap`, which re-filed claims onto a renumbered question set (declared
 as `maps_from` in `questions.json`) and re-homed their verdicts, and `vg judgments --repair`,
@@ -497,10 +499,16 @@ Hardening it further cost more than it could ever save, and stable ids remove th
 What is left:
 - `maps_from` and `mapped_from` in a `questions.json`, and `previous_question` in a claim file,
   still load; nothing writes them. `vg new-candidate` copies neither of the first two: they are
-  another run's history, and a new run has no earlier id space.
+  another run's history, and a new run has no earlier id space. `Claim` has no
+  `previous_question` field, so it is ignored on load and the next `vg verify` write-back drops
+  it, as it always has (#85, closed with remap, since nothing writes it now).
 - A `judgments-backup/` that an interrupted re-home left behind still stops every command that
   reads verdicts, because the shards may be half-rewritten. The message says how to undo it:
-  `vg judgments --rollback`, run from a checkout of the commit before the retirement.
+  `vg judgments --rollback`, run from a checkout of `judgments.LAST_WITH_ROLLBACK`, with the
+  run's absolute path, since a relative `--data` there names that checkout's own data/.
+  `judgments-backup.partial/` and `judgments-backup.discard/` are different: one was still being
+  built and had touched no shard, and the other was already retired after its re-home finished.
+  Nothing clears them now, and nothing reads them. Delete them; never restore from them.
 - Question-id validation was never remap's and stays: the id pattern (`models.QID_PATTERN`,
   checked again in `judgments.path_for()`), and `vg judgments` counting a shard the disk opens
   under a claim's id as that claim's (`judgments.opened_as()`).
