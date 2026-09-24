@@ -44,6 +44,11 @@ WANTED = {
                 "EXPN_DATE", "AMOUNT", "EXPN_DSCR", "CAND_NAML", "SUP_OPP_CD"],
     "S496_CD": ["FILING_ID", "AMEND_ID", "TRAN_ID", "LINE_ITEM", "AMOUNT", "EXP_DATE",
                 "EXPN_DSCR"],
+    # Form 497 late contribution reports. Not counted in any total: a gift here is restated on
+    # a later Form 460 schedule A, and until then the contribution queries refuse rather than
+    # leave it out (queries._pending_late). FORM_TYPE tells Part 1 (received) from Part 2 (made).
+    "S497_CD": ["FILING_ID", "AMEND_ID", "TRAN_ID", "LINE_ITEM", "FORM_TYPE", "ENTY_NAML",
+                "ENTY_NAMF", "CTRIB_DATE", "DATE_THRU", "AMOUNT"],
     # AMEND_ID here for the same reason as the fact tables: without it nothing dedupes the
     # cover records, and 61,088 filings carry duplicate rows. A clean fact table joined to a
     # multiplying cover table still double-counts — the amendment guard on S496/RCPT does not
@@ -196,7 +201,8 @@ def _export_date(zf: zipfile.ZipFile, zp: Path) -> tuple[str, str]:
 
 
 def export_info(root: Path) -> dict[str, str]:
-    """What `build()` recorded about the export: export_date, export_date_from, built_at.
+    """What `build()` recorded about the export: export_date, export_date_from, built_at,
+    not_in_export.
 
     Empty when there is no database, or one built before exports were dated. Opened read-only,
     so asking never creates a database where there was none. Remembered per file state, since
@@ -281,7 +287,7 @@ LATEST_SQL = """
 """
 
 LATEST_VIEWS = (("RCPT_CD", "RCPT_LATEST"), ("EXPN_CD", "EXPN_LATEST"),
-                ("S496_CD", "S496_LATEST"))
+                ("S496_CD", "S496_LATEST"), ("S497_CD", "S497_LATEST"))
 
 
 class DegradedDatabaseWarning(UserWarning):
@@ -305,6 +311,38 @@ COVER_FALLBACK = (
     "that column was loaded), so cover records cannot be narrowed to the latest amendment. "
     "An independent expenditure can be attributed to a candidate or stance that a later "
     "amendment replaced. Rebuild the database: uv run vg calaccess build")
+
+
+LATE_FALLBACK = (
+    "this CAL-ACCESS database cannot read Form 497 late contribution reports (S497_CD): it was "
+    "built before they were loaded, or the export's table lacks a column they need. So a "
+    "contribution total cannot tell whether a late contribution is missing from it. Rebuild "
+    "the database: uv run vg calaccess build. Or pass form_type=A for the schedule-A figure "
+    "alone")
+
+# What queries._pending_late reads from S497_CD. DATE_THRU is optional.
+LATE_COLUMNS = ("FILING_ID", "AMEND_ID", "TRAN_ID", "FORM_TYPE", "ENTY_NAML", "ENTY_NAMF",
+                "CTRIB_DATE", "AMOUNT")
+
+
+def late_reports_loaded(con: sqlite3.Connection) -> bool:
+    """Whether this database can say which Form 497 late contribution reports there are.
+
+    Yes when S497_CD holds every column queries read (LATE_COLUMNS): without AMEND_ID its
+    latest-amendment view is not even defined. Also yes when the export had no S497_CD.TSV at
+    all, since then it has no late reports to miss, which `build()` records in EXPORT_META.
+    Not when a present file was skipped (no header, none of the wanted columns): that is an
+    unreadable table, not an empty one. And not for a database built before either record.
+    """
+    cols = {r[1] for r in con.execute('PRAGMA main.table_info("S497_CD")')}
+    if cols:
+        return set(LATE_COLUMNS) <= cols
+    try:
+        row = con.execute(f'SELECT "value" FROM main."{EXPORT_META}" WHERE "key" = ?',
+                          ("not_in_export",)).fetchone()
+    except sqlite3.DatabaseError:
+        return False
+    return bool(row) and "S497_CD" in str(row[0]).split(",")
 
 
 def install_views(con: sqlite3.Connection, *, temp: bool = True) -> None:
@@ -397,12 +435,14 @@ def build(root: Path, *, progress=None) -> Path:
     con.execute("PRAGMA journal_mode=OFF")
     con.execute("PRAGMA synchronous=OFF")
 
+    absent = []     # wanted tables the export does not contain at all
     with zipfile.ZipFile(zp) as zf:
         export_date, date_from = _export_date(zf, zp)
         members = {Path(n).stem.upper(): n for n in zf.namelist() if n.upper().endswith(".TSV")}
         for table in WANTED:
             member = members.get(table)
             if member is None:
+                absent.append(table)
                 if progress:
                     progress(table, 0, "not in export")
                 continue
@@ -461,9 +501,11 @@ def build(root: Path, *, progress=None) -> Path:
     # export date. Without it the database reads as undated, which `vg judge` and the review
     # page both say.
     con.execute(f'CREATE TABLE "{EXPORT_META}" ("key" TEXT PRIMARY KEY, "value" TEXT)')
+    # not_in_export: wanted tables the export has no file for (late_reports_loaded).
     con.executemany(f'INSERT INTO "{EXPORT_META}" VALUES (?, ?)', [
         ("export_date", export_date), ("export_date_from", date_from),
-        ("built_at", datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"))])
+        ("built_at", datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")),
+        ("not_in_export", ",".join(absent))])
     con.commit()
     con.close()
     return dbp
