@@ -555,6 +555,11 @@ def _top_contributor(root: Path, *, filer_id: str,
     business that gave nothing "the largest contributor", and an in-kind item (C) could decide
     between two donors. Pass another schedule to rank by that one, or "" for every schedule.
 
+    A tie is every contributor within half a cent (TOLERANCE) of the top, listed whole however
+    many there are, in name order. A large tie is not refused: the whole set is a true answer
+    that reproduces, the detail says it is no single largest contributor, and a cap would be an
+    arbitrary number turning that answer into a miss.
+
     Left unset, it is a miss when a late-reported gift no schedule A restates yet
     (`_pending_late`) could change the answer: when adding a contributor's pending late gifts
     to their schedule-A total could reach the top, or a late gift could break a tie. A late
@@ -580,11 +585,12 @@ def _top_contributor(root: Path, *, filer_id: str,
         FROM ({inner}) d
         GROUP BY UPPER(TRIM(d.CTRIB_NAML)), UPPER(TRIM(COALESCE(d.CTRIB_NAMF,'')))
     """
-    # Every contributor's total only when a late entry has to be weighed against them.
-    groups = con.execute(f"{group} ORDER BY amt DESC" + ("" if late else " LIMIT 4"),
-                         args).fetchall()
-    rows = groups[:4]
-    row = rows[0] if rows else None
+    # Every contributor's total, not the first few: a tie is everyone at the top. Fetched with
+    # LIMIT 4, five givers at the contribution limit came back as a four-way tie naming
+    # whichever four SQLite picked, and that value reproduced. The names order equal totals, so
+    # the late-report check below reads them in one order too.
+    groups = con.execute(f"{group} ORDER BY amt DESC, kl, kf", args).fetchall()
+    row = groups[0] if groups else None
     if row is None:
         note = _late_note(late, checked_497)
         # A slate mailer's receipts are all on Form 401: "no schedule-A contributions" alone
@@ -596,7 +602,7 @@ def _top_contributor(root: Path, *, filer_id: str,
                            if others else "") + (f"; {note}" if note else ""),
                         ["form_type=" + ", form_type=".join(others)] if others else None)
     top = float(row["amt"] or 0)
-    tied = [r for r in rows if abs(float(r["amt"] or 0) - top) < TOLERANCE]
+    tied = [r for r in groups if abs(float(r["amt"] or 0) - top) < TOLERANCE]
     names = [" ".join(x for x in (r["nf"], r["nm"]) if x).strip() for r in tied]
     contenders = []
     if late:
@@ -797,6 +803,8 @@ REGISTRY: dict[str, Query] = {
     # already was. v1 summed every receipt schedule, refunds and interest included.
     # v3 of those two and v2 of filer_total: with form_type unset, a miss while a late-reported
     # gift that no schedule A restates yet could change the answer (`_pending_late`).
+    # v4 of top_contributor: a tie is every contributor at the top. v3 built it from the first
+    # four rows, so a tie of five or more named four of them.
     "calaccess.contributor_total": Query(
         _contributor_total, ("filer_id", "contributor"),
         "contributions from one contributor (add contributor_first for an individual; "
@@ -808,7 +816,7 @@ REGISTRY: dict[str, Query] = {
     "calaccess.top_contributor": Query(
         _top_contributor, ("filer_id",),
         "the largest contributor to a filer, by itemized total (schedule A unless form_type "
-        "says otherwise; a miss while a pending late gift could change it)", 3),
+        "says otherwise; a miss while a pending late gift could change it)", 4),
     "calaccess.ie_total": Query(
         _ie_total, ("candidate_last", "first"),
         "late independent expenditures naming a candidate; pass stance and since/until", 2),

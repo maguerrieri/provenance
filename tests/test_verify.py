@@ -9062,7 +9062,7 @@ _NOT_A_DEFINITION = {
 QUERY_DEFINITIONS = {
     "calaccess.contributor_total": (3, "44d418110ae4"),
     "calaccess.filer_total": (2, "f2f6a3a95145"),
-    "calaccess.top_contributor": (3, "609033c19f24"),
+    "calaccess.top_contributor": (4, "8a575d73eac5"),
     "calaccess.ie_total": (2, "188111489385"),
 }
 
