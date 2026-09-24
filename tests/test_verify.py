@@ -3363,7 +3363,7 @@ def test_only_a_source_with_confirmed_context_is_waiting_on_a_verdict(tmp_path):
                                             "https://calmatters.org/c",
                                             "https://calmatters.org/e"}
     code, out = _judgments_output(data)
-    assert "2 verdict(s) predate the page they judged" in out
+    assert "2 verdict(s) no longer describe what they judged" in out
 
 
 def test_judgments_classifies_by_what_build_revalidates_not_by_the_claim_file(tmp_path,
@@ -5698,11 +5698,12 @@ def test_vg_judgments_counts_a_verdict_whose_page_is_gone_as_stale(tmp_path):
     data = _judgments_fixture(tmp_path)
     assert _unjudged(data, "q2") == (1, 2, 1, 0)
     _, out = _judgments_output(data, "--question-id", "q2")
-    assert "1 verdict(s) predate the page they judged" in out, out
+    assert "1 verdict(s) no longer describe what they judged" in out, out
 
     cache_path(data, "https://calmatters.org/d").unlink()   # q2's fresh `contradicts`
     _, out = _judgments_output(data, "--question-id", "q2")
-    assert "2 verdict(s) predate the page they judged, or have no cached page" in out, out
+    assert "2 verdict(s) no longer describe what they judged" in out
+    assert "has no cached page to check against" in out, out
     # and with no page, revalidation has no context either: it waits on `vg verify`, not on a
     # verifier, so it is blocked rather than in the count
     assert _unjudged(data, "q2") == (1, 2, 1, 1)
@@ -6313,7 +6314,7 @@ def test_bumping_a_query_version_flags_its_citations_and_stales_its_verdicts(tmp
     res = CliRunner().invoke(cli.app, ["verify", "--data", str(data)], terminal_width=200)
     assert res.exit_code == 0, res.output
     out = _plain(res.output)
-    assert "1 verdict(s) predate the page they judged" in out and "another query definition" in out
+    assert "1 verdict(s) no longer describe what they judged" in out and "another query definition" in out
     assert f"q1/{s.sid}: judged against test.total v1" in out
     rerun = cli.load_claims(data / "claims", trust_machine_fields=True)[0].sources[0]
     assert rerun.verification.query_run.version == 2
@@ -6555,7 +6556,7 @@ def test_verify_lists_the_verdicts_its_own_re_fetch_made_stale(tmp_path, monkeyp
                              terminal_width=200)
     assert res.exit_code == 0, res.output
     out = _plain(res.output)
-    assert "1 verdict(s) predate the page they judged" in out
+    assert "1 verdict(s) no longer describe what they judged" in out
     assert f"q1/{s.sid}:" in out and "re-fetched" in out
 
 
@@ -6641,7 +6642,7 @@ def test_a_stale_query_verdict_is_not_reported_as_standing(tmp_path):
 
     code, out = _judgments_output(root)
     out = _plain(out)
-    assert "1 verdict(s) predate the page they judged" in out
+    assert "1 verdict(s) no longer describe what they judged" in out
     assert "older CAL-ACCESS export" not in out
     res = CliRunner().invoke(cli.app, ["build", "--data", str(root)], terminal_width=200)
     assert res.exit_code == 0, res.output
