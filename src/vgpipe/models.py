@@ -243,8 +243,12 @@ class Source(BaseModel):
 
     @property
     def awaits_verdict(self) -> bool:
-        """No verdict yet, on a source the judgment pass covers. A paywalled source is not one
-        (NOT_JUDGED): waiting on its verdict would wait forever."""
+        """The claim waits on this source's verdict: none is recorded, and the source is not
+        one the judgment pass never covers (NOT_JUDGED), where waiting would wait forever.
+
+        For `Claim.status` only. It is not the `vg judgments` gate: a source `vg verify` has not
+        reached yet waits here, but the gate counts only sources with confirmed context
+        (`verify.GOOD`), since that is all a verifier can judge."""
         return (self.verification.support == "unreviewed"
                 and self.verification.status not in NOT_JUDGED)
 
@@ -342,9 +346,12 @@ class Claim(BaseModel):
                 return "verified"
             return "pending" if self.corroboration_ok is None else "human_review"
         if any(s == "could_not_verify_paywall" for s in sts):
-            # A flag, not a pass. A claim short of the documents it needs goes to review as it
-            # would with every source verified: the yellow badge sits outside the review filter.
-            return "human_review" if self.corroboration_ok is False else "could_not_verify_paywall"
+            # A flag, not a pass: corroboration reads exactly as it does with every source
+            # verified, the flag standing in for green. A claim short of the documents it needs
+            # goes to review, not behind a yellow badge outside the review filter.
+            if self.corroboration_ok is True:
+                return "could_not_verify_paywall"
+            return "pending" if self.corroboration_ok is None else "human_review"
         if any(s == "pending" for s in sts):
             return "pending"
         return "human_review"

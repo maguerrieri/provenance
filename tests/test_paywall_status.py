@@ -90,6 +90,12 @@ def test_a_paywalled_claim_short_of_corroboration_goes_to_review_not_yellow():
     other.publisher = "Daily Ledger"   # one outlet twice: not independent
     assert _claim(other, _source(), claim_type="adversarial").status == "human_review"
 
+    # Unchecked corroboration is not a pass either, as with every source verified: only True
+    # counts, and a claim read before check_corroboration() runs is still pending.
+    unchecked = Claim(question_id="q1", question="?", answer="a", sources=[_source()])
+    assert unchecked.corroboration_ok is None
+    assert unchecked.status == "pending"
+
 
 def test_the_statuses_outside_the_judgment_pass_are_exactly_the_usable_ones_without_context():
     """`vg judgments` gates on GOOD: a verifier can judge only a row with confirmed context.
