@@ -6,7 +6,7 @@ or two that disagree look alike.
 
 from __future__ import annotations
 
-from vgpipe.conflicts import detect, money_values
+from vgpipe.conflicts import detect, money, money_values
 from vgpipe.models import Claim, Source
 from vgpipe.verify import check_corroboration
 
@@ -30,6 +30,36 @@ def _claim(answer, *sources, qid="q1", **kw):
 
 
 # --- how a figure reads ---
+
+
+def test_small_and_fractional_amounts_show_cents():
+    """Whole dollars everywhere made a disagreement read as agreement: $0.40 against $0.25
+    printed "$0 vs $0", and $4.40 against $4.25 "$4 vs $4"."""
+    assert [money(v) for v in (0, 0.25, 0.4, 4, 4.4, 9.99)] == [
+        "$0.00", "$0.25", "$0.40", "$4.00", "$4.40", "$9.99"]
+    assert [money(v) for v in (10, 120_000, 1_000.5, 8_200_000)] == [
+        "$10", "$120,000", "$1,000.50", "$8,200,000"]
+    # Finer than a cent keeps its places, or cents would merge these two the same way.
+    assert (money(1.1045), money(1.1012)) == ("$1.1045", "$1.1012")
+
+    fare = _source(snippet="raised the ferry fare to $4.40 a ride")
+    other = _source(url=WEEKLY, publisher="Harbor Weekly",
+                    snippet="the ferry fare, now $4.25 a ride")
+    [c] = detect([_claim("The fare is $4.40.", fare, other)])
+    assert c.conflicts == ["sources disagree on a dollar figure: Daily Ledger ($4.40) vs "
+                           "Harbor Weekly ($4.25)"]
+
+    [c] = detect([_claim("The fare rose to $4.60 in 2021.", fare,
+                         _source(snippet="set the fare in 2019"))])
+    assert c.conflicts == [
+        "dollar figure in the answer ($4.60) does not appear in any cited snippet ($4.40)",
+        "year in the answer (2021) does not appear in any cited snippet (2019)"]
+
+    a = _claim("The fare is $4.40.", fare)
+    b = _claim("The fare is $4.60.", _source(snippet="raised the ferry fare to $4.60 a ride"),
+               qid="q2")
+    assert "near-miss dollar figures across claims: $4.40 vs $4.60 (q1, q2)" in "".join(
+        detect([a, b])[0].conflicts)
 
 
 def test_a_scaled_figure_equals_the_same_figure_written_out():
