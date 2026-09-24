@@ -116,13 +116,34 @@ def date_window_sql(iso_col: str, since: str, until: str) -> tuple[str, list[str
     return " AND ".join(terms), args
 
 
+def amount_sql(col: str) -> str:
+    """SQL reading a filed AMOUNT as money: its value for a plain decimal, else NULL.
+
+    A blank AMOUNT is money nobody stated, not $0: CAST made it 0.0 and COUNT(*) still counted
+    it, so a total whose only row had one came back found, "$0.00, 1 expenditure(s)" -- the
+    zero this module exists to refuse. Not just blanks: CAST reads "N/A" as 0.0 and "1,000" as
+    1.0, figures nobody filed. So only a plain decimal is read as money; every query leaves a
+    NULL out of its sum AND its count, and names how many it left out. A stated "0" is the
+    filer's figure and counts.
+    """
+    a = f"TRIM(COALESCE({col}, ''))"
+    unsigned = f"(CASE WHEN SUBSTR({a}, 1, 1) = '-' THEN SUBSTR({a}, 2) ELSE {a} END)"
+    return (f"(CASE WHEN {unsigned} GLOB '*[0-9]*' AND {unsigned} NOT GLOB '*[^0-9.]*'"
+            f" AND {unsigned} NOT GLOB '*.*.*' THEN CAST({a} AS REAL) END)")
+
+
 # A single contribution is reported on BOTH Form 460 Schedule A and Form 496 Part 3 when it
 # crosses the 24-hour threshold, as two genuinely different filings — so amendment dedup does
 # not catch it, and a large donor's gift came out doubled. The filer links the pair
 # explicitly: TRAN_IDs share a base after the form prefix (A-100001 / F496P3-100001).
 # Collapse on that base plus contributor, amount and date, within one filer.
-DEDUPED_RECEIPTS = """
-    SELECT MAX(x.AMOUNT) AS AMOUNT, x.CTRIB_NAML, x.CTRIB_NAMF, x.RCPT_DATE,
+# AMT is the amount as money (`amount_sql()`), NULL where the filer stated none; AMOUNT is the
+# text as filed. The group keys on AMT, not CAST(AMOUNT AS REAL): CAST reads "300,000" as
+# 300.0, so a row filed that way collapsed into a $300 gift under the same base, MAX() over
+# the text kept "300,000", and the stated $300 was lost with it. A dedup has to read a value
+# the way the sum does.
+DEDUPED_RECEIPTS = f"""
+    SELECT MAX(x.AMOUNT) AS AMOUNT, MAX(x.AMT) AS AMT, x.CTRIB_NAML, x.CTRIB_NAMF, x.RCPT_DATE,
            -- The group's provenance. A collapsed row still has to name a filing a human can
            -- open, or the listing loses its exit to a citation and every figure taken from it
            -- becomes uncitable. The EARLIEST filing is the one the gift was first reported on.
@@ -132,12 +153,18 @@ DEDUPED_RECEIPTS = """
            MAX(x.FORM_TYPE) AS FORM_TYPE
     FROM (SELECT r.*, CASE WHEN INSTR(r.TRAN_ID, '-') > 0
                            THEN SUBSTR(r.TRAN_ID, INSTR(r.TRAN_ID, '-') + 1)
-                           ELSE r.TRAN_ID END AS tbase
+                           ELSE r.TRAN_ID END AS tbase,
+                 {amount_sql("r.AMOUNT")} AS AMT
           FROM RCPT_LATEST r JOIN FILER_FILING f ON f.FILING_ID = r.FILING_ID
-          WHERE f.FILER_ID = ?{extra}) x
+          WHERE f.FILER_ID = ?{{extra}}) x
     GROUP BY x.tbase, UPPER(TRIM(x.CTRIB_NAML)), UPPER(TRIM(COALESCE(x.CTRIB_NAMF,''))),
-             x.RCPT_DATE, CAST(x.AMOUNT AS REAL)
+             x.RCPT_DATE, x.AMT
 """
+
+
+def _unread(n: int, whose: str = "") -> str:
+    """The detail a receipt query appends for gifts it left out for want of an amount."""
+    return f"; {n} more gift(s){whose} with no readable amount, not counted" if n else ""
 
 
 def _no_rows(detail: str, suggestions: list[str] | None = None) -> "QueryResult":
@@ -190,10 +217,10 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
         extra += " AND UPPER(TRIM(COALESCE(r.CTRIB_NAMF,''))) = UPPER(TRIM(?))"
         args.append(contributor_first)
     inner = DEDUPED_RECEIPTS.format(extra=extra)
-    row = con.execute(f"SELECT SUM(CAST(d.AMOUNT AS REAL)) amt, COUNT(*) n FROM ({inner}) d",
+    row = con.execute(f"SELECT SUM(d.AMT) amt, COUNT(d.AMT) n, COUNT(*) gifts FROM ({inner}) d",
                       args).fetchone()
-    n = int(row["n"] or 0)
-    if n == 0:
+    n, gifts = int(row["n"] or 0), int(row["gifts"] or 0)
+    if gifts == 0:
         # A zero here is ambiguous and dangerous: it reads as "this donor gave nothing" when
         # it usually means the name was typed slightly differently ("… PAC" vs "… PAC SCC").
         # Never let a miss masquerade as a finding.
@@ -207,7 +234,6 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
         return QueryResult(value=None, rows=0, found=False, suggestions=near,
                            detail="0 itemized gift(s)")
 
-    detail = f"{n} itemized gift(s)"
     if not contributor_first:
         people = con.execute(f"""
             SELECT COUNT(DISTINCT UPPER(TRIM(COALESCE(d.CTRIB_NAMF,'')))) c FROM ({inner}) d
@@ -215,12 +241,18 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
         if people and people > 1:
             # Summing several people under one surname is how a nonexistent contributor
             # appeared.
-            detail += (f" across {people} DIFFERENT first names — this is not one contributor;"
-                       " pass contributor_first")
             con.close()
-            return QueryResult(value=None, rows=n, found=False, detail=detail)
+            return QueryResult(value=None, rows=gifts, found=False,
+                               detail=f"{gifts} itemized gift(s) across {people} DIFFERENT first "
+                                      "names — this is not one contributor; pass "
+                                      "contributor_first")
     con.close()
-    return QueryResult(value=float(row["amt"] or 0), rows=n, detail=detail)
+    left_out = _unread(gifts - n)
+    if n == 0:
+        # The name matched, but no gift states an amount: unknown money, never "$0.00".
+        return _no_rows(f"0 itemized gift(s) counted{left_out}")
+    return QueryResult(value=float(row["amt"]), rows=n,
+                       detail=f"{n} itemized gift(s){left_out}")
 
 
 def _filer_total(root: Path, *, filer_id: str, form_type: str = "A") -> QueryResult:
@@ -236,14 +268,16 @@ def _filer_total(root: Path, *, filer_id: str, form_type: str = "A") -> QueryRes
     extra = " AND UPPER(TRIM(r.FORM_TYPE)) = UPPER(TRIM(?))" if form_type else ""
     inner = DEDUPED_RECEIPTS.format(extra=extra)
     args: list[Any] = [str(filer_id)] + ([form_type] if form_type else [])
-    row = con.execute(
-        f"SELECT SUM(CAST(d.AMOUNT AS REAL)) amt, COUNT(*) n FROM ({inner}) d", args).fetchone()
+    row = con.execute(f"SELECT SUM(d.AMT) amt, COUNT(d.AMT) n, COUNT(*) gifts FROM ({inner}) d",
+                      args).fetchone()
     con.close()
-    n = int(row["n"] or 0)
+    n, gifts = int(row["n"] or 0), int(row["gifts"] or 0)
+    left_out = _unread(gifts - n)
     if n == 0:
-        return _no_rows(f"no schedule-{form_type} contributions for filer {filer_id}")
-    return QueryResult(value=float(row["amt"] or 0), rows=n,
-                       detail=f"{n} itemized schedule-{form_type} gift(s)")
+        return _no_rows(f"no schedule-{form_type} contributions"
+                        + (" counted" if left_out else "") + f" for filer {filer_id}{left_out}")
+    return QueryResult(value=float(row["amt"]), rows=n,
+                       detail=f"{n} itemized schedule-{form_type} gift(s){left_out}")
 
 
 def _top_contributor(root: Path, *, filer_id: str) -> QueryResult:
@@ -257,17 +291,24 @@ def _top_contributor(root: Path, *, filer_id: str) -> QueryResult:
 
     con = calaccess.connect(root)
     inner = DEDUPED_RECEIPTS.format(extra="")
+    # Only gifts with an amount are ranked. Read as 0.0, a contributor whose gifts all had
+    # blank amounts tied one whose stated total was $0. The rest are counted and named: an
+    # unknown amount could change who is largest, and the reader has to be told.
     rows = con.execute(f"""
-        SELECT d.CTRIB_NAML nm, d.CTRIB_NAMF nf, SUM(CAST(d.AMOUNT AS REAL)) amt,
-               COUNT(*) n
+        SELECT d.CTRIB_NAML nm, d.CTRIB_NAMF nf, SUM(d.AMT) amt, COUNT(*) n
         FROM ({inner}) d
+        WHERE d.AMT IS NOT NULL
         GROUP BY UPPER(TRIM(d.CTRIB_NAML)), UPPER(TRIM(COALESCE(d.CTRIB_NAMF,'')))
         ORDER BY amt DESC LIMIT 4
     """, (str(filer_id),)).fetchall()
+    unread = con.execute(f"SELECT COUNT(*) c FROM ({inner}) d WHERE d.AMT IS NULL",
+                         (str(filer_id),)).fetchone()["c"]
     row = rows[0] if rows else None
     con.close()
     if row is None:
-        return _no_rows(f"no contributions found for filer {filer_id}")
+        return _no_rows(f"no contributions {'counted' if unread else 'found'} for filer "
+                        f"{filer_id}{_unread(unread)}")
+    left_out = _unread(unread, " to this filer")
     top = float(row["amt"] or 0)
     tied = [r for r in rows if abs(float(r["amt"] or 0) - top) < TOLERANCE]
     names = [" ".join(x for x in (r["nf"], r["nm"]) if x).strip() for r in tied]
@@ -276,9 +317,9 @@ def _top_contributor(root: Path, *, filer_id: str) -> QueryResult:
         # rejected a "largest contributor" that was really a two-way tie. Return the tie.
         return QueryResult(value=" | ".join(sorted(names)), rows=len(tied),
                            detail=f"{len(tied)}-WAY TIE at ${top:,.0f} — not a single largest "
-                                  "contributor; do not word this as one")
+                                  f"contributor; do not word this as one{left_out}")
     return QueryResult(value=names[0], rows=int(row["n"] or 0),
-                       detail=f"${top:,.0f} across {row['n']} gift(s)")
+                       detail=f"${top:,.0f} across {row['n']} gift(s){left_out}")
 
 
 def _ie_total(root: Path, *, candidate_last: str, first: str = "", stance: str = "",
@@ -322,16 +363,10 @@ def _ie_total(root: Path, *, candidate_last: str, first: str = "", stance: str =
     # export has 31 such rows, all with a blank amount.
     dated = real_date_sql("d") if window else "1"   # with no window, d is never computed
     inside = f"({dated} AND {window})" if window else "1"
-    # A blank AMOUNT is money nobody stated, not $0: CAST made it 0.0 and COUNT(*) still counted
-    # it, so a window holding only such a row came back found, "$0.00, 1 expenditure(s)" --
-    # the zero this module exists to refuse. So only a plain decimal is read as money; anything
-    # else is NULL here, left out of the sum AND the count, and named in the detail. Not just
-    # blanks: CAST reads "N/A" as 0.0 and "1,000" as 1.0, figures nobody filed. The real export
-    # has 33 blanks and nothing else unreadable. A stated "0" is the filer's figure and counts.
-    a = "TRIM(COALESCE(s.AMOUNT, ''))"
-    unsigned = f"(CASE WHEN SUBSTR({a}, 1, 1) = '-' THEN SUBSTR({a}, 2) ELSE {a} END)"
-    amount = (f"(CASE WHEN {unsigned} GLOB '*[0-9]*' AND {unsigned} NOT GLOB '*[^0-9.]*'"
-              f" AND {unsigned} NOT GLOB '*.*.*' THEN CAST({a} AS REAL) END)")
+    # A blank AMOUNT is money nobody stated, not $0 (`amount_sql()`): NULL here, left out of the
+    # sum AND the count, and named in the detail. The real export has 33 blanks and nothing
+    # else unreadable.
+    amount = amount_sql("s.AMOUNT")
     row = con.execute(f"""
         SELECT SUM(CASE WHEN inside THEN amt END) amt, SUM(inside AND amt IS NOT NULL) n,
                SUM(inside AND amt IS NULL) unread_n,
@@ -405,15 +440,17 @@ class Query(NamedTuple):
 
 
 REGISTRY: dict[str, Query] = {
+    # v2 of the three receipt queries: an AMOUNT that is not a number is left out of the sum and
+    # the count and named (`amount_sql()`), where v1 read it as $0.00 -- or, for "1,000", $1.
     "calaccess.contributor_total": Query(
         _contributor_total, ("filer_id", "contributor"),
-        "contributions from one contributor (add contributor_first for an individual)", 1),
+        "contributions from one contributor (add contributor_first for an individual)", 2),
     "calaccess.filer_total": Query(
         _filer_total, ("filer_id",),
-        "total itemized contributions received by a filer", 1),
+        "total itemized contributions received by a filer", 2),
     "calaccess.top_contributor": Query(
         _top_contributor, ("filer_id",),
-        "the largest contributor to a filer, by itemized total", 1),
+        "the largest contributor to a filer, by itemized total", 2),
     "calaccess.ie_total": Query(
         _ie_total, ("candidate_last", "first"),
         "late independent expenditures naming a candidate; pass stance and since/until", 2),

@@ -80,10 +80,11 @@ class Contribution:
     contributor: str
     employer: str
     occupation: str
-    amount: float
+    amount: float | None    # None: no readable amount (queries.amount_sql), never $0
     date: str
     committee: str = ""
     filings: int = 1        # how many filings restated this one gift
+    amount_filed: str = ""  # the AMOUNT text as filed, for showing one that did not read
 
     @property
     def cite_url(self) -> str:
@@ -563,25 +564,26 @@ def contributions_to(root: Path, filer_id: str, *, top: int = 25,
     q = f"""
         SELECT * FROM (
             SELECT d.FILING_ID, ? AS FILER_ID, d.CTRIB_NAML, d.CTRIB_NAMF, d.CTRIB_EMP,
-                   d.CTRIB_OCC, d.AMOUNT, {iso_date_sql("d.RCPT_DATE")} AS CTRIB_DATE,
+                   d.CTRIB_OCC, d.AMOUNT, d.AMT, {iso_date_sql("d.RCPT_DATE")} AS CTRIB_DATE,
                    TRIM(COALESCE(d.RCPT_DATE, '')) AS FILED_DATE,
                    d.FILINGS
             FROM ({inner}) d)
         {where}
-        ORDER BY CAST(AMOUNT AS REAL) DESC
+        ORDER BY AMT DESC
         LIMIT ?
     """
     out = []
     for r in con.execute(q, args + [top]):
         name = " ".join(x for x in (r["CTRIB_NAMF"], r["CTRIB_NAML"]) if x).strip()
-        try:
-            amt = float(r["AMOUNT"] or 0)
-        except ValueError:
-            amt = 0.0
+        # Read as the queries read it, so the listing and a citable total agree on which gifts
+        # have an amount. A blank here was listed as $0, which reads as a stated zero; an
+        # amount that did not read sorts after every stated one (NULL is last in DESC).
         out.append(Contribution(filing_id=str(r["FILING_ID"]),
                                 filings=int(r["FILINGS"] or 1), filer_id=r["FILER_ID"],
                                 contributor=name, employer=r["CTRIB_EMP"] or "",
-                                occupation=r["CTRIB_OCC"] or "", amount=amt,
+                                occupation=r["CTRIB_OCC"] or "",
+                                amount=None if r["AMT"] is None else float(r["AMT"]),
+                                amount_filed=(r["AMOUNT"] or "").strip(),
                                 date=shown_date(r["CTRIB_DATE"], r["FILED_DATE"])))
     con.close()
     return out

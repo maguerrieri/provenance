@@ -799,7 +799,10 @@ def calaccess_contributions(filer_id: str, data: Path = DATA, cache: Path = None
     t = Table("amount", "contributor", "employer", "date", "restated", "cite this URL",
               box=None)
     for c in rows:
-        t.add_row(f"${c.amount:,.0f}", c.contributor[:30], c.occupation[:18] or c.employer[:18],
+        # As the IE listing does: an amount that did not read is not "$0". A blank says so, and
+        # anything else is shown as filed, escaped, since rich would read "[/]" as markup.
+        amt = f"${c.amount:,.0f}" if c.amount is not None else (escape(c.amount_filed) or "blank")
+        t.add_row(amt, c.contributor[:30], c.occupation[:18] or c.employer[:18],
                   c.date, (f"{c.filings}x" if c.filings > 1 else ""), c.cite_url)
     con.print(t)
     con.print(f"\n[yellow]{len(rows)} rows. Cite the filing page, not this table — a row here "
