@@ -175,6 +175,10 @@ def test_a_unit_is_a_whole_word():
                                                                           3.0, 7.0}
     assert money_values("$2bn, $3 mn, $4m. $5K $6 thousand $1.5 billion") == {
         2e9, 3e6, 4e6, 5e3, 6e3, 1.5e9}
+    # Abbreviations the first-letter read caught by accident, which a whole word must list.
+    assert money_values("$5MM, $6 mil, $2.5 bil, a $7M-a-year deal") == {5e6, 6e6, 2.5e9, 7e6}
+    # A letter that starts a designation, or is followed by a digit, is not a unit.
+    assert money_values("a $500 K-12 increase, $10 m2") == {500.0, 10.0}
     assert _claim("The council paid $120,000 more than planned in 2019.").status == "verified"
 
 
