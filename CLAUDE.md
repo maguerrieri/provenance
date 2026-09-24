@@ -596,12 +596,19 @@ copy. The claim file then names a copy that is cached, the check passes, and the
 C1 renders green on C2. Every fact on disk was consistent; the one that was wrong, which
 context the verifier read, was on no disk. So the verifier says it:
 - `vg handoff <qid>` prints the claim and each source's context with a context token
-  (`judgments.context_token()`: a short hash of the claim's question and answer and the
-  context), from one read of the claim file `vg judge` checks. The claim is in it because a
-  retry that rewrites only the answer keeps the sid and the context. The verifier runs the
-  command itself, so no transcription sits between what it reads and the token it hands back.
-  Every context line is printed behind `| `: it is page text, and printed bare between two
-  fixed lines it could close the block and go on to print a fake source.
+  (`judgments.context_token()`), from one read of the claim file `vg judge` checks. The token
+  is a short hash of everything the hand-off shows the verifier to judge from except the status:
+  the claim's question and answer, the citation's fields and the context. The claim and the
+  citation are in it because a retry that rewrites only the answer, or only a filing's date,
+  keeps the sid and the context, and `superseded` turns on that date. A field added to the
+  hand-off goes into the token too. The verifier runs the command itself, so no transcription
+  sits between what it reads and the token it hands back.
+- Everything it prints is agent- or page-authored, so it cannot be allowed to start a line.
+  Every context line prints behind `| `, split with `splitlines()` (a `\r`, `\x85` or U+2028
+  is a line break to some reader). Every control, format, surrogate or separator character
+  prints as an escape (`cli._printable()`). Split on `\n` alone, an ANSI erase-line or a U+2028
+  in page text faked a source header, and a lone surrogate in a claim made the print raise, so
+  no verdict could be recorded on it at all.
 - `vg judge --context <token>` is required for a page citation, and checked whenever it is
   given. A query citation needs none yet: it is tied to its run (`unjudgeable_query()`), though
   only to the run on disk when judge runs. The token is checked last, so a wrong verdict, id,
