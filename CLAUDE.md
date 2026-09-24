@@ -487,34 +487,47 @@ Nothing in the pipeline moves a claim between ids. A dependent still naming a re
 `human_review` with the input missing.
 
 **`vg build` and `vg status` are the rule's gate** (`questions.check()`, run by
-`cli._question_ids_fail()`). Each compares every claim with the question the run's
-`questions.json` holds for its id, and exits 1 on either break:
+`cli._question_ids()`). Each compares every claim with the question the run's `questions.json`
+holds for its id. Two breaks fail it:
 - a claim on an id the set does not list: a retired id whose claim was left in `claims/`, which
   would otherwise render beside its replacement;
-- a claim whose `question` differs from the text at its id, whitespace and Unicode composition
-  aside: a reworded or reused id, or a claim that misquotes its question. On disk the two look
-  alike, so both fail, and the message gives the fix for each.
+- a claim whose `question` is not the text at its id: a reworded or reused id, or a claim that
+  misquotes its question. On disk the two look alike, so both fail, and the message gives the
+  fix for each.
 
-Build renders nothing until both are fixed. Before the gate, `vg build` never read
-`questions.json`, and every command exited 0 on both. A `maps_from` still declared in the set is
-reported without failing: nothing applies it now, so no claim moves, and each is checked against
-the question at the id it sits on. Settle it and delete the key. An identity pair moved nothing,
-so it is not reported.
+A failing claim is left out of the review app and the status table, and the command exits 1,
+naming it last. The rest still render, as `load_claims()` skips an unreadable claim: one
+mis-filed claim must not cost the run every other one. A claim deriving from one left out reads
+its input as missing and goes to `human_review`. Before the gate, `vg build` never read
+`questions.json`, and every command exited 0 on both breaks.
+
+"The text at its id" is compared the way a snippet's normalized match is, through
+`normalize()`: whitespace, curly quotes and dashes, Unicode composition and case are folded,
+since copy-paste drifts on them and they print almost or wholly alike. A failure nobody can
+see is one nobody can fix. `normalize()` folds one character at a time, so the texts are
+composed (NFC) first, or an "e" and a combining accent never meet the "é" they print as.
+
+A `maps_from` still declared in the set is reported without failing: nothing applies it now, so
+no claim moves, and each is checked against the question at the id it sits on. Settle it and
+delete the key. An identity pair moved nothing, so it is not reported.
 
 `vg check-claim` runs the same comparison on the one claim a researcher is handing on, so a
-misquoted question fails there rather than stopping the whole run's review app at build. It
-checks against the set of the run the claim sits in, the directory holding its `claims/`, not
-`--data`: a researcher on a candidate run checks with the default `--data data`, whose set is
-the root template, not the copy retargeted to the candidate.
+misquoted question fails there, before build leaves it out of review. It checks against the set
+of the run the claim sits in, the directory holding its `claims/` (resolved, so a relative
+path from inside `claims/` works), not `--data`. A researcher on a candidate run checks with the
+default `--data data`, whose set is the root template, not the copy retargeted to the candidate.
 
 Which `questions.json` is the run's is #8. Until a run declares it, the gate reads the run's own
-(`data/<candidate>/questions.json`, which `vg new-candidate` writes), else the data root's. A set
-that can't be read as one question per id fails and names every problem: not a list, an entry
-with no id or text, or one id given twice. Ids differing only in case are one id, since they are
-one claim file and one shard on macOS's default disk. Read as empty, the set would report every
-claim as retired. Read as missing, it would check nothing, and so would falling back to the
-root's when the run's own can't be read (a dangling symlink included). With no set at all, the
-gate says so and checks nothing.
+(`data/<candidate>/questions.json`, which `vg new-candidate` writes), else the data root's. A
+candidate run's own copy is not updated when the template gains a question, so add a new one to
+each run's copy as well. A set that can't be read as one question per id fails the whole
+command, and build renders nothing, since no claim could be checked. The message names every
+problem: not a list, an entry with no id or text, an id no claim can carry (`QID_PATTERN`), or
+one id given twice. Ids differing only in case are one id, since they are one claim file and
+one shard on macOS's default disk. Read as empty, the set would report every claim as retired.
+Read as missing, it would check nothing, and so would falling back to the root's when the run's
+own can't be read (a dangling symlink included). With no set at all, the gate says so and checks
+nothing.
 
 What the gate can't see is a reused id once the new question's research has replaced the old
 claim. The claim then matches the set, and the shard's old verdicts apply to it wherever it cites

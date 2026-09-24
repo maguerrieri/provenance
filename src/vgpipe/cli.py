@@ -634,15 +634,15 @@ def _settle(claims: list[Claim], data: Path, cache_root: Path,
     return stale, recorded
 
 
-def _question_ids_fail(data: Path, claims: list[Claim]) -> bool:
-    """Check every claim against the question its id names in the run's questions.json, print
-    what breaks the stable-id rule, and say whether it failed (CLAUDE.md, "Question ids are
-    stable and never reused").
+def _question_ids(data: Path, claims: list[Claim]) -> set[str] | None:
+    """Check every claim against the question its id names in the run's questions.json, and
+    print what breaks the stable-id rule (CLAUDE.md, "Question ids are stable and never
+    reused"). Returns the ids of the claims that break it, or None when the question set can't
+    be read, so that no claim could be checked.
 
     `vg build` never read questions.json, so a claim on a retired id rendered beside its
     replacement, and one on a reworded or reused id rendered under the new question, while every
-    command exited 0. Only a readable question set can pass: an unreadable one fails, and none
-    at all is said out loud, since then nothing was checked.
+    command exited 0. No question set at all is said out loud, since then nothing was checked.
     """
     from . import questions
 
@@ -651,12 +651,12 @@ def _question_ids_fail(data: Path, claims: list[Claim]) -> bool:
         con.print(f"[yellow]no {questions.FILE} in {escape(str(data))} or "
                   f"{escape(str(data.parent))}, so no claim was checked against the question its "
                   f"id names[/]")
-        return False
+        return set()
     try:
         found = questions.check(claims, questions.load(path))
     except questions.UnreadableQuestions as e:
         con.print(f"[red]{escape(str(e))}[/]")   # escaped: it quotes the file's own ids
-        return True
+        return None
     where = escape(str(path))
     if found.pending:
         pairs = ", ".join(f"{q} from {old}" for q, old in found.pending)
@@ -667,17 +667,22 @@ def _question_ids_fail(data: Path, claims: list[Claim]) -> bool:
                   f"checked against the question at the id it sits on. Delete the key once that "
                   f"is settled.[/]")
     if found.unlisted:
-        # Named, so the advice below is read against the migration that meant to move it: the
-        # research is kept in claims-archive/ either way, but the question it answered is the
-        # mapped one's.
+        # Each is named with what the advice below should be read against: the migration that
+        # meant to move it (its research answered the mapped question), or the listed id it
+        # differs from only in case (the fix is the id, not archiving the research).
         mapped = {old: q for q, old in found.pending}
-        ids = ", ".join(f"{q} (maps_from of {mapped[q]})" if q in mapped else q
-                        for q in found.unlisted)
+
+        def named(q: str) -> str:
+            if q in found.case_of:
+                return f"{q} (the set has {found.case_of[q]}, which differs only in case)"
+            return f"{q} (maps_from of {mapped[q]})" if q in mapped else q
+
         con.print(f"[red]{len(found.unlisted)} claim(s) sit on an id {where} does not list: "
-                  f"{escape(ids)}. If the id was retired, move its claim from claims/ to "
-                  f"claims-archive/ and its shard out of judgments/, and point any derives_from "
-                  f"naming it at the new id. If the question is still asked, put it back under "
-                  f"that id.[/]")
+                  f"{escape(', '.join(named(q) for q in found.unlisted))}. If the id was retired, "
+                  f"move its claim from claims/ to claims-archive/ and its shard out of "
+                  f"judgments/, and point any derives_from naming it at the new id. If the "
+                  f"question is still asked, add it to {where} under that id: a candidate run's "
+                  f"own copy is not updated when the template gains a question.[/]")
     if found.reworded:
         con.print(f"[red]{len(found.reworded)} claim(s) answer another question than {where} asks "
                   f"at their id. Ids are never reused or reworded: give the new question a new "
@@ -689,7 +694,15 @@ def _question_ids_fail(data: Path, claims: list[Claim]) -> bool:
             con.print(Text(f"  {qid}: the claim answers {answered!r}\n"
                            f"  {' ' * len(qid)}  {questions.FILE} asks {asked!r}"),
                       soft_wrap=True)
-    return found.failed
+    return found.failing
+
+
+def _left_out(failing: set[str], where: str) -> None:
+    """The gate's last word, after everything else a command prints, so it is not scrolled
+    away: which claims were left out, and a failing exit."""
+    con.print(f"[red]{len(failing)} claim(s) left out of {where} until they answer the question "
+              f"their id names (above): {escape(', '.join(sorted(failing, key=qid_sort_key)))}[/]")
+    raise typer.Exit(1)
 
 
 @app.command()
@@ -711,11 +724,16 @@ def build(data: Path = DATA, cache: Path = None, race: str = "", candidate: str 
     # reproduced from the cached page, and replaces every support verdict with the recorded
     # one (or `unreviewed`).
     claims = _load_or_exit(data / "claims", trust_machine_fields=True)
-    if _question_ids_fail(data, claims):
-        # Before anything is written: rendered, such a claim reads as an answer to a question
-        # the run does not ask, or to one it was never researched for.
-        con.print("[red]review app not rendered: fix the claims above first.[/]")
+    failing = _question_ids(data, claims)
+    if failing is None:
+        con.print("[red]review app not rendered: no claim can be checked against a question set "
+                  "that can't be read.[/]")
         raise typer.Exit(1)
+    # Left out before anything reads them: rendered, such a claim reads as an answer to a
+    # question the run does not ask, or to one it was never researched for. The rest still
+    # render, as load_claims() skips an unreadable claim: one mis-filed claim must not cost the
+    # run every other one. A claim deriving from one left out reads its input as missing.
+    claims = [c for c in claims if c.question_id not in failing]
     detect(claims)
     records = _archive_records(data)
     _warn_unrecorded_snapshots(data / "claims", records)
@@ -734,6 +752,8 @@ def build(data: Path = DATA, cache: Path = None, race: str = "", candidate: str 
     _report_older_exports(claims, cache_root, recorded)
     html, js = render(claims, data / "out", title=title, cache_root=cache_root)
     con.print(f"[green]wrote[/] {html}\n[green]wrote[/] {js}")
+    if failing:
+        _left_out(failing, "the review app")
 
 
 @app.command()
@@ -1394,7 +1414,9 @@ def check_claim(path: Path, data: Path = DATA, cache: Path = None, race: str = "
     # The question set `vg build` will check this claim against: its run's, where the run is
     # the directory holding the claim's claims/. Not --data alone: a candidate run's claim is
     # checked with the default --data, whose set is the root template, not the retargeted copy.
-    run = path.parent.parent if path.parent.name == "claims" else data
+    # Resolved: `vg check-claim q1.json` from inside claims/ has "" for a parent name.
+    at = path.resolve()
+    run = at.parent.parent if at.parent.name == "claims" else data
     asked_in, asked = questions.find(run), None
     if asked_in is None:
         con.print(f"[dim]no {questions.FILE} for {escape(str(run))}, so the question was not "
@@ -1538,15 +1560,18 @@ def status(data: Path = DATA, cache: Path = None, race: str = ""):
     from .conflicts import detect
 
     claims = _load_or_exit(data / "claims", trust_machine_fields=True)
+    # Even with no claims: a pending maps_from, or a question set nothing can read, is worth
+    # settling before anyone researches on those ids.
+    failing = _question_ids(data, claims)
+    if failing is None:
+        raise typer.Exit(1)   # as build renders nothing: no claim could be checked
     if not claims:
         con.print("No claims yet.")
-        # Still read: a pending maps_from, or a question set nothing can read, is worth
-        # settling before anyone researches on those ids.
-        if _question_ids_fail(data, claims):
-            raise typer.Exit(1)
         return
     # Run the same offline checks `vg build` runs, so the summary can't disagree with what
     # the review app will actually show. Nothing is written back — this is a read-only view.
+    # That starts with leaving out the claims build leaves out.
+    claims = [c for c in claims if c.question_id not in failing]
 
     # The lists build checks against. This is a summary, so an ambiguous races/ falls back
     # rather than raising — but loudly, since a narrower list can pass rows build rejects.
@@ -1564,9 +1589,8 @@ def status(data: Path = DATA, cache: Path = None, race: str = ""):
         t.add_row(c.question_id, c.claim_type, c.status, str(len(c.sources)),
                   c.corroboration_note or "-", str(len(c.conflicts)))
     con.print(t)
-    # After the table, so it is not scrolled away; and failing, as build does.
-    if _question_ids_fail(data, claims):
-        raise typer.Exit(1)
+    if failing:
+        _left_out(failing, "this summary, as from the review app")
 
 
 if __name__ == "__main__":
