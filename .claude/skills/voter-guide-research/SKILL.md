@@ -100,10 +100,17 @@ Do not summarize the source rules for them — the agent definition carries them
 
    **Never** route a claim to the same agent that authored it.
 3. **Retry loop.** Retry on the *verifier agent's* verdicts too, not only mechanical
-   failures — `topic_only`, `contradicts` and `superseded` all mean the citation is wrong
-   even though every mechanical check passed. A retry that only ever hears "snippet not
-   found" fixes the quote and keeps the wrong document: that is how a superseded Form 700
-   survives a retry. Say which kind of failure it was.
+   failures — `topic_only` and `superseded` mean the citation is wrong even though every
+   mechanical check passed. A retry that only ever hears "snippet not found" fixes the
+   quote and keeps the wrong document: that is how a superseded Form 700 survives a retry.
+   Say which kind of failure it was.
+
+   **Not a retry: a `contradicts`.** It says the record argues against the claim, not that
+   the citation is wrong. The claim is `human_review` whatever its other sources say, and
+   the contradiction is listed with the conflicts. A retry that swaps the source for one
+   that agrees takes the disagreement off the review page without resolving it, so leave
+   it for the human. When a claim carrying one is retried for another failure, tell the
+   researcher to keep the contradicting source as it is.
 
    For each failing source, hand the failure reason back to a fresh
    `researcher` for that question — "your snippet was not on the page", "your snippet
@@ -152,7 +159,8 @@ other name, delete the stale file — `vg` refuses to load two files carrying th
 `question_id` rather than silently double-counting the question.
 
 A claim whose every source the verifier rejected is `human_review`, and rejected sources do
-not count toward corroboration. That is the point of the judgment pass: mechanical checks
+not count toward corroboration. One source judged `contradicts` sends its claim to
+`human_review` whatever the others say, and is listed with the conflicts. That is the point of the judgment pass: mechanical checks
 prove the quote is on the page, and only this pass asks whether the page supports the claim.
 A run that skips it produces green rows nobody has actually checked.
 

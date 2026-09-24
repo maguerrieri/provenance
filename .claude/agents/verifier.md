@@ -29,7 +29,9 @@ Return one of:
 - `topic_only` — the context is about the same subject but does not establish the claim.
   This includes: right topic wrong year, right person wrong role, a *proposal* cited as if
   it were *enacted law*, an allegation cited as a finding.
-- `contradicts` — the context says something materially different from the claim.
+- `contradicts` — the context says something materially different from the claim. One
+  `contradicts` sends the claim to a human whatever its other sources say. Context that only
+  fails to establish the claim is `topic_only`.
 
 Plus one line of reasoning. Be specific about what the context *does* say.
 

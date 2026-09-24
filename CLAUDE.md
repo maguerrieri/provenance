@@ -91,6 +91,11 @@ own evidence disagree, which `conflicts.py` treats as a finding, not noise to av
   verifier's note.
 - **`topic_only` and `superseded` are unchanged.** They leave the count, and send the claim to
   review only when every source is rejected.
+- **A `contradicts` is not retried away.** The skill's retry loop used to count it with the
+  other two as "the citation is wrong". A retry that swaps the source for one that agrees
+  takes the disagreement off the review page without resolving it, and the verdict lapses with
+  its sid. So the skill leaves it for the human, and a retry for another failure keeps the
+  source. That is prose, not a gate (#73).
 
 `detect()` reads verdicts now, so it runs at the end of `_settle()`. `vg build` and `vg status`
 used to run it first, on claim files loaded with their machine fields trusted. There `support`
