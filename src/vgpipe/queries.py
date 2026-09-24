@@ -970,9 +970,12 @@ def _could_change_ranking(groups: list[Any], tied: list[Any], top: float,
                 f"{late_part})")
 
     # Highest reach first, then by name as a tie is listed, so a refusal names the same three
-    # on every run: in load order, two late givers filed the same day could swap.
+    # on every run: in load order, two late givers filed the same day could swap. Reach to the
+    # cent: summed as floats, $6,000.01 and $0.02 reach 6000.030000000001, which put that giver
+    # ahead of one at $6,000.03 whose name comes first.
     moving = {id(e): e for k in could for e in entries.get(k, [])}
-    return ([described(k) for k in sorted(could, key=lambda k: (-hi[k], names[k].casefold()))],
+    return ([described(k) for k in sorted(could, key=lambda k: (-round(hi[k], 2),
+                                                                 names[k].casefold()))],
             list(moving.values()))
 
 

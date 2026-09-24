@@ -209,3 +209,14 @@ def test_a_refusal_names_late_givers_in_name_order_whatever_order_they_were_file
         assert not got.found, got.value
         assert ("ranking: Rue Brume ($0 on schedule-A, $6,000 late); Rue Wexley ($0 on "
                 "schedule-A, $6,000 late)") in got.note, got.note
+
+
+def test_a_refusal_orders_equal_reaches_by_name_to_the_cent(tmp_path):
+    """Summed as floats, $6,000.01 and $0.02 reach 6000.030000000001: ranked on that, a giver
+    whose name comes second went ahead of one who reached $6,000.03 exactly."""
+    late = (late_gift("Wexley", "6000.01", tran="L-1") + late_gift("Wexley", "0.02", tran="L-2")
+            + late_gift("Brume", "6000.03", tran="L-3"))
+    got = top(five_way(tmp_path, late=late))
+    assert not got.found, got.value
+    assert ("ranking: Rue Brume ($0 on schedule-A, $6,000 late); Rue Wexley ($0 on "
+            "schedule-A, $6,000 late)") in got.note, got.note
