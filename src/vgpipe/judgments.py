@@ -15,6 +15,7 @@ each get their own verdict, and the two can differ — a snippet can support one
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import json
 import os
@@ -399,7 +400,8 @@ def record(root: Path, question_id: str, sid: str, verdict: str, note: str = "",
 
 def rehome(root: Path, claims, moved: Mapping[str, str | None] | None = None,
            then: Callable[[], None] | None = None,
-           also: Sequence[Path] = (), *, exact: bool = False) -> Rehomed:
+           also: Sequence[Path] = (), *, exact: bool = False, creates: Sequence[Path] = (),
+           stamp: str | None = None) -> Rehomed:
     """Re-file verdicts under the question whose claim they judged, after claims have moved.
 
     Entries are keyed by source id, but the FILES are named by question id — so moving a claim
@@ -451,10 +453,16 @@ def rehome(root: Path, claims, moved: Mapping[str, str | None] | None = None,
     `root`: a directory (its `*.json` files) or a file (its bytes, or its absence). They are
     snapshotted into the same backup and restored with the shards. remap moves the claim files
     and appends its re-apply marker there, so verdicts, claims and marker roll back together —
-    rolling back only the shards put verdicts on old ids under claims on new ones. All of it
-    happens under the directory lock, so a `vg judge` cannot land between the read and the
-    rewrite and be lost. Returns a Rehomed.
+    rolling back only the shards put verdicts on old ids under claims on new ones. `creates`
+    names what `then` makes inside `root` that is not there yet: remap's claims-archive/<stamp>/,
+    where it archives stranded claims. A restore removes each one, so the stranded files, put
+    back in claims/ from the backup, are not left behind as a second copy too. `stamp` names
+    the verdict archive's run directory, so remap files an archived claim and its verdicts under
+    one name. All of it happens under the directory lock, so a `vg judge` cannot land between
+    the read and the rewrite and be lost. Returns a Rehomed.
     """
+    for path in creates:
+        _created_name(root, path)       # refuses a path outside the run before anything else
     with _lock(root):
         # Every shard is read before anything is written, so an unreadable one raises while
         # the directory is still intact.
@@ -466,8 +474,13 @@ def rehome(root: Path, claims, moved: Mapping[str, str | None] | None = None,
         moved_n = sum(1 for q, shard in after.items() for sid, j in shard.items()
                       if before.get(q, {}).get(sid) is not j)
         if after != before or then is not None:
-            _rewrite(root, before, after, orphans, then, also)
+            _rewrite(root, before, after, orphans, then, also, creates, stamp)
     return Rehomed(filed, archived, sorted(after), moved_n)
+
+
+def new_stamp() -> str:
+    """A run directory's name under an archive: the time, to the microsecond."""
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
 
 
 def _plan(before: dict[str, dict[str, Judgment]], claims,
@@ -654,7 +667,8 @@ def _archive(dest: Path, orphans: dict[str, dict[str, Judgment]]) -> None:
 
 def _rewrite(root: Path, before: dict[str, dict[str, Judgment]],
              after: dict[str, dict[str, Judgment]], orphans: dict[str, dict[str, Judgment]],
-             then: Callable[[], None] | None, also: Sequence[Path]) -> None:
+             then: Callable[[], None] | None, also: Sequence[Path],
+             creates: Sequence[Path] = (), stamp: str | None = None) -> None:
     """Make the shards read `after` and archive `orphans` as one transaction.
 
     No order of per-file writes is safe on its own: when two claims swap ids, each shard gains
@@ -667,13 +681,19 @@ def _rewrite(root: Path, before: dict[str, dict[str, Judgment]],
       not atomic — killed partway, it left a backup missing shards that a rollback then trusted,
       unlinking every shard it lacked;
     - if any of it raises, _restore() puts the shards (and everything in `also`) back from the
-      backup, and removes the archive it names;
+      backup, and removes the archive and everything in `creates`, which it names;
     - if the process dies, the backup stays, every reader refuses, and `vg judgments --rollback`
       runs the same _restore().
     """
     backup, building = backup_dir(root), _building_dir(root)
+    # A rollback removes what `creates` names, so it must not be there yet: one that is belongs
+    # to something else, and the rollback would delete it.
+    for path in creates:
+        if path.exists() or path.is_symlink():
+            raise FileExistsError(errno.EEXIST, "a re-home creates this, and it already exists",
+                                  str(path))
     shutil.rmtree(building, ignore_errors=True)     # a build that died: no shard was touched
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+    stamp = stamp or new_stamp()
     building.mkdir()
     try:
         for qid in before:
@@ -682,6 +702,11 @@ def _rewrite(root: Path, before: dict[str, dict[str, Judgment]],
             # Named up front, so a rollback can remove an archive this run began: its verdicts
             # go back into their shards, and a copy left behind would be archived again.
             _durable_text(building / _ARCHIVE_NAME, stamp)
+        if creates:
+            # The same for what `then` creates: remap's stranded claims go back into claims/
+            # from the snapshot, and a copy left in claims-archive/ would be archived again.
+            _durable_text(building / _CREATES_NAME,
+                          "\n".join(_created_name(root, p) for p in creates))
         if also:
             _snapshot(root, also, building)
         _fsync_dir(building)
@@ -712,6 +737,16 @@ def _rewrite(root: Path, before: dict[str, dict[str, Judgment]],
             then()
             for path in also:
                 _fsync_dir(path if path.is_dir() else root)
+            for path in creates:
+                # Every directory it made, whose entries are the renames into it, then its own
+                # entry in each parent up to the run directory.
+                if path.is_dir() and not path.is_symlink():
+                    for d, _dirs, _files in os.walk(path):
+                        _fsync_dir(Path(d))
+                for d in path.parents:
+                    _fsync_dir(d)
+                    if d == root:
+                        break
     except BaseException:
         _restore(root)
         raise
@@ -764,6 +799,14 @@ def _restore(root: Path) -> int:
     _fsync_dir(root)
     if stamp := _read_name(backup / _ARCHIVE_NAME):
         shutil.rmtree(archive_dir(root) / stamp, ignore_errors=True)
+    for made in _read_created(root, backup):
+        # Absent when the re-home began (_rewrite() checked), so whatever is there now it made.
+        if made.is_dir() and not made.is_symlink():
+            shutil.rmtree(made)
+        else:
+            made.unlink(missing_ok=True)
+        if made.parent.is_dir():
+            _fsync_dir(made.parent)
     _retire(root)
     return shards
 
@@ -823,6 +866,34 @@ def _read_also(backup: Path) -> list[tuple[str, str]]:
         if kind in ("dir", "file", "absent") and name and "/" not in name \
                 and name not in (".", ".."):
             out.append((kind, name))
+    return out
+
+
+def _created_name(root: Path, path: Path) -> str:
+    """`path` as the backup's CREATES marker lists it: relative to `root`, one plain name per
+    component. A restore deletes what the marker names, so anything that could reach outside the
+    run directory is refused here, and again by _read_created() on the way back in."""
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError:
+        parts = ()
+    if not parts or any(p in (".", "..") or "\\" in p for p in parts):
+        raise ValueError(f"a re-home creates only inside {root}, not {path}")
+    return "/".join(parts)
+
+
+def _read_created(root: Path, backup: Path) -> list[Path]:
+    """The paths a backup's CREATES marker lists; malformed lines are ignored rather than
+    trusted, since each is deleted."""
+    try:
+        text = (backup / _CREATES_NAME).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return []
+    out = []
+    for line in text.splitlines():
+        parts = line.split("/")
+        if line and all(p and p not in (".", "..") and "\\" not in p for p in parts):
+            out.append(root.joinpath(*parts))
     return out
 
 
@@ -893,9 +964,10 @@ def _discard_dir(root: Path) -> Path:
     return root / "judgments-backup.discard"
 
 
-# Inside the backup: the archive run directory this re-home writes, and the other directory it
-# changes (remap's claims/) with its snapshot.
+# Inside the backup: the archive run directory this re-home writes, the other directory it
+# changes (remap's claims/) with its snapshot, and what `then` creates (remap's claims archive).
 _ARCHIVE_NAME, _ALSO_NAME, _ALSO_DIR = "ARCHIVE", "ALSO", "also-files"
+_CREATES_NAME = "CREATES"
 
 
 def _copy(src: Path, dst: Path) -> None:
