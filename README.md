@@ -48,6 +48,12 @@ Serve it rather than opening `review.html` directly — several browsers disable
 `localStorage` on `file://` origins, which silently loses your progress. Export/import
 buttons cover the standalone case.
 
+`vg build` removes the previous `review.html` and `claims.json` from `out/` before anything
+else, so a build that refuses or fails leaves nothing for `vg serve` to show, and a reload
+while any build runs gets a 404 until it finishes. If it can't remove them, it says so and
+stops. Your checkmarks live in the browser, keyed by the title, and come back with the next
+build that succeeds. A tab you already have open keeps its page until you reload it.
+
 Reading the context is the point. ⌘F proves the words are on the page; only you can tell
 whether they support the claim.
 

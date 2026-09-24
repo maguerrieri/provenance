@@ -414,6 +414,38 @@ stop meaning anything.
 The review app must be served (`vg serve`), not opened as a file. Several browsers disable
 `localStorage` on `file://` origins and the checkbox state vanishes with no error.
 
+## A refused build leaves nothing to serve
+
+`vg build` renders nothing when it can't read what it would check or render: an unreadable
+question set, claim, verdict or archive file, among others. That wrote nothing, so the previous
+build's `out/review.html` and `out/claims.json` stayed. `vg serve` checks only that
+`review.html` exists, so it served that render without a word, and a reviewer went on ticking a
+page the pipeline had just refused to produce. That render predates whatever the build refused
+on, so it can hold a claim filed under an id that now asks another question: what the stable-id
+gate exists to keep out of review.
+
+So `vg build` removes the last render first, before any step that can stop it
+(`report.clear_render()`). Whatever stops the build then leaves no review app: a refusal, a
+crash, or a kill (a closed terminal or a tool's timeout included, which run no exit handler).
+`vg serve` refuses, naming a refused build as a cause, and a page reloaded from a running
+`vg serve` gets a 404. It gets one while any build runs, too, until that build writes the new
+render. Nothing is lost. The render is regenerable, and review progress lives in the browser's
+`localStorage`, keyed by the title, so it comes back with the next build that succeeds. Only the
+files a build writes are removed; anything else in `out/` stays. If they can't be removed, the
+build says so and stops, and they stay until someone removes them by hand.
+
+`render()` writes `claims.json` first and `review.html` last, each whole: a temp file named for
+the process, fsynced, then renamed into place (`report._write_whole()`, the shape of
+`judgments._write()`). A `review.html` in `out/` therefore always means a build finished
+writing it, never half a page or an earlier build's.
+
+Removing first, rather than on each exit, is the point. A refusal added later is covered
+without anyone remembering this, and so is an exit no handler runs on. **An output a failed run
+does not overwrite outlives the failure, and reads as that run's result.**
+
+Still open: a tab that already has the page open keeps it until it is reloaded, and nothing
+tells the reviewer it is stale (#122).
+
 ## Race-specific content lives in races/
 
 Nothing about a candidate, an office, or a state belongs in `src/`, the skill, or the agent
