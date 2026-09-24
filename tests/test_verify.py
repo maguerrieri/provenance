@@ -1534,7 +1534,8 @@ def test_contributions_count_each_gift_once(tmp_path):
     bob = [c for c in got if "Bob" in c.contributor]
     assert len(bob) == 1, f"the amended transaction was counted {len(bob)} times"
     assert bob[0].amount == 9900.0
-    assert sum(c.amount for c in got) == 9900.0 + 250.0
+    # the short row's padded AMOUNT is blank: listed, with no amount, never as $0
+    assert sum(c.amount for c in got if c.amount is not None) == 9900.0 + 250.0
 
 
 def test_a_transaction_a_later_amendment_dropped_is_not_counted(tmp_path):
@@ -6445,8 +6446,8 @@ def _definition_fingerprint(name):
 # What cannot change a value a query returns: display, messages, listings (finding aids, not
 # citations), the export metadata, and the comparison and command a result is checked with.
 _NOT_A_DEFINITION = {
-    "vgpipe.queries": {"Query", "QueryResult", "REGISTRY", "dataset", "describe_export",
-                       "export_date", "human_command", "matches"},
+    "vgpipe.queries": {"Query", "QueryResult", "REGISTRY", "_unread", "dataset",
+                       "describe_export", "export_date", "human_command", "matches"},
     "vgpipe.calaccess": {"COVER_FALLBACK", "Contribution", "DegradedDatabaseWarning",
                          "EXPORT_META", "EXPORT_URL", "_UNUSABLE", "_export_date",
                          "_read_export_info", "citable_snapshot", "committee_url",
@@ -6458,10 +6459,12 @@ _NOT_A_DEFINITION = {
 
 # name -> (version, fingerprint). See test_a_query_definition_cannot_change_unnoticed.
 QUERY_DEFINITIONS = {
-    "calaccess.contributor_total": (1, "c889da009c9c"),
-    "calaccess.filer_total": (1, "bff2b989d16e"),
-    "calaccess.top_contributor": (1, "21d238e9e26b"),
-    "calaccess.ie_total": (2, "2f8f610a5a0f"),
+    "calaccess.contributor_total": (2, "6faf00c6efd5"),
+    "calaccess.filer_total": (2, "2254fd2c42f7"),
+    "calaccess.top_contributor": (2, "a36018a98d16"),
+    # moved without a bump: amount_sql() is ie_total's own amount expression, extracted
+    # unchanged, and DEDUPED_RECEIPTS, which it does not read, changed beside it
+    "calaccess.ie_total": (2, "7fb5ac423749"),
 }
 
 
