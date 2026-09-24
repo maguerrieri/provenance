@@ -5928,7 +5928,7 @@ def test_judge_records_a_query_citation_with_no_page(tmp_path, monkeypatch):
     (tmp_path / "claims" / "q1.json").write_text(
         Claim(question_id="q1", question="?", answer="a", sources=[q]).model_dump_json())
     assert _vg("verify", "--data", tmp_path)[0] == 0
-    code, out = _vg("judge", "q1", q.sid, "supports", "--data", tmp_path)
+    code, out = _vg("judge", "q1", q.sid, "supports", "--data", tmp_path, *_ctx(tmp_path, q.sid))
     assert code == 0, out
     assert judgments.load(tmp_path, "q1")[q.sid].verdict == "supports"
 
@@ -5980,7 +5980,8 @@ def test_a_cache_root_holding_only_the_calaccess_database_is_accepted(tmp_path, 
         Claim(question_id="q1", question="?", answer="a", sources=[q]).model_dump_json())
     (root / "cache" / "calaccess").mkdir(parents=True)
     assert _vg("verify", "--data", run, "--cache", root)[0] == 0
-    code, out = _vg("judge", "q1", q.sid, "supports", "--data", run, "--cache", root)
+    code, out = _vg("judge", "q1", q.sid, "supports", "--data", run, "--cache", root,
+                    *_ctx(run, q.sid))
     assert code == 0, out
     assert judgments.load(run, "q1")[q.sid].verdict == "supports"
 
@@ -6295,6 +6296,8 @@ def _query_run_with_verdict(tmp_path, monkeypatch, version=1):
     (data / "claims" / "q1.json").write_text(
         Claim(question_id="q1", question="?", answer="a", sources=[s]).model_dump_json())
     for args in (["verify"], ["judge", "q1", s.sid, "supports"]):
+        if args[0] == "judge":
+            args += _ctx(data, s.sid)
         res = CliRunner().invoke(cli.app, [*args, "--data", str(data)])
         assert res.exit_code == 0, res.output
     return data, s
@@ -6337,7 +6340,8 @@ def test_bumping_a_query_version_flags_its_citations_and_stales_its_verdicts(tmp
     # re-judging under v2 settles it; a checkout that only knows v1 does not trust it — and
     # since its claim file was verified under v2 too, the row waits on `vg verify`, not on a
     # verifier (`vg judge` would refuse it), so it is blocked rather than counted in N
-    res = CliRunner().invoke(cli.app, ["judge", "q1", s.sid, "supports", "--data", str(data)])
+    res = CliRunner().invoke(cli.app, ["judge", "q1", s.sid, "supports", "--data", str(data),
+                                       *_ctx(data, s.sid)])
     assert res.exit_code == 0, res.output
     assert _unjudged(data) == (0, 1, 0, 0)
     monkeypatch.setitem(queries.REGISTRY, "test.total", queries.Query(fn, required, desc, 1))
@@ -6388,6 +6392,8 @@ def test_an_older_export_is_reported_but_the_verdict_stands(tmp_path):
     (root / "claims" / "q1.json").write_text(
         Claim(question_id="q1", question="?", answer="a", sources=[s]).model_dump_json())
     for args in (["verify"], ["judge", "q1", s.sid, "supports"]):
+        if args[0] == "judge":
+            args += _ctx(root, s.sid)
         res = CliRunner().invoke(cli.app, [*args, "--data", str(root)])
         assert res.exit_code == 0, res.output
     assert judgments.load(root, "q1")[s.sid].export_date == "2026-09-01"
@@ -6700,7 +6706,8 @@ def test_judge_checks_the_run_of_the_question_it_records_for(tmp_path, monkeypat
     assert CliRunner().invoke(cli.app, ["verify", "--data", str(data), "--qid", "q2"]
                               ).exit_code == 0          # q2 at v2; q1 still says v1
 
-    ok = CliRunner().invoke(cli.app, ["judge", "q2", s.sid, "supports", "--data", str(data)])
+    ok = CliRunner().invoke(cli.app, ["judge", "q2", s.sid, "supports", "--data", str(data),
+                                      *_ctx(data, s.sid, "q2")])
     assert ok.exit_code == 0, ok.output
     assert judgments.load(data, "q2")[s.sid].query_version == 2
     stale = CliRunner().invoke(cli.app, ["judge", "q1", s.sid, "supports", "--data", str(data)])

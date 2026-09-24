@@ -1198,6 +1198,8 @@ def handoff(question_id: str, data: Path = DATA, cache: Path = None):
             line(f"  {_printable(why or 'it has no context')}", "yellow")
             continue
         judgeable += 1
+        if s.query is not None:   # the token names the run too, so show which it was
+            line(f"  query run: {_printable(judgments.describe_run(s.query.name, v.query_run))}")
         # Every line of it prefixed, so page text can't end the block early and go on to print
         # what reads as this command's own output. splitlines(), not split("\n"): a \r, \x85
         # or U+2028 is a line break to some reader, and each one starts a prefixed line here.
@@ -1226,15 +1228,15 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
 
     verdict: supports | topic_only | contradicts | superseded
 
-    --context is the context token `vg handoff` printed beside the source: required for a page
-    citation, and checked whenever it is given.
+    --context is the context token `vg handoff` printed beside the source. Required: without
+    it nothing says which claim, context or query run the verdict is about.
 
     Refuses, writing nothing, unless the named claim cites the source, the copy of the page
     `vg verify` built its context from is still the one cached, and the context it has now is
     the one the token names. A verdict filed anywhere else is read by nothing — `q07` for `q7`,
     or a sid another claim cites — while the command reported success and the judgment pass
-    looked done; one stamped from another copy, or on a context rebuilt since the verifier was
-    handed it, describes text the verifier never read.
+    looked done; one stamped from another copy, or on a context rebuilt or a query re-run
+    since the verifier was handed it, describes what the verifier never read.
 
     The verdict also records the claim's fingerprint (its question and answer as the claim file
     reads now), so a retry that rewrites the claim after this can be told apart from one that
@@ -1292,7 +1294,7 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
     # Last, so a wrong id, sid or copy is still what a refusal names first. The copy check above
     # passes a re-verify that rebuilt the context from a newer cached copy; this is what doesn't.
     if why := judgments.wrong_context(
-            claim, source, context, required=source.query is None,
+            claim, source, context,
             handoff=f"vg handoff {shlex.quote(question_id)}{_run_args(data, cache)}"):
         _refuse(f"not recorded: {why}")
     try:
