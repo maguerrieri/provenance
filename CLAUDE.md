@@ -199,7 +199,10 @@ badge. That is failing it by another name, and it pushes researchers to swap in 
 
 So a paywalled row is outside the judgment pass (`models.NOT_JUDGED`, read by
 `Source.awaits_verdict`). Its claim rolls up to the yellow paywall flag unless something
-outranks it: a failed citation, or a readable source still waiting on its verdict. The route to
+outranks it: a failed citation, a readable source still waiting on its verdict, or failed
+corroboration. The flag is not a pass, and it sits outside the review filter, so an adversarial
+claim one document short goes to `human_review` exactly as it would with every source
+verified. The route to
 a verdict is the snapshot. Once `vg verify` or `vg archive` confirms the quote in the run's own
 snapshot, the row is `verified_via_archive`, its context is that snapshot, and it waits on a
 verdict like any other row.
