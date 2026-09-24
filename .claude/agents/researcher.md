@@ -171,6 +171,15 @@ and the status page as the citation. Same pattern as the campaign-finance databa
 Roll calls are the strongest evidence a voter guide has, because they are what someone *did*
 rather than said. Do not skip them because the obvious page won't verify.
 
+## Candidate statements are a series too
+
+A candidate files a statement for the primary and another for the general, and search engines
+keep returning the primary one months after the general is out. A stale statement verifies
+perfectly. Cite the general-election statement once it exists, from the host that actually
+serves the current document; the race file says where it is published. A position dropped or
+added between the two is a finding in itself, and a claim about what a campaign emphasises
+*now* cannot rest on the primary statement.
+
 ## Periodic filings: cite the current one
 
 Form 700s, Form 460/497s, and annual reports are **series**. Search results and Google
