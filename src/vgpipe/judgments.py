@@ -640,6 +640,11 @@ def unjudgeable_query(query, ran, cache_root: Path) -> str:
             f"commands.")
 
 
+def describe_run(name: str, run) -> str:
+    """How `vg handoff` names the `QueryRun` a query citation's context came from."""
+    return f"{name} v{run.version}{_against(name, run.export_date)} under {run.cache_root}"
+
+
 def _against(name: str, export_date: str) -> str:
     """ " against <the export>", or "" for a query whose dataset has no exports."""
     from . import queries
@@ -772,9 +777,10 @@ def unjudgeable_page(source, seen, cache_root: Path) -> str:
 def context_token(claim, source) -> str:
     """A short fingerprint of what `vg handoff` shows a verifier for `source`: the claim's
     question and answer, the source's citation (url, publisher, author, date, source type,
-    page, snippet) and its context window. Everything it prints for the verifier to judge from,
-    that is, but the status. "" for a source with no context. `vg judge --context` must hand
-    it back.
+    page, snippet) and its context window, and for a query citation the run that produced that
+    context (definition, export and cache root). Everything it prints for the verifier to judge
+    from, that is, but the status. "" for a source with no context, or a query citation with no
+    recorded run. `vg judge --context` must hand it back.
 
     `vg judge` reads the claim file as it is when judge runs, and nothing from the verifier
     said what it had read. So a re-verify landing while a verifier worked (another run
@@ -782,6 +788,9 @@ def context_token(claim, source) -> str:
     it could stamp and a context no verifier had seen, and the row rendered green on it. A retry
     that rewrote only the answer, or only a filing's date, keeps the sid and the context, and
     did the same with a claim no verifier had seen: `superseded` turns on exactly that date.
+    A query re-verified under a new definition or export rewrites the run beside a context that
+    can read exactly as before, and judge then stamped the new definition on a verdict about the
+    old one: the run is in the token because the text alone cannot tell the two apart.
     The token is how the verifier says which one it read. Longer than a sid, so the two are not
     mistaken for each other. A field added to the hand-off belongs here too."""
     context = source.verification.context
@@ -790,17 +799,24 @@ def context_token(claim, source) -> str:
     shown = (claim.question, claim.answer, source.url, source.publisher, source.author,
              source.date or "", source.source_type, str(source.page or ""), source.snippet,
              context)
+    if source.query is not None:
+        run = source.verification.query_run
+        if run is None:   # nothing says which calculation printed it, so nothing to name
+            return ""
+        # The root as the claim file spells it, not resolved: resolving reads the working
+        # directory, which can differ between `vg handoff` and `vg judge`.
+        shown += (str(run.version), run.export_date, run.cache_root)
     # surrogatepass: a claim file is read with json.loads, which keeps a lone surrogate that
     # strict UTF-8 would refuse to encode, and a crash here would stop every verdict on it.
     return hashlib.sha256("\x00".join(shown).encode("utf-8", "surrogatepass")).hexdigest()[:16]
 
 
-def wrong_context(claim, source, token: str, *, required: bool, handoff: str) -> str:
+def wrong_context(claim, source, token: str, *, handoff: str) -> str:
     """Why a verdict handed back with `token` is not about what this source's claim and context
-    are now, or "". `required` is whether a verdict on this source must carry a token at all: a
-    page citation's must, and a query citation's, already tied to its run
-    (`unjudgeable_query()`), need not. `handoff` is the `vg handoff` command, with the run's
-    --data and --cache, that prints what to judge.
+    are now, or "". Every verdict must carry a token: a query citation's too, since the run
+    check (`unjudgeable_query()`) ties it only to the run on disk when judge runs, not to the
+    one the verifier read. `handoff` is the `vg handoff` command, with the run's --data and
+    --cache, that prints what to judge.
 
     The token is agent-supplied and the context is read from a claim file loaded trusted, and
     both are safe for the same reason: this can refuse, never grant. A forged token matching
@@ -809,15 +825,20 @@ def wrong_context(claim, source, token: str, *, required: bool, handoff: str) ->
     one could retry with it and record a verdict about text it has not read."""
     token = token.strip().lower()
     if not token:
-        if not required:
-            return ""
-        return (f"a verdict on a page citation must name the context it judged: pass --context "
-                f"with the context token `{handoff}` printed beside this source")
+        return (f"a verdict must name the context it judged: pass --context with the context "
+                f"token `{handoff}` printed beside this source")
     if token != context_token(claim, source):
-        return (f"you were handed a different claim, citation or context (token {token}) from "
-                f"the one this source has now: it has changed since, so your verdict is about "
-                f"text the pipeline no longer shows. Run `{handoff}` again, read what it prints, "
-                f"and judge that")
+        if source.query is None:
+            return (f"you were handed a different claim, citation or context (token {token}) "
+                    f"from the one this source has now: it has changed since, so your verdict "
+                    f"is about text the pipeline no longer shows. Run `{handoff}` again, read "
+                    f"what it prints, and judge that")
+        return (f"you were handed a different claim, citation, context or query run (token "
+                f"{token}) from the one this source has now: it has changed since, and a query "
+                f"re-run under another definition, export or cache root changes the token even "
+                f"where its result reads the same, so your verdict is about a calculation the "
+                f"pipeline no longer shows. Run `{handoff}` again, read what it prints, and "
+                f"judge that")
     return ""
 
 

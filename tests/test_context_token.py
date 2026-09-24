@@ -14,13 +14,21 @@ from __future__ import annotations
 import json
 import re
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
 
 from vgpipe import cli, judgments, queries
 from vgpipe.fetch import cache_path
-from vgpipe.models import EXTRACTOR_VERSION, Claim, PageCache, QueryCitation, Source
+from vgpipe.models import (
+    EXTRACTOR_VERSION,
+    Claim,
+    PageCache,
+    QueryCitation,
+    QueryRun,
+    Source,
+)
 
 URL = "https://bay-courier.example/tideland-lease"
 SNIPPET = "voted 5-2 to adopt the tideland lease"
@@ -71,6 +79,10 @@ def _handed(run) -> dict[str, tuple[str, str]]:
     """{sid: (token, context)} as `vg handoff q1` prints them: what a verifier is given."""
     code, out = _vg("handoff", "q1", "--data", run)
     assert code == 0, out
+    return _handed_from(out)
+
+
+def _handed_from(out: str) -> dict[str, tuple[str, str]]:
     handed = {}
     for m in re.finditer(r"sid (\w+)  context token (\w+)\n(?:  (?!context:).*\n)*"
                          r"  context:\n((?:  \| .*\n)+)", out):
@@ -332,29 +344,130 @@ def test_a_lone_surrogate_does_not_stop_the_token():
     assert len(judgments.context_token(claim, s)) == 16
 
 
+TOTAL = "calaccess.test_total"
+
+
 @pytest.fixture
 def total(monkeypatch):
-    monkeypatch.setitem(queries.REGISTRY, "test.total", queries.Query(
-        lambda root, **kw: queries.QueryResult(value=4321.0), ("filer_id",), "test", 1))
-    return _source(query=QueryCitation(name="test.total", params={"filer_id": "7"},
-                                       expected="4321"))
+    """A query citation, and ways to move what produced its context: a new definition, a
+    database rebuilt from a newer export. Its value and note never move, so its context
+    doesn't either."""
+    from vgpipe import calaccess
+
+    export = {"date": "2030-01-02"}
+
+    def define(version: int) -> None:
+        monkeypatch.setitem(queries.REGISTRY, TOTAL, queries.Query(
+            lambda root, **kw: queries.QueryResult(value=4321.0, detail="3 filings"),
+            ("filer_id",), "test", version))
+
+    define(1)
+    monkeypatch.setattr(calaccess, "export_info", lambda root: {"export_date": export["date"]})
+    return SimpleNamespace(
+        source=_source(query=QueryCitation(name=TOTAL, params={"filer_id": "7"},
+                                           expected="4321")),
+        bump=lambda: define(2),
+        refresh=lambda: export.update(date="2030-02-03"))
 
 
-def test_a_query_verdict_needs_no_token_but_a_wrong_one_is_refused(tmp_path, total):
-    """A query citation is already tied to its run (`unjudgeable_query()`), so it needs no
-    token. One that is given is still checked: it can only refuse."""
-    (tmp_path / "cache").mkdir()
-    (tmp_path / "claims").mkdir()
-    (tmp_path / "claims" / "q1.json").write_text(Claim(
-        question_id="q1", question="?", answer="a", sources=[total]).model_dump_json())
-    assert _vg("verify", "--data", tmp_path)[0] == 0
-    [(token, _)] = _handed(tmp_path).values()
+def _query_run(tmp_path, source: Source):
+    """A run citing one query, verified against a cache root of its own, and that root."""
+    run, root = tmp_path / "run", tmp_path / "root"
+    (root / "cache").mkdir(parents=True)
+    (run / "claims").mkdir(parents=True)
+    (run / "claims" / "q1.json").write_text(Claim(
+        question_id="q1", question="How much did the committee raise?", answer="$4,321.",
+        sources=[source]).model_dump_json())
+    code, out = _vg("verify", "--data", run, "--cache", root)
+    assert code == 0, out
+    return run, root
 
-    code, out = _vg("judge", "q1", total.sid, "supports", "--context", "0" * 16,
-                    "--data", tmp_path)
+
+def _handed_under(run, root) -> dict[str, tuple[str, str]]:
+    code, out = _vg("handoff", "q1", "--data", run, "--cache", root)
+    assert code == 0, out
+    return _handed_from(out)
+
+
+@pytest.mark.parametrize("change", ["definition", "export", "cache root"])
+def test_a_query_verdict_on_a_run_replaced_since_the_hand_off_is_refused(tmp_path, total,
+                                                                         change):
+    """The query counterpart of the page race. Handed a context the query produced under one
+    definition (or export, or database), the verifier works while the query is re-verified
+    under another. The claim file then carries the new run, which agrees with the registry and
+    the root, so the run check passes, and the verdict about the old calculation would be
+    stamped as current. The re-run printed the same value and note, so its context reads the
+    same: only a token covering the run tells the two apart."""
+    s = total.source
+    run, root = _query_run(tmp_path, s)
+    [(token1, handed1)] = _handed_under(run, root).values()
+    assert "4321" in handed1
+
+    if change == "definition":
+        total.bump()
+    elif change == "export":
+        total.refresh()
+    else:
+        root = tmp_path / "rebuilt"
+        (root / "cache").mkdir(parents=True)
+    assert _vg("verify", "--data", run, "--cache", root)[0] == 0   # the re-verify
+    [(token2, handed2)] = _handed_under(run, root).values()
+    assert handed2 == handed1, "the re-run reads the same"
+    assert token2 != token1
+
+    code, out = _vg("judge", "q1", s.sid, "supports", "--context", token1,
+                    "--data", run, "--cache", root)
+    assert code == 1 and "not recorded" in out and "query run" in out, out
+    assert f"vg handoff q1 --data {run} --cache {root}" in out, out
+    assert token2 not in out, "a refusal that printed the current token invites a blind retry"
+    assert _shards(run) == {}, "refused, writing nothing"
+
+    code, out = _vg("judge", "q1", s.sid, "supports", "--context", token2,
+                    "--data", run, "--cache", root)
+    assert code == 0 and "supports recorded for q1" in out, out
+    j = judgments.load(run, "q1")[s.sid]
+    assert (j.query_version, j.export_date) == (
+        2 if change == "definition" else 1,
+        "2030-02-03" if change == "export" else "2030-01-02")
+
+
+def test_the_hand_off_names_the_run_a_query_context_came_from(tmp_path, total):
+    """The token covers the run, so the hand-off shows it: what the token names is what the
+    verifier was shown."""
+    run, root = _query_run(tmp_path, total.source)
+    code, out = _vg("handoff", "q1", "--data", run, "--cache", root)
+    assert code == 0, out
+    assert (f"  query run: {TOTAL} v1 against the CAL-ACCESS export of 2030-01-02 "
+            f"under {root}") in out, out
+
+
+def test_a_query_verdict_without_a_token_is_refused(tmp_path, total):
+    """Tied only to the run on disk when `vg judge` runs, a query verdict could be about any
+    run before it. It carries the token too, and the refusal says what to pass."""
+    s = total.source
+    run, root = _query_run(tmp_path, s)
+    for given in ([], ["--context", ""]):
+        code, out = _vg("judge", "q1", s.sid, "supports", *given, "--data", run,
+                        "--cache", root)
+        assert code == 1 and "--context" in out, out
+        assert f"vg handoff q1 --data {run} --cache {root}" in out, out
+    code, out = _vg("judge", "q1", s.sid, "supports", "--context", "0" * 16, "--data", run,
+                    "--cache", root)
     assert code == 1 and "not recorded" in out, out
-    assert _shards(tmp_path) == {}
-    for given in ("", token):
-        code, out = _vg("judge", "q1", total.sid, "supports", "--context", given,
-                        "--data", tmp_path)
-        assert code == 0, out
+    assert _shards(run) == {}
+
+
+def test_a_query_context_nothing_says_was_run_gets_no_token(total):
+    """A query context with no recorded run could come from any definition, so no token can
+    name it: judge refuses every token for it, and never has one to match."""
+    s = total.source
+    s.verification.context = f"{TOTAL}(filer_id=7) = 4321.0  [3 filings]"
+    claim = Claim(question_id="q1", question="?", answer="a", sources=[s])
+    assert judgments.context_token(claim, s) == ""
+    tokens = set()
+    for version, export, root in ((1, "2030-01-02", "a"), (2, "2030-01-02", "a"),
+                                  (1, "2030-02-03", "a"), (1, "2030-01-02", "b")):
+        s.verification.query_run = QueryRun(version=version, export_date=export,
+                                            cache_root=root)
+        tokens.add(judgments.context_token(claim, s))
+    assert len(tokens) == 4 and "" not in tokens
