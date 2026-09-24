@@ -265,7 +265,8 @@ refused marker as "snippet contains [], a page locator". Anything from a page, a
 exception goes through `escape()` before it reaches the console, and text a researcher may
 copy (page text, a query value) is printed as `Text` with `soft_wrap=True`, which also stops
 `:ok:` becoming an emoji and an 80-column wrap putting line breaks in a snippet. `vg fetch`,
-`vg check`, `vg check-claim`, and the `vg verify` / `vg judgments` tables do; other prints in
+`vg check`, `vg check-claim`, the `vg verify` / `vg judgments` tables, and the
+`vg source-import-curl` and `vg source-access --run-recipe` errors do; other prints in
 `cli.py` (the `[red]{e}[/]` error lines, `vg archive`'s snapshot notes, the query no-match
 note) still don't.
 
@@ -700,8 +701,42 @@ listing more names:
   it is kept only as far as the page, without its query or `;jsessionid=` parameters, and an
   `origin` or `referer` holding a login is refused, on import and by `run()`.
 
-Still open: a credential in the recipe URL's query string or in the body (#52). Parameter names
-need their own rule, because `session` is often a legislative session.
+A credential can also ride in the recipe URL's parameters or in the body, and those are
+**refused, not dropped** (#52). A header describes who is asking, so a recipe without one still
+asks the same question. A parameter is part of the question. Drop one the rule misreads, such
+as a search's `key=LastName`, and the recipe still runs and returns plausible results for a
+broader search: the silent substitution this registry exists to prevent. So the import stops
+and names each parameter (never its value), and a human removes it from the paste or records
+the endpoint by hand. `run()` runs the same check after filling, since a param can hold a whole
+`name=value` pair. Every channel is read, in one function (`_credential_params()`) that both
+callers use:
+- the query, the fragment, and each path segment's `;` parameters;
+- the URL in an `origin` or `referer` header. The import already strips the referer's query,
+  but a hand-edited recipe can put one back;
+- a form body, and a JSON body's keys at any depth;
+- inside any value, the keys of JSON and the parameters of a URL (a `next` or `callback`
+  link carries a query of its own).
+
+Pairs are read twice, split on `&` alone and on `&` and `;`, because servers differ: splitting
+on `;` alone cut up a JSON value holding one, and the key after it went unread. A body that is
+neither JSON nor form-encoded is refused, because its fields can't be read: a multipart form
+carries its CSRF token in a part.
+
+**Parameter names need their own rule.** The header pattern matches parts of words, and in a
+parameter name those parts mean other things: `sess` in `?session=2025-2026` is a legislative
+session, `auth` is in `author` and `authority`, `pass` is in `passed`, `pin` is a parcel
+number. `credential_param()` splits a name into words (`apiKey`, `api_key` and `X-Api-Key` all
+hold `key`) and matches whole words, a few parts no ordinary word contains (`token`, `csrf`,
+`passw`: they catch `csrfmiddlewaretoken`, which has no separators to split on), and
+`session` followed by `id`. `key` is a whole word or the end of a few named compounds
+(`apikey`), since a part match took `turkey` and `hockey` with it. Bare `session` passes on
+purpose, so a web session sent as `?session=` is not caught. `ticket` is left out: in public
+records it is a citation number, and a single-sign-on ticket is spent by the time the browser
+shows the page. The false positives are accepted: `sort_key`, `pageToken`, and a legislature
+that numbers its sessions as `SessionID`. Each costs a hand-recorded entry, while the opposite
+mistake publishes a credential. A message repeats a flagged name only if it is short and
+word-like. A value can land in a name slot (a JSON map keyed by session id), so any other name
+is described instead.
 
 The habit worth keeping: when a source looks browser-only, open dev tools and see what the
 UI is calling. The FPPC portal is JS; its data is a cookieless JSON POST.
