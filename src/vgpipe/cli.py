@@ -679,10 +679,11 @@ def _question_ids(data: Path, claims: list[Claim]) -> set[str] | None:
 
         con.print(f"[red]{len(found.unlisted)} claim(s) sit on an id {where} does not list: "
                   f"{escape(', '.join(named(q) for q in found.unlisted))}. If the id was retired, "
-                  f"move its claim from claims/ to claims-archive/ and its shard out of "
-                  f"judgments/, and point any derives_from naming it at the new id. If the "
-                  f"question is still asked, add it to {where} under that id: a candidate run's "
-                  f"own copy is not updated when the template gains a question.[/]")
+                  f"move its claim from claims/ to claims-archive/ and its shard from "
+                  f"judgments/ to judgments-archive/, and point any derives_from naming it at "
+                  f"the new id. If the question is still asked, add it to {where} under that "
+                  f"id: a candidate run's own copy is not updated when the template gains a "
+                  f"question.[/]")
     if found.reworded:
         con.print(f"[red]{len(found.reworded)} claim(s) answer another question than {where} asks "
                   f"at their id. Ids are never reused or reworded: give the new question a new "
@@ -1198,9 +1199,9 @@ def show_judgments(data: Path = DATA, question_id: str = "",
         # judged a claim that is gone, or was written under an id no claim ever had.
         con.print(f"[yellow]{sum(unowned.values())} verdict(s) sit in judgments/ under an id no "
                   f"claim has ({escape(_shard_names(unowned))}), so nothing reads them. Their "
-                  f"claim is gone, or never had that id. Move each out of judgments/ to keep "
-                  f"it, or put back the claim it judged. Do not delete one: that discards its "
-                  f"verdicts.[/]")
+                  f"claim is gone, or never had that id. Move each to judgments-archive/ to "
+                  f"keep it, or put back the claim it judged. Do not delete one: that discards "
+                  f"its verdicts.[/]")
     if blocked:
         con.print(f"[dim]{blocked} more source(s) have nothing a verifier can judge yet: the "
                   f"citation failed, is paywalled, was never verified, or changed since "

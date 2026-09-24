@@ -75,7 +75,8 @@ def test_a_claim_on_an_id_the_question_set_does_not_list_is_left_out_and_fails(t
     code, out = _vg("build", "--data", run)
     assert code == 1, out
     assert f"1 claim(s) sit on an id {run / 'questions.json'} does not list: q2." in out, out
-    assert "claims-archive/" in out and "derives_from" in out, out
+    assert "claim from claims/ to claims-archive/" in out and "derives_from" in out, out
+    assert "shard from judgments/ to judgments-archive/" in out, out
     assert out.endswith("1 claim(s) left out of the review app until they answer the question "
                         "their id names (above): q2"), out
     assert set(_built(run)) == {"q1", "q3"}
@@ -371,3 +372,34 @@ def test_check_claim_with_no_question_set_says_so_and_one_it_cannot_read_fails(t
     code, out = _vg("check-claim", path, "--data", root)
     assert code == 1, out
     assert "cannot check the question:" in out and "is not a list of questions" in out, out
+
+
+def test_an_id_retired_as_the_gate_says_leaves_nothing_to_report(tmp_path):
+    """The retire procedure and the unowned-shard message said where a retired claim goes
+    (claims-archive/) but only that its shard leaves judgments/. Both now name
+    judgments-archive/, and a run retired that way passes the gate with nothing left over."""
+    from vgpipe import judgments
+
+    root = tmp_path / "data"
+    root.mkdir()
+    (root / "questions.json").write_text(json.dumps([{"id": "q2", "text": VOTE}]))
+    _cited(root, root, "q2", VOTE)
+    old = Claim.model_validate_json(_cited(root, root, "q1", VOTE).read_text())
+    judgments.record(root, "q1", old.sources[0].sid, "supports", "judged under the old id")
+
+    code, out = _vg("build", "--data", root)
+    assert code == 1 and "shard from judgments/ to judgments-archive/" in out, out
+
+    (root / "claims-archive").mkdir()
+    (root / "claims" / "q1.json").rename(root / "claims-archive" / "q1.json")
+    _, out = _vg("judgments", "--data", root)
+    assert "1 verdict(s) sit in judgments/ under an id no claim has (q1.json)" in out, out
+    assert "Move each to judgments-archive/ to keep it" in out, out
+
+    (root / "judgments-archive").mkdir()
+    judgments.path_for(root, "q1").rename(root / "judgments-archive" / "q1.json")
+    _, out = _vg("judgments", "--data", root)
+    assert "no claim has" not in out and "judgments-archive" not in out, out
+    code, out = _vg("build", "--data", root)
+    assert code == 0 and "left out" not in out, out
+    assert set(_built(root)) == {"q2"}

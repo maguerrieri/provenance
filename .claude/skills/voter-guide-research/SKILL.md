@@ -16,8 +16,8 @@ whether a citation is real.** Never let a model set a verification status.
    produces citations that support one of them. IDs are **never reused or renumbered**: claims
    and verdicts are filed by id, and nothing moves them. If a question is split or reworded
    later in a run, give each new question a new id and retire the old one. Move its claim
-   file out of `claims/` (to `claims-archive/`) and its verdict shard out of `judgments/`, and
-   point any `derives_from` that names it at the new id. A reused id hands its old verdicts to
+   file out of `claims/` (to `claims-archive/`) and its verdict shard out of `judgments/` (to
+   `judgments-archive/`), and point any `derives_from` that names it at the new id. A reused id hands its old verdicts to
    the new claim. `vg build` and `vg status` are the rule's gate: a claim whose id
    `questions.json` no longer lists, or whose `question` differs from the text at its id, is
    left out of review, and the command exits 1. Once the new question's research has replaced

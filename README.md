@@ -66,7 +66,7 @@ Orchestration lives in `.claude/skills/voter-guide-research/SKILL.md`; agent def
 Question ids (`q1`, `q2a`) are **stable and never reused**. They name each question's claim and
 verdict files, so a split or reworded question gets a new id and the old id is retired. To
 retire one, move its claim out of `claims/` (to `claims-archive/`) and its verdict shard out of
-`judgments/`, and point any `derives_from` that names it at the new id. Nothing re-files a claim
+`judgments/` (to `judgments-archive/`), and point any `derives_from` that names it at the new id. Nothing re-files a claim
 onto another id: `vg remap`, which used to, is retired. `vg build` and `vg status` are the rule's
 gate: a claim whose id `questions.json` no longer lists, or whose question differs from the one
 its id names, is left out of the review app, and the command exits 1.
