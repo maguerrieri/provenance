@@ -69,6 +69,7 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
 <div style="margin-top:6px;color:var(--mut)">
 <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>space</kbd> check · <kbd>f</kbd> flag · <kbd>o</kbd> open source · <kbd>a</kbd> open archive · <kbd>c</kbd> copy snippet</div>
 </div>
+<div id="migrated" class="notice hidden"></div>
 
 <div class="counts">
 {% for k, v in status_counts.items() %}<span>{{ k }}: <b>{{ v }}</b></span>{% endfor %}
@@ -122,7 +123,7 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
   {% for x in c.conflicts %}<div class="conf">{{ x }}</div>{% endfor %}
 
   {% for s in c.sources %}
-  <div class="src" data-sid="{{ s.sid }}">
+  <div class="src" data-key="{{ s.row_key }}" data-sid="{{ s.sid }}" data-fp="{{ s.fingerprint }}">
     <div class="meta">
       <b>{{ s.publisher }}</b> · {{ s.author }}{% if s.date %} · {{ s.date }}{% endif %}
       {% if s.page %} · p.{{ s.page }}{% endif %}
@@ -159,7 +160,9 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
       <label class="chk"><input type="checkbox" class="cb"> verified by me</label>
       <button class="flag">flag</button>
     </div>
-    <input class="note hidden" placeholder="note (saved with your progress)">
+    <div class="meta stale hidden" style="color:var(--warn)">You checked this row, but the claim or
+      the evidence shown for it has changed since. Check it again.</div>
+    <input class="note hidden" placeholder="note on this source, shown wherever it is cited (saved with your progress)">
   </div>
   {% endfor %}
   {% if not c.sources %}<div class="meta">No sources.</div>{% endif %}
@@ -168,56 +171,118 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
 </div>
 
 <script>
+// Progress lives under STORE:
+//   {v: 2,
+//    checked: {"<fingerprint>": "<question id>/<source id>"},
+//    sources: {"<source id>": {flag, note}}}
+// A check is an attestation that one source, as shown, supports one claim, so it is recorded by
+// the row's fingerprint (report.review_fingerprint), which covers the source, the claim and the
+// evidence the row shows, with the row it was made on beside it. A row reads checked while its
+// fingerprint is recorded. Another question citing the same source has another fingerprint, and
+// so does this row once its claim or evidence changes; a claim renumbered without changing
+// keeps it. A flag or note is a warning about the source, not an attestation, so it stays per
+// source and shows wherever the source is cited.
+//
+// KEY holds what earlier versions of this page saved, per source: {"<source id>": {done, flag,
+// note}}. It is only read, to migrate from once, so neither version's tab overwrites the
+// other's progress.
 const KEY = "vgpipe:{{ run_id }}";
+const STORE = KEY + ":v2";
+const ROW_RE = new RegExp({{ row_key_re|tojson }});
+const FP_RE = /^[0-9a-f]{16}$/;
 const SID_RE = /^[0-9a-f]{12}$/;
-
-// Progress can come from localStorage or from a file someone hands you, so coerce it into
-// a known shape rather than trusting it: a null-prototype object (a stored `__proto__` key
-// would otherwise pollute every lookup), keys whitelisted to the source-id format, and
-// values reduced to the three fields this app actually uses.
-function sanitizeState(raw){
-  const out = Object.create(null);
-  if (!raw || typeof raw !== 'object') return out;
-  for (const k of Object.keys(raw)){
-    if (!SID_RE.test(k)) continue;
-    const v = raw[k];
-    if (!v || typeof v !== 'object') continue;
-    out[k] = {
-      done: v.done === true,
-      flag: v.flag === true,
-      note: typeof v.note === 'string' ? v.note.slice(0, 4000) : "",
-    };
-  }
-  return out;
-}
-
-let state = Object.create(null);
-try { state = sanitizeState(JSON.parse(localStorage.getItem(KEY) || "{}")); }
-catch (e) { state = Object.create(null); }
 const srcs = [...document.querySelectorAll('.src')];
+const shown = new Set(srcs.map(el => el.dataset.fp));
 let cur = 0;
 
-function save(){ try { localStorage.setItem(KEY, JSON.stringify(state)); } catch(e){} }
-function st(sid){
-  if (!Object.prototype.hasOwnProperty.call(state, sid)) state[sid] = {done:false, flag:false, note:""};
-  return state[sid];
+// Progress can come from localStorage or from a file someone hands you, so coerce it into
+// a known shape rather than trusting it: null-prototype objects (a stored `__proto__` key
+// would otherwise pollute every lookup), keys and values whitelisted to the formats above,
+// and annotations reduced to the two fields this app actually uses.
+function annotation(v){
+  return {flag: v.flag === true, note: typeof v.note === 'string' ? v.note.slice(0, 4000) : ""};
+}
+function entries(v){ return v && typeof v === 'object' ? Object.keys(v).map(k => [k, v[k]]) : []; }
+function sanitizeState(raw){
+  const out = {v: 2, checked: Object.create(null), sources: Object.create(null)};
+  if (!raw || typeof raw !== 'object') return {state: out, notice: ""};
+  if (raw.v !== 2) return {state: out, notice: migrate(out, raw)};
+  for (const [fp, row] of entries(raw.checked)){
+    if (FP_RE.test(fp) && typeof row === 'string' && ROW_RE.test(row)) out.checked[fp] = row;
+  }
+  for (const [sid, v] of entries(raw.sources)){
+    if (SID_RE.test(sid) && v && typeof v === 'object') out.sources[sid] = annotation(v);
+  }
+  return {state: out, notice: ""};
+}
+
+// Earlier versions kept one entry per source. Its flag and note carry over as they are. Its
+// tick was shared by every question citing the source and recorded no evidence, so it can't
+// say which claim was checked or against what; applying it to every such row is the false
+// green this version exists to stop. Ticks are dropped, and the page says how many.
+function migrate(out, raw){
+  const cited = new Set(srcs.map(el => el.dataset.sid));
+  let here = 0, gone = 0;
+  for (const [sid, v] of entries(raw)){
+    if (!SID_RE.test(sid) || !v || typeof v !== 'object') continue;
+    out.sources[sid] = annotation(v);
+    if (v.done === true) { if (cited.has(sid)) here++; else gone++; }
+  }
+  if (!here && !gone) return "";
+  return "This progress was saved by an earlier version of this page, which kept one checkmark "
+    + "per source, shared by every question citing it. Those checkmarks can't show which claim "
+    + "was checked, or against which excerpt, so they were cleared: " + here + " on sources "
+    + "cited here (check the rows citing them again) and " + gone + " on sources no longer "
+    + "cited. Flags and notes are unchanged.";
+}
+
+let state;
+function load(raw){
+  const r = sanitizeState(raw);
+  state = r.state;
+  const n = document.getElementById('migrated');
+  n.textContent = r.notice;
+  n.classList.toggle('hidden', !r.notice);
+}
+function read(k){ try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (e) { return null; } }
+const saved = read(STORE);
+load(saved !== null ? saved : read(KEY));
+
+function save(){ try { localStorage.setItem(STORE, JSON.stringify(state)); } catch(e){} }
+function ann(el){
+  const k = el.dataset.sid;
+  if (!Object.prototype.hasOwnProperty.call(state.sources, k)) state.sources[k] = {flag:false, note:""};
+  return state.sources[k];
+}
+function isChecked(el){ return el.dataset.fp in state.checked; }
+function setChecked(el, on){
+  const row = el.dataset.key, fp = el.dataset.fp;
+  // Either way, a check this row made on evidence no row shows any more is settled now.
+  for (const f of Object.keys(state.checked)) {
+    if (state.checked[f] === row && !shown.has(f)) delete state.checked[f];
+  }
+  if (on) state.checked[fp] = row; else delete state.checked[fp];
 }
 
 function render(){
+  // Rows holding a check on evidence no row shows now: their claim or what they show changed.
+  const stale = new Set(Object.keys(state.checked).filter(f => !shown.has(f))
+                          .map(f => state.checked[f]));
   let done = 0;
   for (const el of srcs){
-    const s = st(el.dataset.sid);
-    el.querySelector('.cb').checked = s.done;
-    el.classList.toggle('flagged', s.flag);
+    const a = ann(el), ok = isChecked(el);
+    el.querySelector('.cb').checked = ok;
+    el.querySelector('.stale').classList.toggle('hidden', ok || !stale.has(el.dataset.key));
+    el.classList.toggle('flagged', a.flag);
     const n = el.querySelector('.note');
     // Don't clobber a note being typed — rewriting .value would jump the caret to the end.
-    if (document.activeElement !== n) n.value = s.note || "";
-    n.classList.toggle('hidden', !s.flag && !s.note);
-    if (s.done) done++;
+    if (document.activeElement !== n) n.value = a.note || "";
+    n.classList.toggle('hidden', !a.flag && !a.note);
+    if (ok) done++;
   }
   for (const c of document.querySelectorAll('.claim')){
     const all = [...c.querySelectorAll('.src')];
-    c.classList.toggle('done', all.length > 0 && all.every(e => st(e.dataset.sid).done));
+    c.classList.toggle('done', all.length > 0 && all.every(isChecked));
   }
   const pct = srcs.length ? Math.round(100*done/srcs.length) : 0;
   document.getElementById('pbar').style.width = pct + '%';
@@ -227,12 +292,12 @@ function render(){
 
 document.addEventListener('change', e => {
   if (e.target.classList.contains('cb')){
-    st(e.target.closest('.src').dataset.sid).done = e.target.checked; render();
+    setChecked(e.target.closest('.src'), e.target.checked); render();
   }
 });
 document.addEventListener('input', e => {
   if (e.target.classList.contains('note')){
-    st(e.target.closest('.src').dataset.sid).note = e.target.value; save();
+    ann(e.target.closest('.src')).note = e.target.value; save();
   }
 });
 document.addEventListener('click', e => {
@@ -244,7 +309,7 @@ document.addEventListener('click', e => {
     setTimeout(() => e.target.textContent = t, 1200);
   }
   if (e.target.classList.contains('flag')){
-    const s = st(src.dataset.sid); s.flag = !s.flag; render();
+    const s = ann(src); s.flag = !s.flag; render();
     if (s.flag) src.querySelector('.note').focus();
   }
 });
@@ -266,8 +331,8 @@ document.addEventListener('keydown', e => {
   const go = n => { cur = srcs.indexOf(v[Math.max(0, Math.min(n, v.length-1))]); focus(); };
   if (e.key === 'j') { e.preventDefault(); go(i < 0 ? 0 : i+1); }
   else if (e.key === 'k') { e.preventDefault(); go(i < 0 ? 0 : i-1); }
-  else if (e.key === ' ') { e.preventDefault(); const s = st(srcs[cur].dataset.sid); s.done = !s.done; render(); }
-  else if (e.key === 'f') { const s = st(srcs[cur].dataset.sid); s.flag = !s.flag; render(); }
+  else if (e.key === ' ') { e.preventDefault(); setChecked(srcs[cur], !isChecked(srcs[cur])); render(); }
+  else if (e.key === 'f') { const s = ann(srcs[cur]); s.flag = !s.flag; render(); }
   else if (e.key === 'o') { srcs[cur].querySelector('.open')?.click(); }
   else if (e.key === 'a') { srcs[cur].querySelector('.arch')?.click(); }
   else if (e.key === 'c') { srcs[cur].querySelector('.copy')?.click(); }
@@ -278,7 +343,7 @@ document.getElementById('filter').addEventListener('change', e => {
   for (const c of document.querySelectorAll('.claim')){
     const all = [...c.querySelectorAll('.src')];
     let show = true;
-    if (f === 'unchecked') show = all.length === 0 || all.some(x => !st(x.dataset.sid).done);
+    if (f === 'unchecked') show = all.length === 0 || all.some(x => !isChecked(x));
     else if (f === 'adversarial') show = c.dataset.type === 'adversarial';
     else if (f === 'paywall') show = c.dataset.paywall === '1';
     else if (f === 'conflict') show = c.dataset.conflict === '1';
@@ -298,7 +363,7 @@ document.getElementById('file').addEventListener('change', async e => {
   const f = e.target.files[0];
   e.target.value = '';                 // so re-importing the same file fires again
   if (!f) return;
-  try { state = sanitizeState(JSON.parse(await f.text())); render(); }
+  try { load(JSON.parse(await f.text())); render(); }
   catch (err) { alert('Bad progress file'); }
 });
 

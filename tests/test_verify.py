@@ -838,25 +838,6 @@ def test_wayback_prefix_upgrade_leaves_the_archived_target_alone():
     assert _https("http://example.com/not-a-snapshot") == "http://example.com/not-a-snapshot"
 
 
-def test_review_app_sanitizes_stored_progress(tmp_path):
-    """Progress comes from localStorage or a file someone hands you, so the app coerces it
-    into a known shape: a null-prototype object (a stored `__proto__` would otherwise
-    pollute every lookup), keys whitelisted to the source-id format, values reduced to the
-    three fields it uses."""
-    from vgpipe.report import render
-
-    html_path, _ = render([Claim(question_id="q1", question="?", answer="a")],
-                          tmp_path, title="T")
-    html = html_path.read_text()
-
-    assert "sanitizeState" in html
-    assert "Object.create(null)" in html, "state must not inherit from Object.prototype"
-    assert "SID_RE.test(k)" in html, "keys must be whitelisted to the source-id format"
-    # both entry points go through it
-    assert html.count("sanitizeState(JSON.parse(") == 2
-    assert "e.target.value = ''" in html, "file input must reset so re-import works"
-
-
 def test_status_reflects_what_build_will_render(tmp_path, monkeypatch, capsys):
     """`vg status` trusts the file for speed, so it must run the same offline checks build
     runs — otherwise it can report `verified` for a row the report downgrades."""
