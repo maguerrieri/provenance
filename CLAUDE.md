@@ -679,13 +679,15 @@ Ids overlap in every renumbering, so that is the routine case, not a corner. Now
 follows what it named, inside the re-home transaction with the claim moves (`_rewire_inputs()`),
 and the dry run lists each rewrite:
 - **A claim** follows the exact mapping the claims move by, keyed by the id each claim carries,
-  or stays where it is if the claim does. That includes a stranded claim left in place: nothing
-  can move onto its id without tripping the collision check.
+  or stays where it is if the claim does. That includes a stranded claim left in place: a move
+  onto its file trips the collision check. The check compares file names, so a claim filed under
+  another name can end up sharing its id with one moved there, but the next load refuses the
+  duplicate loudly.
 - **An id no claim held** follows its question: along that question's `maps_from`, or nowhere
   if the question keeps its id. Research for it, when it comes, lands there.
 - **An entry that can't follow** becomes `<id> (dropped by remap)`: its claim is archived as
   stranded, its question is not in the template (in a first migration, any id no pair maps
-  from), or the id it would follow to holds a claim nothing maps to. That form fails
+  from), or the id it would follow to will hold another claim. That form fails
   `QID_PATTERN`, so it reads as missing and no claim can ever take it. The claim resting on it
   goes to `human_review` with the old id in its reason. Refusing the apply was the other option,
   and it was rejected: the only quick way past the refusal is deleting the entry, and a
@@ -696,9 +698,11 @@ and the dry run lists each rewrite:
 
 Only an apply that moves claims rewrites along the mapping, for the same reason only it retires
 the mapping: one that moves nothing leaves the run in its old id space, and the next apply would
-move the entries a second time. The general lesson is the same as for verdicts: **when ids move,
-everything that refers to them moves in the same transaction, or reads whatever takes the id
-next.**
+move the entries a second time. A claim that stays on its id is rewritten in place, in
+`save_claims()`'s format so the diff is only the entries that moved. That means remap now writes
+claim files it used to leave alone, so finish or stop research before remapping, as for a
+judgment pass. The general lesson is the same as for verdicts: **when ids move, everything that
+refers to them moves in the same transaction, or reads whatever takes the id next.**
 
 Malformed input is refused up front: a `maps_from` or `mapped_from` that isn't one id, two
 questions sharing an id, or one old id mapped into two questions (a split). Each of these used to

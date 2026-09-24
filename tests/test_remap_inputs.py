@@ -171,6 +171,20 @@ def test_a_claim_that_stays_put_follows_an_input_that_moves(tmp_path, capsys):
     assert "q1: q2 → q5" in _said(capsys)
 
 
+def test_a_claim_rewritten_in_place_keeps_the_format_it_was_saved_in(tmp_path):
+    """vg verify writes claim files through save_claims(). Reformatted wholesale, a tracked file's
+    diff would bury the one entry that moved."""
+    questions = _retired_run(tmp_path, {"q1": [], "q2": []})
+    kept = Claim(question_id="q1", question="old q1", answer="Sí — the café's lease",
+                 derives_from=["q2", "q1"])
+    cli.save_claims([kept], tmp_path / "claims")
+    questions.append(_question("q5", "q2"))
+    _write_questions(tmp_path, questions)
+    cli.remap(data=tmp_path, apply=True)
+    expected = kept.model_copy(update={"derives_from": ["q5", "q1"]}).model_dump_json(indent=2)
+    assert (tmp_path / "claims" / "q1.json").read_text(encoding="utf-8") == expected
+
+
 def test_every_claim_in_a_file_of_several_follows_its_inputs(tmp_path):
     """A claim file may hold a list. Both claims in it name an input that moves, and finding the
     first one changed must not stop the second from being rewritten."""
@@ -248,8 +262,9 @@ def test_the_dry_run_names_an_input_it_cannot_carry(tmp_path, capsys):
     pytest.param([("q6", "q2")], ["q6"], ["q6" + MARK], id="id-taken-by-another-question"),
     # The mapping says nothing about q4, a question that keeps its id: it still means q4.
     pytest.param([("q7", "q2")], ["q4"], ["q4"], id="unresearched-question-keeps-its-id"),
-    # Nothing the mapping touches: an id no question uses reads as missing before and after.
-    pytest.param([("q7", "q2")], ["q88"], ["q88"], id="untouched-id"),
+    # No question has q88 — dropped from the template, or never in it. Left as it is, a question
+    # added at q88 later would satisfy q1 with research on something else.
+    pytest.param([("q7", "q2")], ["q88"], ["q88" + MARK], id="id-no-question-has"),
 ])
 def test_an_input_no_claim_held_follows_its_question(tmp_path, new_pairs, inputs, expected):
     """Every case moves q2's claim, so the apply really migrates the run."""
@@ -293,6 +308,22 @@ def test_an_input_moved_onto_an_id_a_stranded_claim_holds_reads_as_missing(tmp_p
     _write_questions(tmp_path, questions)
     cli.remap(data=tmp_path, apply=True)
     assert _inputs(tmp_path)["q1"] == ["q9" + MARK]
+
+
+def test_the_reason_for_a_drop_does_not_blame_a_claim_the_mapping_moved(tmp_path, capsys):
+    """q3.json holds a claim carrying q9, and q2 maps from q3, so that claim moves to q2. An
+    entry naming "q3" named no claim (none carries q3) and its question's new id will hold a
+    claim it did not name, so it drops — but not as "a claim nothing maps to": one does."""
+    _write_claim(tmp_path, "q1", ["q3"])
+    (tmp_path / "claims" / "q3.json").write_text(json.dumps(
+        {"question_id": "q9", "question": "old q9", "answer": "a", "sources": []}))
+    _write_questions(tmp_path, [_question("q1", "q1"), _question("q2", "q3")])
+    capsys.readouterr()
+    cli.remap(data=tmp_path, apply=True)
+    said = _said(capsys)
+    assert _inputs(tmp_path)["q1"] == ["q3" + MARK]
+    assert "its question moved to q2, which will hold another claim" in said, said
+    assert "nothing maps to" not in said
 
 
 def test_a_stranded_claim_left_in_place_is_still_its_input(tmp_path):

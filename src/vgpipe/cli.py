@@ -1559,7 +1559,7 @@ DROPPED_INPUT = " (dropped by remap)"
 
 
 def _rewire_inputs(questions: list[dict], claims_dir: Path, sources: set[Path],
-                   staged: dict[Path, dict], moved: dict[str, str], leaving: set[Path],
+                   staged: dict[Path, dict], moved: dict[str, str], to_archive: set[Path],
                    retired_file: bool) -> tuple[dict[Path, object], list[tuple[str, ...]]]:
     """Point every derives_from entry at where its input will be once the apply has run.
 
@@ -1573,7 +1573,7 @@ def _rewire_inputs(questions: list[dict], claims_dir: Path, sources: set[Path],
     - an id no claim held: its question, along that question's maps_from, or nowhere if the
       question keeps its id — the research for it, when it comes, lands there.
     An entry that can't follow anything — its claim is archived as stranded, its question is
-    not in the template, or where it went holds a claim nothing maps to — becomes
+    not in the template, or where it went will hold a claim it did not name — becomes
     `<id> (dropped by remap)`. That reads as missing, which no claim landing on the id later can
     satisfy, and keeps the id for whoever re-points it. Refusing instead would push the
     operator to delete the entry, and a conclusion with its input deleted can render green.
@@ -1595,8 +1595,9 @@ def _rewire_inputs(questions: list[dict], claims_dir: Path, sources: set[Path],
 
     raws = {p: json.loads(p.read_text()) for p in sorted(claims_dir.glob("*.json"))}
     held = {c.get("question_id") for raw in raws.values() for c in carried(raw)}
-    gone = {c.get("question_id") for p in leaving for c in carried(raws.get(p, []))}
+    gone = {c.get("question_id") for p in to_archive for c in carried(raws.get(p, []))}
     after = {moved.get(q, q) for q in held - gone}
+    current = {q["id"] for q in questions}
     by_question = {q["maps_from"]: q["id"] for q in questions if q.get("maps_from")}
     arrives_from = {new: old for old, new in by_question.items() if old != new}
     migrating = bool(staged)
@@ -1613,13 +1614,16 @@ def _rewire_inputs(questions: list[dict], claims_dir: Path, sources: set[Path],
         if d in by_question:
             to = by_question[d]
             if to in after:
-                return d + DROPPED_INPUT, (f"its question moved to {to}, which holds a claim "
-                                           "nothing maps to")
+                return d + DROPPED_INPUT, (f"its question moved to {to}, which will hold "
+                                           "another claim")
             return to, ""
-        if retired_file and d not in arrives_from:
-            return d, ""
-        return d + DROPPED_INPUT, (f"{d} now names the question moved from {arrives_from[d]}"
-                                   if d in arrives_from else "no question maps from it")
+        if d in arrives_from:
+            return d + DROPPED_INPUT, f"{d} now names the question moved from {arrives_from[d]}"
+        if not retired_file:
+            return d + DROPPED_INPUT, "no question maps from it"
+        if d not in current:
+            return d + DROPPED_INPUT, "no question in the template has that id"
+        return d, ""
 
     changes: list[tuple[str, ...]] = []
 
@@ -1640,7 +1644,7 @@ def _rewire_inputs(questions: list[dict], claims_dir: Path, sources: set[Path],
         rewrite(claim)
     in_place = {}
     for p, raw in raws.items():
-        if p in sources or p in leaving:
+        if p in sources or p in to_archive:
             continue
         changed = [rewrite(c) for c in carried(raw)]   # every claim in the file, not the first
         if any(changed):
@@ -1648,19 +1652,21 @@ def _rewire_inputs(questions: list[dict], claims_dir: Path, sources: set[Path],
     return in_place, changes
 
 
-def _print_rewired(changes: list[tuple[str, ...]]) -> None:
+def _print_rewired(changes: list[tuple[str, ...]], *, apply: bool) -> None:
     """List the derives_from rewrites an apply makes, dropped ones last with their reasons."""
     if not changes:
         return
-    con.print(f"{len(changes)} derives_from entr{'y' if len(changes) == 1 else 'ies'} follow "
-              "their inputs:")
+    will = "" if apply else "would "
+    con.print(f"{len(changes)} derives_from entr{'y' if len(changes) == 1 else 'ies'} "
+              f"{will}follow their inputs:")
     for owner, old, new, why in sorted(changes, key=lambda c: (bool(c[3]), qid_sort_key(c[0]))):
         con.print(escape(f"  {owner}: {old} → {new}" + (f" — {why}" if why else "")))
     dropped = sum(1 for c in changes if c[3])
     if dropped:
-        con.print(f"[yellow]{dropped} of them can't follow their input, so they read as missing "
-                  "from now on:[/] each claim resting on one goes to human_review until someone "
-                  "points it at the input it should rest on.")
+        con.print(f"[yellow]{dropped} of them can't follow their input, so they "
+                  f"{'read' if apply else 'would read'} as missing from then on:[/] each claim "
+                  "resting on one goes to human_review until someone points it at the input it "
+                  "should rest on.")
 
 
 @app.command(name="remap")
@@ -1682,6 +1688,8 @@ def remap(data: Path = DATA, apply: bool = False, archive_stranded: bool = False
     verdict judged against the old ids and recorded after this would land on the wrong claim.
     So does every derives_from entry that names one; an entry whose input can't follow (its
     claim archived, its question gone) becomes `<id> (dropped by remap)`, which reads as missing.
+    That rewrites claim files that stay on their ids too, so don't run it while researchers are
+    writing claims either: a claim written between the read and the rewrite would be lost.
     """
     if mark_applied and (apply or archive_stranded):
         con.print("[red]--mark-applied moves nothing[/] — it records that the claims were "
@@ -1885,8 +1893,10 @@ def remap(data: Path = DATA, apply: bool = False, archive_stranded: bool = False
             con.print(f"[yellow]{len(named)} derives_from entr"
                       f"{'y names' if len(named) == 1 else 'ies name'} an id this mapping moved "
                       "a claim away from.[/] The remap that moved them did not move derives_from, "
-                      "so check each by hand and point it at where its input is now: "
-                      + escape("; ".join(named)))
+                      "so check each by hand and point it at where its input is now. Some may "
+                      "already be right — fixed since, or naming the claim the mapping moved "
+                      "onto that id — and an entry naming a claim that remap archived is not "
+                      "listed: " + escape("; ".join(named)))
         return
     # (2), the same state with a move pending. By here the state is the latest recorded one.
     if pairs and fingerprint in applied:
@@ -2040,10 +2050,11 @@ def remap(data: Path = DATA, apply: bool = False, archive_stranded: bool = False
     # A conclusion names its inputs by question id, so the entries move with the claims, inside
     # the same transaction (move_claims), and the dry run lists them. Worked out now, from the
     # files as they are, before --archive-stranded or anything else touches one.
-    leaving = {claims_dir / f"{stem}.json" for stem in stranded} if archive_stranded else set()
+    to_archive = ({claims_dir / f"{stem}.json" for stem in stranded} if archive_stranded
+                  else set())
     rewired, input_changes = _rewire_inputs(questions, claims_dir, {m[0] for m in moves}, staged,
-                                            moved, leaving, retired_file)
-    _print_rewired(input_changes)
+                                            moved, to_archive, retired_file)
+    _print_rewired(input_changes, apply=apply)
 
     if stranded and archive_stranded and apply:
         # Preserved, not deleted: a stranded file answered a question the template does not
@@ -2117,9 +2128,10 @@ def remap(data: Path = DATA, apply: bool = False, archive_stranded: bool = False
         for dst, claim in staged.items():
             dst.write_text(json.dumps(claim, indent=1))
             _fsync_file(dst)
-        # Claims that stay on their ids but name one that moves, rewritten where they are.
+        # Claims that stay on their ids but name one that moves, rewritten where they are, in
+        # save_claims()'s format, so a tracked file's diff is only the entries that moved.
         for p, raw in rewired.items():
-            p.write_text(json.dumps(raw, indent=1))
+            p.write_text(json.dumps(raw, indent=2, ensure_ascii=False), encoding="utf-8")
             _fsync_file(p)
         # The re-apply marker and the retired mapping, last and inside the transaction: a failure
         # before them rolls the claims back with no marker left behind to refuse the retry and
