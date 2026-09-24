@@ -95,7 +95,8 @@ def test_the_url_must_be_one_absolute_http_url(curl):
 CREDENTIAL_HEADERS = [
     "X-CSRF-Token", "X-XSRF-TOKEN", "x-csrftoken", "X-Session-Id", "x-sid", "X-PHPSESSID",
     "__RequestVerificationToken", "X-Goog-AuthUser", "Cookie", "Authorization", "api_key",
-    "X-Api-Key", "Ocp-Apim-Subscription-Key", "x-functions-key", "X-Access-Key",
+    "X-Api-Key", "Ocp-Apim-Subscription-Key", "x-functions-key", "X-Access-Key", "x-api-keys",
+    "X-Passcode", "x-otp", "X-HMAC", "x-pin",
 ]
 
 
@@ -139,16 +140,26 @@ def test_an_empty_header_is_read_as_curl_reads_it():
 def test_the_referer_is_kept_as_far_as_its_page():
     """A browser's referer is the full URL of the page the request came from, and a session
     id can ride in its query or its `;jsessionid=` parameters."""
-    res = parse_curl(f"curl -H 'Referer: https://portal.example/search;jsessionid=fakesession"
-                     f"?sessionId=fakesession&tab=2#results' {URL}")
+    res = parse_curl(f"curl -H 'Referer: https://portal.example/app;jsessionid=fakesession/"
+                     f"search;v=fakesession?sessionId=fakesession&tab=2#results' {URL}")
     assert "fakesession" not in json.dumps(res)
-    assert _recipe(res)["headers"] == {"referer": "https://portal.example/search"}
+    assert _recipe(res)["headers"] == {"referer": "https://portal.example/app/search"}
 
 
-def test_a_referer_carrying_a_login_is_refused():
+@pytest.mark.parametrize("option", [
+    f"-e 'https://{USER}:{PASSWORD}@portal.example/'",
+    f"-H 'Origin: https://{USER}:{PASSWORD}@portal.example'",
+])
+def test_a_url_header_carrying_a_login_is_refused(option):
     with pytest.raises(ValueError, match="username or password") as e:
-        parse_curl(f"curl -e 'https://{USER}:{PASSWORD}@portal.example/' {URL}")
+        parse_curl(f"curl {option} {URL}")
     assert PASSWORD not in str(e.value)
+
+
+def test_an_emptied_header_is_removed_as_curl_removes_it():
+    """curl's `Name:` removes the header; recorded as empty, `run()` would send it empty."""
+    assert _recipe(parse_curl(f"curl -H 'User-Agent:' -H 'Accept: */*' {URL}"))["headers"] == {
+        "accept": "*/*"}
 
 
 @pytest.mark.parametrize("option, referer", [
@@ -176,6 +187,13 @@ def test_run_refuses_a_login_in_the_url():
     with pytest.raises(ValueError, match="username or password") as e:
         run(r, {})
     assert PASSWORD not in str(e.value)
+
+
+def test_run_refuses_a_login_in_a_url_header():
+    r = Recipe(id="bad", method="GET", url=URL,
+               headers={"Origin": f"https://{USER}:{PASSWORD}@portal.example"})
+    with pytest.raises(ValueError, match="username or password"):
+        run(r, {})
 
 
 def test_run_refuses_a_login_that_a_param_puts_in_the_url():

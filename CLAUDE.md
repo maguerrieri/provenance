@@ -696,8 +696,9 @@ listing more names:
   same test. On import that is only the first check: a header is kept only if it is in
   `SAFE_HEADERS`, and every other header is dropped and named. A human can add a header the
   endpoint needs back by hand, and `run()` still refuses it if it looks like a credential. A
-  safe name can still carry a session in its value: `referer` is the full URL of the page, so
-  it is kept only as far as the page, without its query or `;jsessionid=` parameters.
+  safe name can still carry a session in its value. `referer` is the full URL of the page, so
+  it is kept only as far as the page, without its query or `;jsessionid=` parameters, and an
+  `origin` or `referer` holding a login is refused, on import and by `run()`.
 
 Still open: a credential in the recipe URL's query string or in the body (#52). Parameter names
 need their own rule, because `session` is often a legislative session.
