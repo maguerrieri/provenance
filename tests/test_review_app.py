@@ -24,10 +24,6 @@ NODE = shutil.which("node")
 LEGACY = "vgpipe:t"          # what earlier versions of the page saved, per source
 STORE = "vgpipe:t:v2"
 
-# CI must run these: a skip there would read as a pass.
-pytestmark = pytest.mark.skipif(not NODE and not os.environ.get("CI"),
-                                reason="the review app tests run its script under node")
-
 CONTEXT = "At its March meeting the council approved the levy by a vote of four to one."
 SNIPPET = "the council approved the levy"
 
@@ -61,8 +57,12 @@ def run(tmp_path: Path, claims: list[Claim], *, storage: dict | None = None,
         actions: list | None = None) -> dict:
     """Render `claims`, load the page with `storage` as its localStorage, perform `actions`,
     and return what the page shows and stores."""
-    if not NODE:
+    # Only the tests that run the page need node, so the fingerprint tests run anywhere. And CI
+    # must run these: a skip there would read as a pass.
+    if not NODE and os.environ.get("CI"):
         pytest.fail("node is not installed, and CI must run the review app tests")
+    if not NODE:
+        pytest.skip("the review app tests run its script under node")
     page = HTMLParser(render(claims, tmp_path, title="T")[0].read_text())
     payload = {"tree": _tree(page.body), "script": page.css_first("script").text(),
                "storage": storage or {}, "actions": actions or []}
@@ -73,11 +73,10 @@ def run(tmp_path: Path, claims: list[Claim], *, storage: dict | None = None,
 
 
 def rows(result: dict) -> dict:
-    """Rows by key; a key two rows share maps to a list of both."""
-    by: dict = {}
-    for r in result["rows"]:
-        by.setdefault(r["key"], []).append(r)
-    return {k: v[0] if len(v) == 1 else v for k, v in by.items()}
+    """Rows by key. Every row has its own (report.ROW_KEY_RE), so a shared one fails here."""
+    by = {r["key"]: r for r in result["rows"]}
+    assert len(by) == len(result["rows"]), "two rows share a key"
+    return by
 
 
 def stored(result: dict) -> dict:

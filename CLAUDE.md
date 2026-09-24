@@ -675,7 +675,7 @@ Otherwise the whitelist discards them silently, or a loose lookup matches them t
 The tests run the page's own script under node (`tests/review_app_harness.js`) against a
 minimal DOM that supports single-class selectors only and throws on anything else, so a
 template change that needs more fails loudly: extend the harness, don't stub around it. They
-skip without node only outside CI.
+skip without node only outside CI, and the fingerprint tests, which need no node, never skip.
 
 ## Race-specific content lives in races/
 
