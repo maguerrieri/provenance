@@ -1,18 +1,21 @@
 """Question ids are stable and never reused, and `vg build` and `vg status` are the rule's gate:
 each claim is checked against the question the run's questions.json holds for its id. A claim
 on an id the set no longer lists, or answering another question than its id names, fails
-both commands, and build renders nothing. A `maps_from` nothing will ever apply is reported."""
+both commands, and build renders nothing. A `maps_from` nothing will ever apply is reported.
+`vg check-claim` runs the same check on the one claim a researcher is handing on."""
 
 from __future__ import annotations
 
 import json
 import re
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from typer.testing import CliRunner
 
 from vgpipe import cli
-from vgpipe.models import Claim
+from vgpipe.fetch import cache_path
+from vgpipe.models import EXTRACTOR_VERSION, Claim, PageCache, Source
 
 VOTE = "How did the member vote on the harbor levy?"
 FUNDS = "Who are the largest donors to the member's campaign?"
@@ -97,6 +100,15 @@ def test_whitespace_alone_is_not_another_question(tmp_path):
     assert code == 0 and _rendered(run), out
 
 
+def test_unicode_composition_alone_is_not_another_question(tmp_path):
+    """"é" as one code point and as "e" plus a combining accent print identically, so a
+    failure on it would be one nobody could see to fix."""
+    run = _run(tmp_path / "data", [{"id": "q1", "text": "How did René Sample vote?"}],
+               [("q1", "How did René Sample vote?")])
+    code, out = _vg("build", "--data", run)
+    assert code == 0 and _rendered(run), out
+
+
 def test_any_other_difference_is_another_question(tmp_path):
     """A misquote and a rewording look the same on disk, so both fail, and the message offers
     the fix for each."""
@@ -109,17 +121,29 @@ def test_any_other_difference_is_another_question(tmp_path):
 
 def test_a_pending_maps_from_is_reported_and_does_not_fail(tmp_path):
     """Nothing applies a `maps_from` now that `vg remap` is retired, so no claim moves: each
-    is still checked against the question at the id it sits on, which is what fails."""
+    is still checked against the question at the id it sits on, which is what fails. An
+    identity pair only adopted a rewording and never moved anything, so it is not reported."""
     run = _run(tmp_path / "data",
-               [{"id": "q1", "text": VOTE}, {"id": "q2", "text": FUNDS, "maps_from": "q5"},
+               [{"id": "q1", "text": VOTE, "maps_from": "q1"},
+                {"id": "q2", "text": FUNDS, "maps_from": "q5"},
                 {"id": "q3", "text": "Who endorsed them?", "maps_from": ""}],
                [("q1", VOTE), ("q2", FUNDS)])
     code, out = _vg("build", "--data", run)
     assert code == 0 and _rendered(run), out
-    assert "still declares maps_from (q2 from q5)" in out, out
-    assert "never applied" in out and "Delete the key" in out, out
+    assert "still declares maps_from (q2 from q5), a migration for the retired `vg remap`" in out
+    assert "Delete the key" in out and "q1 from q1" not in out, out
     code, out = _vg("status", "--data", run)
     assert code == 0 and "still declares maps_from (q2 from q5)" in out, out
+
+
+def test_an_unlisted_id_a_pending_maps_from_names_says_so(tmp_path):
+    """The migration meant q5's research for q2. The advice is still to archive it, which keeps
+    it, but the operator reads that advice knowing which question it answered."""
+    run = _run(tmp_path / "data", [{"id": "q2", "text": FUNDS, "maps_from": "q5"}],
+               [("q5", FUNDS), ("q7", VOTE)])
+    code, out = _vg("build", "--data", run)
+    assert code == 1, out
+    assert "does not list: q5 (maps_from of q2), q7." in out, out
 
 
 def test_a_candidate_run_reads_its_own_question_set_before_the_data_roots(tmp_path):
@@ -141,10 +165,19 @@ def test_a_candidate_run_reads_its_own_question_set_before_the_data_roots(tmp_pa
 
 
 def test_an_unreadable_own_question_set_does_not_fall_back_to_the_roots(tmp_path):
+    """Falling back would check a candidate's claims against a template not retargeted to it,
+    or pass them against the wrong set. A dangling symlink is unreadable too, though `exists()`
+    reads it as absent."""
     root = tmp_path / "data"
     root.mkdir()
     (root / "questions.json").write_text(json.dumps([{"id": "q1", "text": VOTE}]))
     run = _run(root / "cand", "{", [("q1", VOTE)])
+    code, out = _vg("build", "--data", run)
+    assert code == 1, out
+    assert f"unreadable question set {run / 'questions.json'}" in out, out
+
+    (run / "questions.json").unlink()
+    (run / "questions.json").symlink_to(tmp_path / "moved.json")
     code, out = _vg("build", "--data", run)
     assert code == 1, out
     assert f"unreadable question set {run / 'questions.json'}" in out, out
@@ -163,14 +196,16 @@ def test_no_question_set_is_said_and_does_not_fail(tmp_path):
     pytest.param("[{", "unreadable question set", id="not-json"),
     pytest.param('{"q1": "?"}', "is not a list of questions", id="not-a-list"),
     pytest.param(json.dumps([{"id": "q1", "text": VOTE}, "q2", {"text": FUNDS},
-                             {"id": "q4"}, {"id": "q1", "text": FUNDS}]),
+                             {"id": "q4"}, {"id": "q1", "text": FUNDS},
+                             {"id": "Q1", "text": "Who endorsed them?"}]),
                  "entry 1 is not an object; entry 2 has no id; entry 3 (q4) has no text; "
-                 "entry 4 reuses id q1", id="bad-entries"),
+                 "entry 4 reuses id q1; entry 5 reuses id q1 as Q1", id="bad-entries"),
 ])
 def test_an_unreadable_question_set_fails_rather_than_reading_as_empty(tmp_path, text, expect):
     """Read as empty, every claim would sit on an unlisted id; read as missing, nothing would
     be checked. Either way the operator is told the wrong thing, so it fails, naming every
-    problem at once. A reused id is one: a claim on it answers one of two questions."""
+    problem at once. A reused id is one: a claim on it answers one of two questions. So are ids
+    differing only in case, which share one claim file and one shard on macOS's default disk."""
     run = _run(tmp_path / "data", text, [("q1", VOTE)])
     code, out = _vg("build", "--data", run)
     assert code == 1, out
@@ -201,3 +236,78 @@ def test_question_text_prints_as_text_not_markup(tmp_path):
     assert code == 1, out
     assert "'Did they vote [/] :smile: no?'" in out, out
     assert "'Did they vote [sic] :smile: yes?'" in out, out
+
+
+URL = "https://news.example/council-vote"
+SNIPPET = "voted against the harbor levy on its second reading"
+
+
+def _cited(root, run, qid, question):
+    """`run/claims/<qid>.json`, citing a page cached under `root`, so `vg check-claim` passes it
+    offline on everything but its question."""
+    page = PageCache(url=URL, final_url=URL, status=200, content_type="text/html", title="T",
+                     text=f"At the meeting the member {SNIPPET}, the minutes show.",
+                     fetched_at=datetime.now(UTC) - timedelta(hours=6),
+                     extractor_version=EXTRACTOR_VERSION)
+    cache_path(root, URL).write_text(page.model_dump_json())
+    source = Source(url=URL, publisher="Example News", author="A. Reporter", date="2026-05-14",
+                    source_type="bylined_journalism", snippet=SNIPPET)
+    path = run / "claims" / f"{qid}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(Claim(question_id=qid, question=question, answer="Against.",
+                          sources=[source]).model_dump_json())
+    return path
+
+
+def test_check_claim_fails_a_question_build_would_refuse(tmp_path):
+    """A researcher's own gate. Checked only at build, one misquoted question stopped the whole
+    run's review app, a retry round after the researcher had reported done."""
+    root = tmp_path / "data"
+    root.mkdir()
+    (root / "questions.json").write_text(json.dumps([{"id": "q1", "text": VOTE}]))
+
+    path = _cited(root, root, "q1", VOTE)
+    code, out = _vg("check-claim", path, "--data", root)
+    assert code == 0 and "All sources check out." in out, out
+
+    path = _cited(root, root, "q1", VOTE.rstrip("?"))
+    code, out = _vg("check-claim", path, "--data", root)
+    assert code == 1, out
+    assert f"question is not the one {root / 'questions.json'} asks at q1" in out, out
+    assert f"yours: '{VOTE.rstrip('?')}' asked: '{VOTE}'" in out, out
+
+    path = _cited(root, root, "q9", VOTE)
+    code, out = _vg("check-claim", path, "--data", root)
+    assert code == 1, out
+    assert f"question id q9 is not in {root / 'questions.json'}" in out, out
+    assert "do not edit it" in out, out
+
+
+def test_check_claim_reads_the_question_set_of_the_run_the_claim_is_in(tmp_path):
+    """A candidate run's claim is checked with the default --data, the data root, whose template
+    is not retargeted to the candidate. The run is the directory holding the claim's claims/."""
+    root = tmp_path / "data"
+    root.mkdir()
+    (root / "questions.json").write_text(json.dumps(
+        [{"id": "q1", "text": "How did Alex Placeholder vote on the levy?"}]))
+    run = root / "cand"
+    run.mkdir()
+    (run / "questions.json").write_text(json.dumps(
+        [{"id": "q1", "text": "How did Sam Sample vote on the levy?"}]))
+    path = _cited(root, run, "q1", "How did Sam Sample vote on the levy?")
+    code, out = _vg("check-claim", path, "--data", root)
+    assert code == 0 and "All sources check out." in out, out
+
+
+def test_check_claim_with_no_question_set_says_so_and_one_it_cannot_read_fails(tmp_path):
+    root = tmp_path / "data"
+    root.mkdir()
+    path = _cited(root, root, "q1", VOTE)
+    code, out = _vg("check-claim", path, "--data", root)
+    assert code == 0, out
+    assert "no questions.json for" in out and "the question was not checked" in out, out
+
+    (root / "questions.json").write_text('{"q1": "?"}')
+    code, out = _vg("check-claim", path, "--data", root)
+    assert code == 1, out
+    assert "cannot check the question:" in out and "is not a list of questions" in out, out

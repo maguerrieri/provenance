@@ -243,8 +243,9 @@ uv run vg check-claim data/claims/<question_id>.json
 
 **You are not finished until this exits clean.** It runs the same checks the verifier
 will: snippet present, present exactly once, long enough to be distinctive, source class
-allowed, corroboration satisfied. Every failure it prints is one you would have gotten back
-as a retry anyway — this just saves the round trip and tells you precisely what to fix.
+allowed, corroboration satisfied, and your `question` the one the run asks at your id. Every
+failure it prints is one you would have gotten back as a retry anyway — this just saves the
+round trip and tells you precisely what to fix.
 
 To test a single snippet before you commit to it:
 
@@ -268,8 +269,9 @@ Pick the span a person would highlight to prove the point, then check it.
 
 Write `data/claims/<question_id>.json`. Keep the `question_id` exactly as you were given
 it — it must match `[A-Za-z0-9][A-Za-z0-9._-]{0,63}` (it becomes a filename, and the
-schema rejects anything else). Copy `question` exactly too: `vg build` checks it against the
-run's question set, and any difference but whitespace stops the review app from rendering:
+schema rejects anything else). Copy `question` exactly too: `vg check-claim` fails any
+difference but whitespace from the question set, and so does `vg build`, for the whole run.
+Never edit `questions.json` to match your claim:
 
 ```json
 {

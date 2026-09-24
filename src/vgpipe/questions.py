@@ -5,12 +5,14 @@ reused"). A claim and its verdicts are filed under the id they were researched f
 moves them, so what can go wrong is the id coming to mean something else, or nothing: a
 question reworded or replaced in place, or an id retired while its claim stays in claims/.
 `check()` compares each claim with the question the run's questions.json holds for its id. It
-is the rule's gate, and `vg build` and `vg status` run it.
+is the rule's gate: `vg build` and `vg status` run it on every claim, and `vg check-claim` on
+the one a researcher is handing on.
 """
 
 from __future__ import annotations
 
 import json
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -28,9 +30,8 @@ class UnreadableQuestions(ValueError):
 
 @dataclass
 class QuestionSet:
-    path: Path
     text: dict[str, str]        # id -> the question asked at it
-    maps_from: dict[str, str]   # id -> the id a `vg remap` migration declared it maps from
+    maps_from: dict[str, str]   # id -> another id a `vg remap` migration declared it maps from
 
 
 @dataclass
@@ -38,7 +39,7 @@ class Findings:
     unlisted: list[str] = field(default_factory=list)   # claim ids the set asks nothing at
     # (id, the question the claim answers, the question the set asks at that id)
     reworded: list[tuple[str, str, str]] = field(default_factory=list)
-    pending: list[tuple[str, str]] = field(default_factory=list)   # (id, maps_from), never applied
+    pending: list[tuple[str, str]] = field(default_factory=list)   # (id, maps_from) still declared
 
     @property
     def failed(self) -> bool:
@@ -53,10 +54,11 @@ def find(data: Path) -> Path | None:
     Which question set belongs to a run is #8. Until a run declares it, a candidate run
     (`data/<candidate>`, which `vg new-candidate` gives its own retargeted copy) reads its own,
     and one without falls back to its parent's template. A file that exists but can't be read
-    is `load()`'s to refuse, never a reason to fall back.
+    is `load()`'s to refuse, never a reason to fall back: a dangling symlink included, which
+    `exists()` alone reads as absent.
     """
     for p in (data / FILE, data.parent / FILE):
-        if p.exists():
+        if p.exists() or p.is_symlink():
             return p
     return None
 
@@ -72,6 +74,7 @@ def load(path: Path) -> QuestionSet:
         raise UnreadableQuestions(f"{path} is not a list of questions")
     text: dict[str, str] = {}
     maps_from: dict[str, str] = {}
+    folded: dict[str, str] = {}   # casefolded id -> the id as first given
     problems: list[str] = []
     for i, q in enumerate(raw):
         if not isinstance(q, dict):
@@ -84,24 +87,35 @@ def load(path: Path) -> QuestionSet:
         if not isinstance(asked, str):
             problems.append(f"entry {i} ({qid}) has no text")
             continue
-        if qid in text:
+        if (first := folded.get(qid.casefold())) is not None:
             # An id names one question: with two, a claim on it answers one of them, and which
-            # one it was researched for is not on disk.
-            problems.append(f"entry {i} reuses id {qid}")
+            # one it was researched for is not on disk. Ids differing only in case are one id,
+            # since they name one claim file and one shard on a case-insensitive disk (macOS's
+            # default), where the second question's research overwrites the first's.
+            problems.append(f"entry {i} reuses id {first}"
+                            + (f" as {qid}" if qid != first else ""))
             continue
+        folded[qid.casefold()] = qid
         text[qid] = asked
-        if q.get("maps_from") not in (None, ""):
+        # An identity pair only adopted a rewording, and moved nothing.
+        if q.get("maps_from") not in (None, "", qid):
             maps_from[qid] = str(q["maps_from"])
     if problems:
         raise UnreadableQuestions(f"{path} can't be read as one question per id: "
                                   + "; ".join(problems))
-    return QuestionSet(path, text, maps_from)
+    return QuestionSet(text, maps_from)
+
+
+def _words(s: str) -> list[str]:
+    return unicodedata.normalize("NFC", s).split()
 
 
 def _same(a: str, b: str) -> bool:
-    """Whitespace aside, the same question. Any other difference is a rewording, or a
-    misquote the claim's `question` should correct: the gate can't tell which, so both fail."""
-    return a.split() == b.split()
+    """The same question, whitespace and Unicode composition aside: an "é" typed as one code
+    point or as "e" plus an accent prints identically, and a failure nobody can see is one
+    nobody can fix. Any other difference is a rewording, or a misquote the claim's `question`
+    should correct: the gate can't tell which, so both fail."""
+    return _words(a) == _words(b)
 
 
 def check(claims: list[Claim], questions: QuestionSet) -> Findings:
