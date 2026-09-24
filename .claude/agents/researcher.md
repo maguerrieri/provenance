@@ -268,7 +268,8 @@ Pick the span a person would highlight to prove the point, then check it.
 
 Write `data/claims/<question_id>.json`. Keep the `question_id` exactly as you were given
 it — it must match `[A-Za-z0-9][A-Za-z0-9._-]{0,63}` (it becomes a filename, and the
-schema rejects anything else):
+schema rejects anything else). Copy `question` exactly too: `vg build` checks it against the
+run's question set, and any difference but whitespace stops the review app from rendering:
 
 ```json
 {

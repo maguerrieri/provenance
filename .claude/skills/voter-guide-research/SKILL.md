@@ -17,8 +17,11 @@ whether a citation is real.** Never let a model set a verification status.
    and verdicts are filed by id, and nothing moves them. If a question is split or reworded
    later in a run, give each new question a new id and retire the old one. Move its claim
    file out of `claims/` (to `claims-archive/`) and its verdict shard out of `judgments/`, and
-   point any `derives_from` that names it at the new id. A claim left behind still renders
-   beside its replacement. A reused id hands its old verdicts to the new claim.
+   point any `derives_from` that names it at the new id. A reused id hands its old verdicts to
+   the new claim. `vg build` and `vg status` are the rule's gate: each exits 1 on a claim whose
+   id `questions.json` no longer lists, or whose `question` differs from the text at its id.
+   Once the new question's research has replaced the old claim, a reused id no longer shows,
+   so give the new question its new id before anyone researches it.
 3. Write `data/questions.json` as `[{"id", "text", "claim_type", "parent", "rationale"}]`.
 4. Mark `claim_type: "adversarial"` for anything negative or contested about a candidate
    (settlements, donor influence, opposition to a popular measure). Adversarial claims
@@ -126,7 +129,10 @@ Do not summarize the source rules for them — the agent definition carries them
 ## Phase 3 — review surface
 
 1. `uv run vg build --race <race>` — detects conflicts and renders `data/out/review.html` +
-   `data/out/claims.json`.
+   `data/out/claims.json`. It first checks every claim against the question its id names in
+   `questions.json`, and renders nothing, exiting 1, while one sits on an id the set no longer
+   lists or answers another question. Retire the id (Phase 0, step 2), or, if the claim only
+   misquotes its question, copy the exact text into its `question`.
 2. `uv run vg serve` — opens the app on `127.0.0.1:8765`. Serve rather than opening the
    file directly: browsers disable `localStorage` on `file://` origins, and the checkbox
    state is what makes a long review session survivable.
