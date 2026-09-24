@@ -1,0 +1,34 @@
+# California outlets, agencies, and primary-document hosts.
+#
+# campaign_statement_only domains are citable ONLY for the narrow claim form "the
+# campaign says X" -- when the source is the primary source for its own statement.
+
+bylined_journalism:
+  - calmatters.org
+  - latimes.com
+  - sacbee.com
+  - kqed.org
+  - laist.com
+  - capitolweekly.net
+  - mercurynews.com
+  - ocregister.com
+  - edsource.org
+
+primary_document:
+  # Senate Floor Analyses: sfa.senate.ca.gov is the issuing authority for its own digests, so
+  # citing one there is not a mirror. Flagged as secondary until it was listed.
+  - senate.ca.gov
+  - assembly.ca.gov
+  - electionresults.sos.ca.gov
+  - sos.ca.gov
+  - cal-access.sos.ca.gov
+  - powersearch.sos.ca.gov
+  - leginfo.legislature.ca.gov
+  - leginfo.ca.gov
+  - fppc.ca.gov
+  - voterguide.sos.ca.gov
+  - lao.ca.gov
+  - sco.ca.gov
+  - courts.ca.gov
+
+campaign_statement_only: []

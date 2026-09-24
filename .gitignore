@@ -1,0 +1,30 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# local research data — cached pages and outputs stay off git
+data/cache/
+# a stray per-candidate cache (see _cache_root) — may hold a copied 1.5 GB CAL-ACCESS database
+data/*/cache/
+data/out/
+data/claims/
+# the remap marker describes data/claims/, so it lives and dies with it (CLAUDE.md, maps_from)
+data/.remap-applied
+
+# agent worktrees live inside the repo; they are never part of it
+.claude/worktrees/
+
+# the CAL-ACCESS export and its SQLite index are large and regenerable
+data/cache/calaccess/
+
+# a re-home's transaction scratch: present only while one runs, or after one was killed
+judgments-backup/
+judgments-backup.partial/
+judgments-backup.discard/

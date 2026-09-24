@@ -1,0 +1,32 @@
+host: cal-access.sos.ca.gov
+name: CAL-ACCESS campaign finance (candidate/committee filings)
+access: manual
+verified: 2026-08-21
+
+ui_url: https://cal-access.sos.ca.gov/Campaign/Candidates/
+naive_fetch: |
+  HTTP 200 with 212 characters — an Incapsula (Imperva) bot-protection interstitial, not the
+  page. The only script tag is /_Incapsula_Resource.
+
+blocked: |
+  Bot protection. Do NOT try to work around it: defeating bot detection is out of bounds for
+  this pipeline regardless of whether it would work, and the sanctioned bulk export below
+  carries the same data.
+
+use_instead: campaignfinance.cdn.sos.ca.gov (nightly bulk export) — see that entry.
+
+document_retrieval: |
+  Also blocked, measured 2026-08-21. Both of these return the same 212-byte Incapsula
+  interstitial to a plain client, for real filing ids taken from the export:
+    /PDFGen/pdfgen.prg?filingid=<id>&amendid=0
+    /Campaign/Committees/Detail.aspx?id=<filer_id>
+  A human's browser opens them fine.
+
+  Consequence worth stating plainly: a citation to a CAL-ACCESS page is human-checkable but
+  NOT machine-verifiable. `vg verify` cannot fetch it, so it will not carry a verified
+  snippet. Cite it anyway when it is the right source — the human can open it — but expect
+  human_review, and give the human the filing id and what to look for.
+
+manual_steps: |
+  For a one-off lookup a human opens the UI and copies the filing URL. Record what you
+  retrieved and cite the document, not a description of the search.

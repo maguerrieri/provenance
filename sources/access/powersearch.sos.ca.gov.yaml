@@ -1,0 +1,16 @@
+host: powersearch.sos.ca.gov
+name: Power Search — CAL-ACCESS contribution/expenditure search
+access: manual
+verified: 2026-08-21
+
+ui_url: https://powersearch.sos.ca.gov/
+naive_fetch: |
+  The server disconnects without sending a response (httpx RemoteProtocolError) for a plain
+  client. A browser gets the page. Nothing here is fetchable programmatically.
+
+use_instead: campaignfinance.cdn.sos.ca.gov (nightly bulk export) — Power Search is a UI over
+  that same CAL-ACCESS data, so the export answers the same questions without scraping.
+
+manual_steps: |
+  Human runs the search in a browser and copies the resulting filing URL. If you cite a
+  summary rather than a filing, say so and set secondary_host_ack.

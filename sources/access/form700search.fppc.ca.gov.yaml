@@ -1,0 +1,63 @@
+host: form700search.fppc.ca.gov
+name: FPPC Form 700 / Statement of Economic Interests search
+access: api
+verified: '2026-08-21'
+ui_url: https://form700search.fppc.ca.gov/
+naive_fetch: 'Returns the SPA shell (~570 chars, "Welcome to eDisclosure"). fppc.ca.gov/search-filings/
+
+  form-700-search/ is prose describing the portal, not a search. Both look like a dead end
+
+  and are not one.
+
+  '
+recipes:
+- id: search-by-name
+  summary: Every Form 700 filing for a filer, with filed date, year covered and agency
+  method: POST
+  url: https://form700search.fppc.ca.gov/Home/SearchDocuments
+  headers:
+    content-type: application/json
+    origin: https://form700search.fppc.ca.gov
+    referer: https://form700search.fppc.ca.gov/
+  body: "{\"queryGenerationInfo\": null,\n \"searchFieldQueryInfos\": [\n   {\"queryField\": \"FilerFirstName\"\
+    , \"queryType\": \"Start With\", \"filterValue\": \"{first}\"},\n   {\"queryField\": \"FilerLastName\"\
+    ,  \"queryType\": \"Start With\", \"filterValue\": \"{last}\"}],\n \"showOnlyHeldPositions\": false}\n"
+  params:
+  - first
+  - last
+  notes: 'No session or cookie needed — verified against a cookieless request. The response is
+
+    JSON-encoded JSON (a string containing the document), so decode twice.
+
+    Wrapped as `vg form700 "<first>" "<last>"`.
+
+    '
+manual_steps: "Retrieving the PDF (probed 2026-08-21). The portal's searchBundle.js reads the\n\
+  endpoint out of a hidden field, `#hdnGetRedactedFormPdfUrl` = /Home/GetRedactedFormPdf:\n\n  POST /Home/GetRedactedFormPdf\
+  \   content-type: application/json\n  {\"indexID\": \"<indexID from SearchDocuments>\",\n   \"formInfo\"\
+  : {\"LastName\": .., \"FirstName\": .., \"FilingYear\": 2025,\n                \"Agency\": .., \"Position\"\
+  : .., \"FilingType\": \"Annual\"}}\n  -> {\"PDFDownloadUrl\": \".../Home/DownloadPdf?key=<hex>PdfDownloadSessionKey&fileName=..\"\
+  ,\n      \"Message\": null}\n\nThe key is bound to the ASP.NET session that asked for it: fetched cookieless\
+  \ it 302s to\n/Error/Index; fetched with the same cookie jar (GET / first, keep cookies) it returns\
+  \ the\nPDF. So an agent can *read* any filing, but there is no URL it can hand a reviewer — the\nlink\
+  \ dies with the session.\n\nConsequence for claims: a Form 700 that no other host republishes cannot\
+  \ be cited at all.\n`not_found` plus the portal search instruction is the correct answer, not a copy\
+  \ of the\nprevious year's filing from another agency's site. That substitution verifies perfectly and is wrong.\n"
+limits: 'Search works; a stable document URL does not exist. GetDocument/DownloadDocument/
+
+  ViewDocument with an indexId return the same 2.3KB SPA shell, and the one endpoint that
+
+  does work (/Home/GetRedactedFormPdf, see manual_steps) mints a session-bound one-time
+
+  link. Not a fetch we failed to figure out — a permalink the portal does not issue.
+
+  '
+findings: |
+  Re-probed 2026-08-21. Document retrieval works from code, but NOT as a citable URL.
+  POST (or GET) /Home/GetRedactedFormPdf mints {PDFDownloadUrl:
+  /Home/DownloadPdf?key=<hex>PdfDownloadSessionKey&fileName=..}. That link returns the PDF
+  only to the cookie jar that minted it, and a 2.5KB error page to a fresh client. Nothing in
+  the fetch layer replays the two steps: fppc.citable_url() names which filing is meant and
+  is not fetchable, so `vg check` on it caches the JSON envelope and never finds the snippet.
+  Treat manual_steps as authoritative: not_found plus a portal retrieval instruction, never a
+  prior-year copy from another host.

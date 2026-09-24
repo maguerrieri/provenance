@@ -1,0 +1,24 @@
+host: campaignfinance.cdn.sos.ca.gov
+name: CAL-ACCESS nightly bulk export (the data behind Power Search)
+access: bulk
+verified: 2026-08-21
+
+ui_url: https://www.sos.ca.gov/campaign-lobbying/cal-access-resources/raw-data-campaign-finance
+naive_fetch: |
+  https://campaignfinance.cdn.sos.ca.gov/dbwebexport.zip — HTTP 200, ~1576 MB, no bot
+  protection, no session. Nightly dump of the CAL-ACCESS database as TSV tables.
+
+limits: |
+  1.5 GB, so this is a deliberate step, not something to pull mid-question. It is the
+  authoritative source for donor and independent-expenditure questions, and the only one
+  reachable without a browser: both cal-access.sos.ca.gov and powersearch.sos.ca.gov are
+  closed to programmatic clients.
+
+  express-lane.zip returns 403; only dbwebexport.zip is public.
+
+  Wrapped as `vg calaccess build | filer | contributions | independent-expenditures`.
+  Download once by hand (the pipeline never pulls 1.5 GB implicitly), then build the SQLite
+  index.
+
+  Citing it needs thought — a row in a local TSV is not a URL a human can Cmd-F. Cite the
+  filing's own CAL-ACCESS page for the human, and use the export to find and cross-check it.
