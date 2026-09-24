@@ -541,8 +541,8 @@ def shown_date(iso: str | None, filed: str) -> str:
 
 def contributions_to(root: Path, filer_id: str, *, top: int = 25,
                      since: str = "") -> list[Contribution]:
-    """Largest contributions received by a filer, on or after `since` if given (YYYY-MM-DD,
-    YYYY-MM or YYYY), then every one with no readable amount, whatever `top` says."""
+    """The `top` largest contributions received by a filer, on or after `since` if given
+    (YYYY-MM-DD, YYYY-MM or YYYY), then up to `top` more with no readable amount."""
     # Must use the same dedup as queries.contributor_total, or the listing and the citable
     # figure disagree — and they did. Filers restate one gift under several FILING_IDs while
     # keeping the TRAN_ID stable, so a raw listing showed one donor's single gift four times
@@ -563,8 +563,9 @@ def contributions_to(root: Path, filer_id: str, *, top: int = 25,
         where = f"WHERE ({window}) OR NOT {real_date_sql('CTRIB_DATE')}"
     # Amounts are read as the queries read them (AMT), so the listing and a citable total agree
     # on which gifts have one. A gift with none cannot be ranked, but it is exactly what a
-    # total names as "not counted", so it is listed after the top `top` rather than cut by the
-    # LIMIT: the researcher needs its filing to check it by hand. NULL sorts last in DESC.
+    # total names as "not counted", so it gets its own `top` slots after the ranked ones,
+    # newest first, rather than being cut by their LIMIT: the researcher needs its filing to
+    # check it by hand. NULL sorts last in DESC.
     q = f"""
         WITH g AS (
             SELECT * FROM (
@@ -576,11 +577,11 @@ def contributions_to(root: Path, filer_id: str, *, top: int = 25,
             {where})
         SELECT * FROM (SELECT * FROM g WHERE AMT IS NOT NULL ORDER BY AMT DESC LIMIT ?)
         UNION ALL
-        SELECT * FROM g WHERE AMT IS NULL
-        ORDER BY AMT DESC
+        SELECT * FROM (SELECT * FROM g WHERE AMT IS NULL ORDER BY CTRIB_DATE DESC LIMIT ?)
+        ORDER BY AMT DESC, CTRIB_DATE DESC
     """
     out = []
-    for r in con.execute(q, args + [top]):
+    for r in con.execute(q, args + [top, top]):
         name = " ".join(x for x in (r["CTRIB_NAMF"], r["CTRIB_NAML"]) if x).strip()
         # A blank here was listed as $0, which reads as a stated zero.
         out.append(Contribution(filing_id=str(r["FILING_ID"]),

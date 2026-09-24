@@ -783,11 +783,12 @@ def calaccess_cite(filer_id: str, filing_id: str = "", data: Path = DATA, cache:
 @calaccess_app.command("contributions")
 def calaccess_contributions(filer_id: str, data: Path = DATA, cache: Path = None, top: int = 25,
                             since: str = ""):
-    """Largest contributions received by a filer, then every one with no readable amount.
+    """Largest contributions received by a filer, then up to --top with no readable amount.
 
     The URL column is the point: cite the filing page, never this table. A row here is a
     local copy with nothing a human can open or Cmd-F. A gift whose amount is not a number is
-    not counted by the query totals, so it is always listed, as filed, for checking by hand.
+    not counted by the query totals, so it is listed after the ranked ones, as filed, for
+    checking by hand.
     """
     from . import calaccess
 
@@ -801,13 +802,20 @@ def calaccess_contributions(filer_id: str, data: Path = DATA, cache: Path = None
               box=None)
     for c in rows:
         # An amount that did not read is not "$0". A blank says so, and anything else is shown
-        # as filed, escaped, since rich would read "[/]" as markup.
-        amt = f"${c.amount:,.0f}" if c.amount is not None else (escape(c.amount_filed) or "blank")
+        # as filed: escaped, since rich would read "[/]" as markup; a control character made
+        # visible, since it acts on the terminal before anything is shown; and cut to fit.
+        filed = c.amount_filed if c.amount_filed.isprintable() else repr(c.amount_filed)[1:-1]
+        amt = f"${c.amount:,.0f}" if c.amount is not None else (escape(filed[:14]) or "blank")
         t.add_row(amt, c.contributor[:30], c.occupation[:18] or c.employer[:18],
                   c.date, (f"{c.filings}x" if c.filings > 1 else ""), c.cite_url)
     con.print(t)
+    unread = sum(c.amount is None for c in rows)
     con.print(f"\n[yellow]{len(rows)} rows. Cite the filing page, not this table — a row here "
               f"has no URL a human can check.[/]")
+    if unread:
+        con.print(f"[yellow]The last {unread} have no readable amount, so no query total counts "
+                  "them" + ("; there may be more: raise --top" if unread >= top else "")
+                  + ".[/]")
 
 
 @calaccess_app.command("independent-expenditures")

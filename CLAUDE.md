@@ -790,9 +790,9 @@ Related traps in the same data:
   anyone largest: while any gift to the filer has no amount, `top_contributor` names no
   largest contributor, only the stated leader as a lead to check. `vg calaccess contributions`
   reads amounts the same way. It prints a blank as `blank` and any other unreadable amount as
-  filed, and it lists every such gift whatever `--top` says, since those are the gifts a total
-  names as not counted. The IE listing prints a blank as `blank` but still reads other amounts
-  with Python's `float()` (#56).
+  filed, and it gives such gifts their own `--top` slots after the ranked ones, since those
+  are the gifts a total names as not counted. The IE listing prints a blank as `blank` but
+  still reads other amounts with Python's `float()` (#56).
 - **A dedup reads a value the way the sum does.** `DEDUPED_RECEIPTS` grouped on
   `CAST(AMOUNT AS REAL)`, which reads `300,000` as 300.0. A row filed that way merged into a
   $300 gift under the same transaction base, `MAX()` over the text kept `300,000`, and once
