@@ -45,9 +45,10 @@ a persistent checkbox. Keyboard: `j`/`k` move, `space` check, `f` flag, `o` open
 archive, `c` copy. Filters: unchecked, adversarial, paywalled, conflicts, needs-review.
 
 A check belongs to one claim: a source cited by two questions is checked under each
-separately. It also clears itself when the claim or the excerpt you read changes (a
-re-fetch, a new snapshot, a reworded answer), and the row says so. Flags and notes are about
-the source, and show wherever it is cited.
+separately. It also clears itself when what you checked changes, and the row says so: the
+claim (a reworded answer), the excerpt you read (a re-fetch that changes its text or
+highlight), or, on a row with no excerpt, the snapshot offered instead (a new one from
+`vg archive`). Flags and notes are about the source, and show wherever it is cited.
 
 Serve it rather than opening `review.html` directly — several browsers disable
 `localStorage` on `file://` origins, which silently loses your progress. Export/import
