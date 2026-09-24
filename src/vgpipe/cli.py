@@ -22,7 +22,13 @@ from rich.text import Text
 from . import archive as arch
 from .fetch import fetch as fetch_url
 from .fetch import kept_copy_note, no_text_layer, pages_without_text
-from .models import Claim, DroppedContradiction, check_archive_url, strip_machine_fields
+from .models import (
+    QID_PATTERN,
+    Claim,
+    DroppedContradiction,
+    check_archive_url,
+    strip_machine_fields,
+)
 from .races import available as available_races
 from .races import load as load_race
 from .report import clear_render, render
@@ -1030,23 +1036,31 @@ def _refuse(msg: str) -> NoReturn:
     """Print `msg` in red and exit 1. As one Text, never markup: a refusal quotes ids, paths
     and agent-written values, and escape() only neutralises a tag complete inside the one value
     it is given, so `[/` escaped in one piece and `]` in the next still made a closing tag, and
-    the refusal raised MarkupError instead."""
-    con.print(Text(msg, style="red"))
+    the refusal raised MarkupError instead. Through `_printable()`, since an argument can carry
+    a lone surrogate (an undecodable byte) that makes the print raise, or an escape sequence;
+    and unwrapped, since a refusal can name a command to run next."""
+    con.print(Text(_printable(msg), style="red"), soft_wrap=True)
     raise typer.Exit(1)
 
 
 def _qid_or_exit(data: Path, question_id: str) -> None:
     """Stop unless `question_id` has the shape every claim's has — before anything prints it.
 
-    `judgments.path_for()` is the check, since the id names a verdict file. A command given a
-    malformed id has nothing to find, and each message quoting it is one more place it can
-    combine with the text around it."""
+    `judgments.path_for()` is the check, the one every read and write of a verdict file by id
+    goes through. A command given a malformed id has nothing to find, and each message quoting
+    it is one more place it can combine with the text around it. The id is quoted as `repr()`,
+    which shows a space or a control character for what it is."""
     from . import judgments
 
     try:
         judgments.path_for(data, question_id)
-    except ValueError as e:
-        _refuse(str(e))
+    except ValueError:
+        near = question_id.strip()
+        _refuse(f"refusing question id {question_id!r}: no claim can have it, since every "
+                f"claim's question_id has the shape {QID_PATTERN} — no spaces, path separators "
+                f"or leading dot"
+                + (f". Did you mean {near}?" if near != question_id
+                   and re.fullmatch(QID_PATTERN, near) else ""))
 
 
 def _claim_or_exit(data: Path, question_id: str, needed: str) -> tuple[Claim, list[Claim]]:
@@ -1290,10 +1304,12 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
                              claim_fingerprint=claim.fingerprint)
     except ValueError as e:
         _refuse(str(e))   # it may quote the verdict file's own text
-    # As Text: the note is agent-written, and a `[/]` in it raised after the verdict was on
-    # disk — a non-zero exit that verifiers are told means nothing was recorded.
+    # As Text, through `_printable()`: the note is agent-written, and a `[/]` or a lone
+    # surrogate in it raised after the verdict was on disk — a non-zero exit that verifiers are
+    # told means nothing was recorded. A line break in it could also print a second line.
     con.print(Text.assemble((j.verdict, "green" if j.verdict == "supports" else "red"),
-                            f" recorded for {question_id}/{sid}" + (f": {note}" if note else "")))
+                            _printable(f" recorded for {question_id}/{sid}"
+                                       + (f": {note}" if note else ""))), soft_wrap=True)
 
 
 # A retired flag: still parsed, so an old invocation reaches _retired(), but not in --help. Given
