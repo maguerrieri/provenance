@@ -42,6 +42,13 @@ SupportVerdict = Literal["supports", "topic_only", "contradicts", "superseded", 
 MECHANICAL_FAILURES = frozenset({"snippet_not_found", "snippet_not_unique", "snippet_too_short",
                                  "fetch_failed", "bad_source_class", "human_review"})
 
+# Usable evidence that the judgment pass never covers. A paywalled row has no confirmed
+# context: the live page is gated and no snapshot confirmed the quote. So `vg judge` refuses
+# it, and a verdict recorded on it reads stale. The route to a verdict is its snapshot. Once
+# `vg verify` or `vg archive` confirms the quote there, the row is `verified_via_archive` and
+# is judged like any other. Until then the human checks it, and the claim is flagged for that.
+NOT_JUDGED = frozenset({"could_not_verify_paywall"})
+
 # Whether the snapshot `vg archive` saved actually holds the cited page. A successful save is
 # not a usable snapshot: SPN reports success on bot-protected pages and captures the bot check.
 #   archived             — checked: the snippet is in it, or it matches the live page
@@ -235,6 +242,13 @@ class Source(BaseModel):
         return self.verification.support in ("topic_only", "contradicts", "superseded")
 
     @property
+    def awaits_verdict(self) -> bool:
+        """No verdict yet, on a source the judgment pass covers. A paywalled source is not one
+        (NOT_JUDGED): waiting on its verdict would wait forever."""
+        return (self.verification.support == "unreviewed"
+                and self.verification.status not in NOT_JUDGED)
+
+    @property
     def sid(self) -> str:
         """Identity of the thing a verifier judged.
 
@@ -313,8 +327,10 @@ class Claim(BaseModel):
         # An unjudged source is not a verified one. The judgment pass is where "the quote is
         # on the page" becomes "the page supports the claim", so a claim nobody has judged
         # has not been checked in the way that matters — and in testing the verifier silently
-        # never ran, which rendered everything green.
-        if any(s.verification.support == "unreviewed" for s in self.sources):
+        # never ran, which rendered everything green. A paywalled source is outside the pass,
+        # so it never waits here: counted as waiting, a claim resting on one read `pending`
+        # forever and never reached the paywall flag below.
+        if any(s.awaits_verdict for s in self.sources):
             return "pending"
         good = {"verified", "pdf_normalized_match", "normalized_match",
                 "verified_via_archive"}
