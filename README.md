@@ -44,6 +44,11 @@ uv run vg serve         # http://127.0.0.1:8765/review.html
 a persistent checkbox. Keyboard: `j`/`k` move, `space` check, `f` flag, `o` open, `a`
 archive, `c` copy. Filters: unchecked, adversarial, paywalled, conflicts, needs-review.
 
+A check belongs to one claim: a source cited by two questions is checked under each
+separately. It also clears itself when the claim or the excerpt you read changes (a
+re-fetch, a new snapshot, a reworded answer), and the row says so. Flags and notes are about
+the source, and show wherever it is cited.
+
 Serve it rather than opening `review.html` directly — several browsers disable
 `localStorage` on `file://` origins, which silently loses your progress. Export/import
 buttons cover the standalone case.
@@ -93,7 +98,9 @@ its id names, is left out of the review app, and the command exits 1.
 | Claim answers the question its id names in `questions.json` | left out of the review app, and `vg build` and `vg status` exit 1; `vg check-claim` fails the one claim |
 
 `uv run pytest` covers all of them offline, including the four failure modes that matter:
-fabricated quote, repeated snippet, smart-quote drift, excluded aggregator.
+fabricated quote, repeated snippet, smart-quote drift, excluded aggregator. The review-app
+tests run the page's own script under Node, so they need `node` on the PATH; without it they
+skip, except in CI, where they fail.
 
 ## Adding a race
 
