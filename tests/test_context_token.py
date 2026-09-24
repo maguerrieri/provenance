@@ -305,7 +305,8 @@ def total(monkeypatch):
         source=_source(query=QueryCitation(name=TOTAL, params={"filer_id": "7"},
                                            expected="4321")),
         bump=lambda: define(2),
-        refresh=lambda: export.update(date="2030-02-03"))
+        refresh=lambda: export.update(date="2030-02-03"),
+        undate=lambda: export.update(date=""))
 
 
 def _query_run(tmp_path, source: Source):
@@ -375,8 +376,17 @@ def test_the_hand_off_names_the_run_a_query_context_came_from(tmp_path, total):
     run, root = _query_run(tmp_path, total.source)
     code, out = _vg("handoff", "q1", "--data", run, "--cache", root)
     assert code == 0, out
-    assert (f"  query run: {TOTAL} v1 against the CAL-ACCESS export of 2030-01-02 "
-            f"under {root}") in out, out
+    assert (f"  query run: {TOTAL} v1, CAL-ACCESS export of 2030-01-02, under {root}\n"
+            in out), out
+
+    # A verifier acts on what the hand-off prints, and has Bash: the operator's instruction to
+    # rebuild an undated database, which moves every query run in the pipeline, is not for it.
+    total.undate()
+    assert _vg("verify", "--data", run, "--cache", root)[0] == 0
+    code, out = _vg("handoff", "q1", "--data", run, "--cache", root)
+    assert code == 0, out
+    assert f"  query run: {TOTAL} v1, undated CAL-ACCESS database, under {root}\n" in out, out
+    assert "calaccess build" not in out and "rebuild" not in out, out
 
 
 def test_a_query_verdict_without_a_token_is_refused(tmp_path, total):
@@ -420,7 +430,7 @@ def test_a_query_outside_calaccess_is_handed_off_and_judged(tmp_path, monkeypatc
                                     expected="4321"))
     run, root = _query_run(tmp_path, s)
     code, out = _vg("handoff", "q1", "--data", run, "--cache", root)
-    assert code == 0 and f"  query run: test.total v1 under {root}\n" in out, out
+    assert code == 0 and f"  query run: test.total v1, under {root}\n" in out, out
     [(token, _)] = _handed_from(out).values()
     code, out = _vg("judge", "q1", s.sid, "supports", "--context", token, "--data", run,
                     "--cache", root)

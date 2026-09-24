@@ -64,8 +64,9 @@ that cites that source; or the copy of the page your context came from is no lon
 cached (the page was re-fetched, or its snapshot replaced, since `vg verify`); or the claim,
 the citation or its context changed since `vg handoff` printed them, or a query citation was
 re-run under another definition, export or database, so your token names what the pipeline no
-longer has. It says which. A re-run changes the token even when its result reads the same:
-your verdict was about the calculation that printed it. Fix a typo in what you were given, but
+longer has. It says which. A re-run under another definition, export or database changes
+the token even when its result reads the same: your verdict was about the calculation that
+printed it. A re-run under the same ones does not. Fix a typo in what you were given, but
 never file the verdict under an id or sid you were not given. For a changed claim, citation,
 context or query run, run `vg handoff` again, **read what it prints now**, and judge that: the
 new token is only worth passing with a verdict about the text it came with.

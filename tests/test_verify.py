@@ -6729,7 +6729,7 @@ def _candidate_run(tmp_path):
 
 def _ctx(run, sid, qid="q1"):
     """`--context <token>` for the context the claim file gives `sid` now: what `vg handoff`
-    prints beside it, and what `vg judge` checks a page verdict against."""
+    prints beside it, and what `vg judge` checks every verdict against."""
     from vgpipe import judgments
     from vgpipe.cli import load_claims
 

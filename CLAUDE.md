@@ -509,6 +509,11 @@ context the verifier read, was on no disk. So the verifier says it:
   prints as an escape (`cli._printable()`). Split on `\n` alone, an ANSI erase-line or a U+2028
   in page text faked a source header, and a lone surrogate in a claim made the print raise, so
   no verdict could be recorded on it at all.
+- What the pipeline itself prints there is facts, never a step to take. The verifier has Bash
+  and acts on what the hand-off says. The query-run line first reused `describe_export()`,
+  whose undated-database wording tells an operator to run `vg calaccess build`. That rebuild
+  moves every query run in the pipeline, so every token outstanding on a query citation stops
+  matching.
 - `vg judge --context <token>` is required for every verdict. A query citation once needed
   none, on the grounds that `unjudgeable_query()` already ties it to its run. It does, but only
   to the run on disk when judge runs: a re-verify under a bumped definition rewrote that run,

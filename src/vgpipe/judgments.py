@@ -943,9 +943,11 @@ def _judged_page(cache_root: Path, url: str):
 
 
 def query_stamp(cache_root: Path, query) -> tuple[int, str]:
-    """(query_version, export_date) a verdict on a query citation is about to be recorded
-    against: the registry's current definition and the export under `cache_root`. (0, "") for
-    a name the registry does not know, which reads as stale."""
+    """(query_version, export_date) now: the registry's current definition and the export
+    under `cache_root`. (0, "") for a name the registry does not know, which reads as stale.
+    What a claim's run must match (`unjudgeable_query()`) before `vg judge` stamps that run:
+    judge stamps the run it checked, never a second read of this, which a rebuild between the
+    two could move."""
     from . import queries
 
     registered = queries.REGISTRY.get(query.name)
@@ -956,13 +958,15 @@ def query_stamp(cache_root: Path, query) -> tuple[int, str]:
 
 def unjudgeable_query(query, ran, cache_root: Path) -> str:
     """Why a verdict on this query citation cannot be recorded now, or "". `ran` is the
-    `QueryRun` the claim file carries: the run whose context the verifier read.
+    `QueryRun` the claim file carries: the run behind the context it holds now. That is not
+    always the one the verifier read, since a re-verify can replace it while the verifier
+    works; the context token (`context_token()`) is what ties the verdict to that one.
 
-    The stamp (`query_stamp()`) must describe that run. Stamping the registry's current
-    definition over a context an older one produced would make a verdict about the old
-    calculation read as current — the exact case versioning exists to catch — and stamping
-    another database's export over it would hide that the data differs. So when the run, the
-    registry and this root disagree, re-verify first.
+    `vg judge` stamps the verdict with this run, so it must match the registry and this root.
+    A context an older definition produced, stamped with the current one, would make a verdict
+    about the old calculation read as current — the exact case versioning exists to catch —
+    and one from another database's export would hide that the data differs. So when the run,
+    the registry and this root disagree, re-verify first.
 
     This reads a claim file, and on the trusted side: a forged `query_run` can only get past
     the refusal, and past it is exactly the stamp `vg judge` wrote before this check existed —
@@ -972,26 +976,17 @@ def unjudgeable_query(query, ran, cache_root: Path) -> str:
     if (ran is not None and (ran.version, ran.export_date) == (version, export)
             and Path(ran.cache_root).resolve() == root):
         return ""
-    now = f"{query.name} is now {_run_phrase(query.name, version, export, cache_root)}"
+    now = f"{query.name} is now v{version}{_against(query.name, export)} under {cache_root}"
     if ran is None:
         why = (f"this citation has no recorded query run (it was verified before runs were "
                f"stamped, or its query failed), so nothing says what produced the context you "
                f"judged; {now}")
     else:
-        why = (f"this citation was last verified under {describe_run(query.name, ran)}, but "
-               f"{now}, so the context you judged is not what it gives here")
+        why = (f"this citation was last verified under v{ran.version}"
+               f"{_against(query.name, ran.export_date)} under {ran.cache_root}, but {now}, so "
+               f"the context you judged is not what it gives here")
     return (f"{why}. Run `vg verify`, then judge it again, with the same --cache for both "
             f"commands.")
-
-
-def describe_run(name: str, run) -> str:
-    """`v<n> against <the export> under <root>`: how `vg handoff` and `vg judge` name the
-    `QueryRun` a query citation named `name` was verified under."""
-    return _run_phrase(name, run.version, run.export_date, run.cache_root)
-
-
-def _run_phrase(name: str, version: int, export_date: str, cache_root) -> str:
-    return f"v{version}{_against(name, export_date)} under {cache_root}"
 
 
 def _against(name: str, export_date: str) -> str:
@@ -1177,16 +1172,12 @@ def wrong_context(claim, source, token: str, *, handoff: str) -> str:
         return (f"a verdict must name the context it judged: pass --context with the context "
                 f"token `{handoff}` printed beside this source")
     if token != context_token(claim, source):
-        if source.query is None:
-            what, rerun, about = "claim, citation or context", "", "text"
-        else:
-            what, about = "claim, citation, context or query run", "a calculation"
-            rerun = (", and a query re-run under another definition, export or cache root "
-                     "changes the token even where its result reads the same")
+        what = ("claim, citation or context" if source.query is None else
+                "claim, citation, context or query run (a re-run under another definition, "
+                "export or database changes the token even where its result reads the same)")
         return (f"you were handed a different {what} (token {token}) from the one this source "
-                f"has now: it has changed since{rerun}, so your verdict is about {about} the "
-                f"pipeline no longer shows. Run `{handoff}` again, read what it prints, and "
-                f"judge that")
+                f"has now: it has changed since, so your verdict is about what the pipeline no "
+                f"longer shows. Run `{handoff}` again, read what it prints, and judge that")
     return ""
 
 
