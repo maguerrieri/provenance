@@ -480,7 +480,7 @@ A question id names one question for the life of a run. **A split or reworded qu
 new id, and the old id is retired**: never given to another question. Retiring it is done by
 hand, in three parts:
 - move its claim file out of `claims/`, to `claims-archive/`;
-- move its verdict shard out of `judgments/`;
+- move its verdict shard out of `judgments/`, to `judgments-archive/`;
 - point any `derives_from` that names the old id at the new one.
 
 Nothing in the pipeline moves a claim between ids. A dependent still naming a retired id goes to
