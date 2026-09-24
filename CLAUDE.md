@@ -106,7 +106,7 @@ that `derives_from` it read it as a met input. Gating on text heuristics can sen
 to review, so the cost was measured on two real runs first:
 
 - **(1) stays a flag.** (1) and (2) together flagged about one claim in ten, all otherwise
-  green. Read by hand, all but one were sound: claims with several facts, whose sources carry
+  mechanically green. Read by hand, all but one were sound: claims with several facts, whose sources carry
   different numbers because they describe different things (a total beside a single gift,
   different offices' dates, different rates). Tighten it before it gates, for example by
   comparing only figures within ~15% of each other as the cross-claim near-miss rule does, and
@@ -121,14 +121,17 @@ to review, so the cost was measured on two real runs first:
 - **The cost holds for the detector as measured.** It fires only when *none* of the answer's
   figures is in a snippet. An answer with one sourced figure beside an unsourced one passes,
   and so does evidence with no figure at all. Widening either changes the cost, so measure it
-  again first. (3), near misses across claims, prompts across questions and stays a flag.
+  again first. It reads snippets only, so a figure a query citation reproduces is not
+  evidence to it yet (#81), and a researcher's `vg check-claim` does not run it (#82). (3),
+  near misses across claims, prompts across questions and stays a flag.
 - **A misread figure is a false conflict.** Two parsing errors read one number as two. A unit
   came from the next word's first letter, so "$5,000 more" was five billion dollars. And units
   scaled in binary floats, so "$8.2 million" was 8199999.999999999, not "$8,200,000". As flags
   they were noise; under a gate they send sound claims to review, so both were fixed with it.
-  The measurement ran with them in place, so the fix can only lower its count. Conflict lines
-  also printed whole dollars, and $4.40 against $4.25 read "$4 vs $4". Amounts under $10 and
-  fractional amounts now show cents.
+  Tightening a match loses what the loose one caught by accident: a whole-word unit dropped
+  "$5MM" and "$6 mil", so the abbreviations are listed. The measurement ran with the old
+  parser. Conflict lines also printed whole dollars, and $4.40 against $4.25 read "$4 vs $4".
+  Amounts under $10 and fractional amounts now show cents.
 
 `detect()` reads verdicts now, so `_settle()` runs it once they are applied, after
 revalidation and corroboration and before `check_inputs()`. `vg build` and `vg status`
