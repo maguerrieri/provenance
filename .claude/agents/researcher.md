@@ -159,14 +159,15 @@ total. Either cite the late report's filing page for the gift, or pass `form_typ
 the claim as a schedule-A figure ("reported on its campaign statements through <date>").
 
 If `vg query` says **"Will not verify"**, the record behind the figure isn't settled. It counts
-rows from a filing whose latest amendment has none, or leaves out a schedule an earlier
-amendment reported and a later one has no rows on, and either way the export cannot say whether
-that amendment withdrew them; or (with `form_type=A`) it leaves out late reports that a person
-checks your wording against. The query is fine and the number is what the data gives, so don't
-change the parameters or switch to a mirror to get a clean result. Cite it anyway. `vg
-check-claim` then fails it as `human_review`, and like a kept scan that one failure is the
-exception: hand the claim on with `notes` naming the filings the warning lists, for a person to
-open.
+rows from a filing whose latest amendment has none, leaves out a schedule an earlier amendment
+reported and a later one has no rows on, or (`ie_total`) leaves out rows a filing's own
+amendment gave this candidate because its latest cover names someone else, and in each case the
+export cannot say what that later amendment did; or (with `form_type=A`) it leaves out late
+reports that a person checks your wording against. The query is fine and the number is what the
+data gives, so don't change the parameters or switch to a mirror to get a clean result. Cite it
+anyway. `vg check-claim` then fails it as `human_review`, and like a kept scan that one failure
+is the exception: hand the claim on with `notes` naming the filings the warning lists, for a
+person to open.
 
 If it says **"nothing counted"** and **"Not a finding"**, every row matching your parameters
 that states an amount is on such a left-out schedule. The export has the gift; only the filing
