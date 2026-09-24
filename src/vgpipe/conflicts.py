@@ -38,6 +38,21 @@ def money_values(text: str) -> set[float]:
     return vals
 
 
+def money(v: float) -> str:
+    """A dollar figure as a reader should see it: whole dollars from $10 up, cents below $10
+    and on any fractional amount. Whole dollars everywhere printed $0.40 and $0.25 both as
+    "$0", so a disagreement read as "$0 vs $0". An amount finer than a cent keeps every place
+    it has, or cents would do the same to $1.1045 and $1.1012."""
+    if v >= 10 and v.is_integer():
+        return f"${v:,.0f}"
+    cents = f"{v:,.2f}"
+    return f"${cents}" if float(cents.replace(",", "")) == v else f"${v:,}"
+
+
+def _amounts(vals: set[float]) -> str:
+    return ", ".join(money(v) for v in sorted(vals))
+
+
 def date_values(text: str) -> set[str]:
     return {d.lower().replace(".", "").replace(",", "") for d in DATE.findall(text)}
 
@@ -83,8 +98,7 @@ def detect(claims: list[Claim]) -> list[Claim]:
                     if not (vals_a & vals_b):
                         c.conflicts.append(
                             f"sources disagree on a dollar figure: {pub_a} "
-                            f"({', '.join(f'${v:,.0f}' for v in sorted(vals_a))}) vs {pub_b} "
-                            f"({', '.join(f'${v:,.0f}' for v in sorted(vals_b))})")
+                            f"({_amounts(vals_a)}) vs {pub_b} ({_amounts(vals_b)})")
         by_source_year = [(s.publisher, year_values(s.snippet)) for s in c.sources]
         cited_y = [(pub, vals) for pub, vals in by_source_year if vals]
         if len(cited_y) > 1:
@@ -99,13 +113,13 @@ def detect(claims: list[Claim]) -> list[Claim]:
         a_money, s_money = money_values(c.answer), money_values(snip)
         if a_money and s_money and not (a_money & s_money):
             c.conflicts.append(
-                f"dollar figure in the answer ({sorted(a_money)}) does not appear in any cited "
-                f"snippet ({sorted(s_money)})")
+                f"dollar figure in the answer ({_amounts(a_money)}) does not appear in any "
+                f"cited snippet ({_amounts(s_money)})")
         a_year, s_year = year_values(c.answer), year_values(snip)
         if a_year and s_year and not (a_year & s_year):
             c.conflicts.append(
-                f"year in the answer ({sorted(a_year)}) does not appear in any cited snippet "
-                f"({sorted(s_year)})")
+                f"year in the answer ({', '.join(sorted(a_year))}) does not appear in any "
+                f"cited snippet ({', '.join(sorted(s_year))})")
 
     by_money: dict[float, set[str]] = defaultdict(set)
     for c in claims:
@@ -120,6 +134,6 @@ def detect(claims: list[Claim]) -> list[Claim]:
                 for c in claims:
                     if c.question_id in ids:
                         c.conflicts.append(
-                            f"near-miss dollar figures across claims: ${a:,.0f} vs ${b:,.0f} "
+                            f"near-miss dollar figures across claims: {money(a)} vs {money(b)} "
                             f"({', '.join(sorted(ids))}) — confirm which is right")
     return claims
