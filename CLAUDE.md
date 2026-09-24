@@ -1591,6 +1591,15 @@ So: `contributor_total` can establish an amount and never a rank. Superlatives (
 number reproduces, not that the sentence around it is sound — which is exactly why the
 judgment pass exists.
 
+**A tie is a set, and a `LIMIT` cuts it.** `top_contributor` built its tie from `ORDER BY amt
+DESC LIMIT 4`, so five givers at the contribution limit came back as a four-way tie naming
+whichever four SQLite picked. Nothing ordered equal totals, the value reproduced for as long as
+SQLite kept its pick, and a citation naming four of the five verified. The tie is now everyone
+within half a cent of the top, in name order, however many. A large tie is listed whole, not
+refused: the whole set is true and reproduces, and the detail already says it is no single
+largest contributor. Wherever a query picks "the top", select on the value, not a row count, and
+order equal values by something stable.
+
 ## A receipt is not a contribution
 
 `RCPT_CD` holds every receipt schedule, not only gifts:
