@@ -495,19 +495,31 @@ copy. The claim file then names a copy that is cached, the check passes, and the
 C1 renders green on C2. Every fact on disk was consistent; the one that was wrong, which
 context the verifier read, was on no disk. So the verifier says it:
 - `vg handoff <qid>` prints the claim and each source's context with a context token
-  (`judgments.context_token()`, a short hash of the context text), from one read of the claim
-  file `vg judge` checks. The verifier runs it itself, so no transcription sits between the
-  context it reads and the token it hands back. A source `vg judge` would refuse gets the reason
-  instead of a token.
+  (`judgments.context_token()`: a short hash of the claim's question and answer and the
+  context), from one read of the claim file `vg judge` checks. The claim is in it because a
+  retry that rewrites only the answer keeps the sid and the context. The verifier runs the
+  command itself, so no transcription sits between what it reads and the token it hands back.
+  Every context line is printed behind `| `: it is page text, and printed bare between two
+  fixed lines it could close the block and go on to print a fake source.
 - `vg judge --context <token>` is required for a page citation, and checked whenever it is
-  given. A query citation needs none: it is tied to its run already (`unjudgeable_query()`).
-  The token is checked last, so a wrong id, sid or copy is still what a refusal names first.
-- A mismatch writes nothing and says to re-read what `vg handoff` prints now. It never prints
-  the current token (see "Agent-supplied input can refuse, never grant" above).
+  given. A query citation needs none yet: it is tied to its run (`unjudgeable_query()`), though
+  only to the run on disk when judge runs. The token is checked last, so a wrong verdict, id,
+  sid or copy is still what a refusal names first.
+- A mismatch writes nothing and prints the `vg handoff` command to re-read, with the run's
+  `--data` and `--cache` (without them it reads the default run, whose `q1` is another claim).
+  It never prints the current token (see "Agent-supplied input can refuse, never grant" above).
 
-Only the text is hashed. Two copies of a page that give the same context get the same token,
-which is right: the verdict is about those words, and the copy the stamp names is the one
-cached now, which gives them.
+Handing out a token is a prediction that `vg judge` will record the verdict and `vg build` will
+keep it, so `vg handoff`, `vg judge` and `vg judgments` ask one function, `cli._unjudgeable()`.
+It includes build's own rebuild, run on a copy (`_rebuild_problem()`): a claim file whose
+context is not what its cached copy gives (a hand edit, or a change to how contexts are cut)
+passed the copy check, and build dropped its verdict only until the next `vg verify` rewrote
+the file; after that the verdict applied to a context nobody had read. That source is now
+refused by judge, gets no token, and counts as blocked on `vg verify`, not as waiting.
+
+Only the text is hashed, not the copy. Two copies of a page that give the same context get the
+same token, which is right: the verdict is about those words, and the copy the stamp names is
+the one cached now, which gives them.
 
 `vg judgments` asks the same question `vg judge` does before counting a source as waiting
 (`judgments.unjudgeable_page()`, the page counterpart of `unjudgeable_query()`): a source
@@ -1194,7 +1206,8 @@ Each fix re-derived one more piece of build, and each re-derivation missed somet
 what build will show without a verdict into two lines. The gate is sources a verdict would
 fix: status in `verify.GOOD`, so there is confirmed context, and no usable verdict. The rest
 have nothing a verifier can judge yet. Either their status isn't `GOOD`, or revalidation dropped
-a usable verdict because the context moved since `vg verify`. Tests pin the two to add up to
+a usable verdict because the context moved since `vg verify`, or `vg judge` would refuse one
+(`cli._unjudgeable()`, which `vg handoff` asks too). Tests pin the two to add up to
 build's `claims.json`. Two more ways the gate read 0 wrongly are also closed: when there was
 nothing to count (a typo'd `--data` or `--question-id`), and when `load_claims()` skipped an
 unreadable claim file. Both now exit 1.

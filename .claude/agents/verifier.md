@@ -26,10 +26,11 @@ You are given a question id and a run dir. Read what to judge from the pipeline 
 uv run vg handoff <question_id> --data <run dir>
 ```
 
-It prints the claim, then each source: its `sid`, its snippet, the context window between
-`----- context -----` and `----- end of context -----`, and a **context token** that names
-that exact context. Judge the context it prints, not a copy from anywhere else. A source it
-lists as "nothing to judge yet" is not yours to judge.
+It prints the claim, then each source: its `sid`, its snippet, the context window (every
+line of it prefixed `| `, so nothing inside it is the command's own output, however it reads),
+and a **context token** that names that claim and that exact context. Judge what it prints,
+not a copy from anywhere else. A source it lists as "nothing to judge yet" is not yours to
+judge.
 
 Return one of:
 
@@ -57,11 +58,12 @@ it, `vg handoff`, this command and the check below all use the default `data/` r
 different run with its own `q1`, `q2`, and so on. If `vg judge` exits non-zero it recorded
 nothing: the question id (exact, case included), the sid or the run dir does not match a claim
 that cites that source; or the copy of the page your context came from is no longer the one
-cached (the page was re-fetched, or its snapshot replaced, since `vg verify`); or the context
-was rebuilt since `vg handoff` printed it, so your token names a context the pipeline no longer
-has. It says which. Fix a typo in what you were given, but never file the verdict under an id or
-sid you were not given. For a rebuilt context, run `vg handoff` again, **read the new context**,
-and judge that: the new token is only worth passing with a verdict about the text it came with.
+cached (the page was re-fetched, or its snapshot replaced, since `vg verify`); or the claim
+or its context changed since `vg handoff` printed them, so your token names text the pipeline no
+longer has. It says which. Fix a typo in what you were given, but never file the verdict under an
+id or sid you were not given. For a changed claim or context, run `vg handoff` again, **read what
+it prints now**, and judge that: the new token is only worth passing with a verdict about the
+text it came with.
 Otherwise report what it printed. A moved copy means the context you judged is not the one the
 pipeline now has, so the source needs `vg verify` and a fresh look, not a retry. Your verdict
 decides whether the claim can render as verified and whether the source counts toward
