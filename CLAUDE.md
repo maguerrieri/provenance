@@ -671,6 +671,35 @@ still read as a whole migration: every claim file no pair moves is listed as str
 archives it, so declare an identity pair for each question that keeps its claim. An identity pair
 keeps the `previous_question` an earlier migration recorded unless the wording actually changed.
 
+**`derives_from` moves with the claims.** A conclusion names its inputs by question id, and
+`check_inputs()` reads whatever claim holds that id. remap used to move the claims and leave the
+entries naming them, so after q2's claim moved to q4 and q3's moved onto q2, a conclusion
+deriving from q2 read the old q3's verified claim and rendered green on an input nobody checked.
+Ids overlap in every renumbering, so that is the routine case, not a corner. Now every entry
+follows what it named, inside the re-home transaction with the claim moves (`_rewire_inputs()`),
+and the dry run lists each rewrite:
+- **A claim** follows the exact mapping the claims move by, keyed by the id each claim carries,
+  or stays where it is if the claim does. That includes a stranded claim left in place: nothing
+  can move onto its id without tripping the collision check.
+- **An id no claim held** follows its question: along that question's `maps_from`, or nowhere
+  if the question keeps its id. Research for it, when it comes, lands there.
+- **An entry that can't follow** becomes `<id> (dropped by remap)`: its claim is archived as
+  stranded, its question is not in the template (in a first migration, any id no pair maps
+  from), or the id it would follow to holds a claim nothing maps to. That form fails
+  `QID_PATTERN`, so it reads as missing and no claim can ever take it. The claim resting on it
+  goes to `human_review` with the old id in its reason. Refusing the apply was the other option,
+  and it was rejected: the only quick way past the refusal is deleting the entry, and a
+  conclusion with its input deleted can render green. A rule shouldn't push toward the failure
+  it exists to prevent.
+- An entry that is not a question id (a dropped one, a hand edit) names no claim and is left as
+  it is, so a second remap never rewrites a dropped entry again.
+
+Only an apply that moves claims rewrites along the mapping, for the same reason only it retires
+the mapping: one that moves nothing leaves the run in its old id space, and the next apply would
+move the entries a second time. The general lesson is the same as for verdicts: **when ids move,
+everything that refers to them moves in the same transaction, or reads whatever takes the id
+next.**
+
 Malformed input is refused up front: a `maps_from` or `mapped_from` that isn't one id, two
 questions sharing an id, or one old id mapped into two questions (a split). Each of these used to
 crash or half-apply. For a split, keep `maps_from` on the question that inherits the research.
@@ -696,6 +725,13 @@ mappings means the run went through the guard, so the current `maps_from` is a p
 migration, not a finished one. An empty marker means something whose meaning can't be read back.
 On a retired mapping it does nothing, except to record a retired file as current when remap
 has refused it as an older state (layer 2, above).
+
+The remap that moved those claims also left their `derives_from` on the old ids, and nothing on
+disk shows which entries were fixed by hand since, so `--mark-applied` does not rewrite them: a
+fixed one would move twice. It lists each entry naming an id the mapping moved a claim away from,
+for a person to re-point. A run remapped by a version that retired its mapping but predates the
+derives_from rewrite never passes through `--mark-applied`, so check its conclusions by hand
+against the `mapped_from` it recorded.
 
 Run it only where the migrated claims are, then commit `questions.json`, `.remap-applied` and
 the migrated `claims/` together.
