@@ -17,7 +17,7 @@ import re
 import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 import httpx
 import yaml
@@ -32,10 +32,11 @@ REGISTRY = Path(__file__).resolve().parents[2] / "sources" / "access"
 # but also as x-csrf-token, x-xsrf-token, x-session-id, phpsessid,
 # __requestverificationtoken, x-goog-authuser, api_key, ocp-apim-subscription-key, and
 # whatever else a site calls it. `key` is matched as the end of a word, so it catches every
-# `*-key` and `*_key` without reading `keyword` as one.
+# `*-key` and `*_keys` without reading `keyword` as one; short words (sid, otp, pin) only
+# whole. No pattern is complete, which is why an import also keeps only SAFE_HEADERS.
 _CREDENTIAL_HEADER = re.compile(
-    r"auth|token|csrf|xsrf|sess|secret|passw|cred|cookie|bearer|jwt|signature"
-    r"|key(?:$|[-_])|(?:^|[-_])sid(?:$|[-_])")
+    r"auth|token|csrf|xsrf|sess|secret|pass|cred|cookie|bearer|jwt|signature|hmac"
+    r"|keys?(?:$|[-_])|(?:^|[-_])(?:sid|otp|pin)(?:$|[-_])")
 
 # What an import keeps. A deny pattern can't anticipate every name a session header goes by,
 # so an import keeps only headers that describe the request rather than the person, and
@@ -48,6 +49,8 @@ SAFE_HEADERS = frozenset({
     "sec-fetch-user", "sec-gpc", "te", "upgrade-insecure-requests", "user-agent",
     "x-requested-with",
 })
+# Safe names whose value is a URL, which can carry a login like any other.
+_URL_HEADERS = frozenset({"origin", "referer"})
 
 
 # An HTTP header name (RFC 9110's token). Anything else in a name slot, such as
@@ -62,6 +65,13 @@ def credential_header(name: str) -> bool:
 def _has_login(url: str) -> bool:
     """A username or password in the URL itself: basic auth by another route."""
     return "@" in urlparse(url).netloc
+
+
+def _page_only(url: str) -> str:
+    """A URL without its query, fragment, or `;` parameters in any path segment
+    (`/app;jsessionid=…/search`), which is where a session id rides in a page's URL."""
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, re.sub(r";[^/]*", "", parts.path), "", ""))
 
 
 @dataclass
@@ -137,6 +147,9 @@ def run(recipe: Recipe, params: dict[str, str], *, timeout: float = 45.0) -> htt
     if bad:
         raise ValueError(f"recipe {recipe.id!r} carries credential headers ({', '.join(bad)}); "
                          "record it as access: manual instead")
+    if any(_has_login(v) for k, v in recipe.headers.items() if k.lower() in _URL_HEADERS):
+        raise ValueError(f"recipe {recipe.id!r} puts a username or password in a header's URL; "
+                         "record it as access: manual instead")
     missing = [p for p in recipe.params if p not in params]
     if missing:
         raise ValueError(f"recipe {recipe.id!r} needs {', '.join(missing)}")
@@ -197,7 +210,8 @@ def _curl_arguments(args: list[str]):
     `(None, arg)` for each argument that is not one.
 
     Short options are read the way curl reads them: `-sSL` is three flags, and in `-XPOST`
-    the rest of the word is the value. curl has no `--option=value` form.
+    the rest of the word is the value. A long option is one word: curl has no
+    `--option=value` form.
     """
     i = 0
     while i < len(args):
@@ -206,22 +220,25 @@ def _curl_arguments(args: list[str]):
         if not arg.startswith("-") or arg == "-":
             yield None, arg
             continue
-        long = arg.startswith("--")
-        for k, option in enumerate([arg] if long else ["-" + c for c in arg[1:]]):
-            if option not in _CURL_FLAGS and option not in _CURL_VALUE_OPTIONS:
-                raise _refuse_option(option)
+        # Each option in the word, with what follows it in the word.
+        if arg.startswith("--"):
+            word = [(arg, "")]
+        else:
+            word = [("-" + c, arg[k + 2:]) for k, c in enumerate(arg[1:])]
+        for option, rest in word:
             if option in _CURL_FLAGS:
                 yield option, None
-                continue
-            attached = "" if long else arg[k + 2:]
-            if attached:
-                yield option, attached
+            elif option not in _CURL_VALUE_OPTIONS:
+                raise _refuse_option(option)
+            elif rest:
+                yield option, rest
+                break
             elif i < len(args):
                 yield option, args[i]
                 i += 1
+                break
             else:
                 raise ValueError(f"curl {option} needs a value")
-            break
 
 
 def parse_curl(text: str) -> dict:
@@ -254,12 +271,12 @@ def parse_curl(text: str) -> dict:
             dropped.append(name)
         elif name not in SAFE_HEADERS:
             unknown.append(name)
+        elif name in _URL_HEADERS and _has_login(value):
+            raise ValueError(f"the {name} header carries a username or password. {_MANUAL}")
         elif name == "referer":
             # The URL of the page the request came from, and a session id can ride in that
             # page's query or `;jsessionid=` parameters. The page itself is what a site checks.
-            if _has_login(value):
-                raise ValueError(f"the referer carries a username or password. {_MANUAL}")
-            headers[name] = urlunparse(urlparse(value)._replace(params="", query="", fragment=""))
+            headers[name] = _page_only(value)
         else:
             headers[name] = value
 
@@ -274,6 +291,8 @@ def parse_curl(text: str) -> dict:
                 if not value.rstrip().endswith(";"):
                     raise ValueError("a curl -H has no colon; write it `Name: value`")
                 name, v = value.rstrip()[:-1], ""
+            elif not v.strip():
+                continue  # curl's `Name:` removes the header rather than sending it empty
             header(name, v)
         elif option in ("-A", "--user-agent"):
             header("user-agent", value)
