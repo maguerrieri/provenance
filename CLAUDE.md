@@ -1212,6 +1212,49 @@ candidates who share the surname.
 
 When you add a query here, ask what it returns for the wrong person.
 
+## One giver filed two ways is flagged, never merged
+
+The reverse question is what a query returns for the right person filed two ways. Filers don't
+reliably split a donor's name: one row has the whole name in the last-name field
+(`'Rue Quillon'/''`), the next splits it (`'Quillon'/'Rue'`). `top_contributor` grouped by
+(last, first), so that giver was two contributors, each short of what they gave. A smaller
+giver could be named "the largest contributor", and a tie could list `Rue Quillon | Rue
+Quillon`, which reads as one donor. `contributor_total` matched the name exactly, so asked for
+Quillon, Rue, it left out the whole-name rows. Each value reproduced, so each citation verified.
+
+The fix is not to merge names that could be one giver (`_could_be()`):
+- **Two such names can be two people.** A bare surname could be any giver who shares it. A
+  middle initial can mark a parent and a child, and first and last names can swap. The two
+  sections above are this failure in the other direction: a key that joins too much invents a
+  person, and every row is real.
+- **One gift filed on two forms under two spellings is one gift.** The cross-form key
+  collapses the copies only when the names match, so a merge by name would count it twice.
+
+They are held against the result instead, the way a pending late gift is, and through the same
+gate. With `form_type` unset, a query is a miss while another name the giver could be filed
+under could change its answer. For `contributor_total` that is any such name with gifts on the
+schedule. For `top_contributor` it is one that, counted with this giver, could reach the top or
+break a tie. With `form_type=A`, a query gives the figure as filed, and its detail names the
+other names and says not to word it as complete. A lone leader's other names that can't change
+the answer are named in the detail, and the ranking stands. Two tied names that show alike are
+listed as filed.
+
+**A giver holds one chain of names, not every name that could be theirs.** A chain is names
+each pair of which could be one giver: `'Quillon'`, then `'Rue Quillon'`, then `'Rue M
+Quillon'`. A bare `'Quillon'` could be Rue's or Ada's, but not both. Summing every name that
+could be a giver's would put every Quillon's gifts in the bare surname's reach, and an unnamed
+gift, which could be anyone's, would reach the top beside anyone. That refuses wherever a common
+surname or an unnamed row turns up, and a gate that refuses on noise teaches people to route
+around it. So `_best_chains()` bounds each outsider by the best chain through their name. A
+tie's leaders still move with *any* other name that could be theirs, since a tie breaks on a
+cent.
+
+An unnamed schedule-A row still gates every default total, as an unnamed late entry does: it
+could be anyone's. `form_type=A` gives the figure and names it.
+
+What still slips: a name spelled *differently* (a typo), as for late gifts, and one name held by
+two people, which no grouping by name can see.
+
 ## An agent's declared tools must match what you told it to do
 
 `verifier.md` said `tools: Read, WebFetch` while its instructions told it to run

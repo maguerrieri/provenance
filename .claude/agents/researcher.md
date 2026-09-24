@@ -158,6 +158,15 @@ names the late report's filing. Don't record the schedule-A figure from that not
 total. Either cite the late report's filing page for the gift, or pass `form_type=A` and word
 the claim as a schedule-A figure ("reported on its campaign statements through <date>").
 
+One donor can be filed under more than one name: the whole name in the last-name field on one
+filing, split on another, or with a middle initial. The queries never add those together,
+because two such names can be two people. A total or a ranking another name could change comes
+back a miss, and the note lists each name as filed (`'last'/'first'`). Open those filings and
+decide whether they are the same giver. Don't add the figures yourself, and don't call anyone
+"the largest contributor" from that note. `form_type=A` gives the figure under the name you
+asked for, and names the others. Word a claim from it as that filing name's figure, not the
+donor's whole total.
+
 **Never cite the database as a URL.** A row in a local TSV has no URL a human can open and no text
 they can ⌘F, so a claim resting on one is unverifiable by design. Every result prints the
 filing's own CAL-ACCESS page — cite *that*, with a snippet from it. Use the export to find
