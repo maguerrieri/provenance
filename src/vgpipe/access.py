@@ -16,8 +16,9 @@ import json
 import re
 import shlex
 from dataclasses import dataclass, field
+from itertools import pairwise
 from pathlib import Path
-from urllib.parse import urlparse, urlsplit, urlunsplit
+from urllib.parse import unquote_plus, urlparse, urlsplit, urlunsplit
 
 import httpx
 import yaml
@@ -65,6 +66,153 @@ def credential_header(name: str) -> bool:
 def _has_login(url: str) -> bool:
     """A username or password in the URL itself: basic auth by another route."""
     return "@" in urlparse(url).netloc
+
+
+# Parameter names need a rule of their own. The header pattern reads `sess` as a session, but
+# in public-records APIs `?session=2025-2026` is a legislative session, and `auth` or `pass`
+# anywhere in a name would take `author`, `authority` and `passed` with them. So a name is
+# split into words (`apiKey`, `api_key` and `X-Api-Key` all hold the word `key`) and matched
+# by word: these words whole, these parts anywhere in a word (for names with no case or
+# separator to split on, like `csrfmiddlewaretoken` or `PHPSESSID`), and `session` followed by
+# `id` or `ids`. Bare `session` is not a credential, and neither is `pin`, which is a parcel
+# number. `key` is a whole word, or ends one of a few compounds, so `turkey` is not a key.
+_CREDENTIAL_PARAM_WORDS = frozenset({
+    "auth", "oauth", "authorization", "authcode", "authkey", "pass", "pw", "pwd", "passcode",
+    "passphrase", "cred", "creds", "key", "keys", "sig", "cookie", "cookies", "sess", "sid",
+    "otp",
+})
+_CREDENTIAL_PARAM_PART = re.compile(
+    r"token|csrf|xsrf|passw|secret(?!ar)|sessid|sessionid|credential|bearer|jwt|hmac|signature"
+    r"|(?:api|access|app|client|consumer|private|session|signing|subscription)keys?$")
+
+# The characters of a parameter name. A name slot can hold a value (a JSON map keyed by
+# session id, a pair that lost its `=`), so a message repeats only a name made of these whose
+# words are short and not digit-laden, and describes any other.
+_PARAM_NAME = re.compile(r"[\w.\-\[\]$:~*@]{1,64}")
+
+
+def _param_words(name: str) -> list[str]:
+    name = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", name)    # apiKey
+    name = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", name)  # APIKey
+    return re.findall(r"[a-z0-9]+", name.lower())
+
+
+def credential_param(name: str) -> bool:
+    """A query parameter, path parameter or body field whose name says it is a credential."""
+    words = _param_words(name)
+    return (any(w in _CREDENTIAL_PARAM_WORDS or _CREDENTIAL_PARAM_PART.search(w) for w in words)
+            or any(pair in (("session", "id"), ("session", "ids")) for pair in pairwise(words)))
+
+
+def _json_container(text: str) -> dict | list | None:
+    # RecursionError is not caught: JSON nested too deeply to read is refused, not skipped.
+    try:
+        value = json.loads(text)
+    except ValueError:
+        return None
+    return value if isinstance(value, dict | list) else None
+
+
+def _json_names(value) -> list[str]:
+    """Every key in a JSON value, at any depth, and the names in any of its strings."""
+    if isinstance(value, str):
+        return _value_names(value)
+    if isinstance(value, dict):
+        return [n for k, v in value.items() for n in (k, *_json_names(v))]
+    if isinstance(value, list):
+        return [n for v in value for n in _json_names(v)]
+    return []
+
+
+def _value_names(value: str) -> list[str]:
+    """The names a parameter's value holds: the keys of JSON, or the parameters of a URL (a
+    `next` or `callback` link carries a query of its own)."""
+    if (fields := _json_container(value)) is not None:
+        return _json_names(fields)
+    try:
+        if value.startswith("/") or urlsplit(value).scheme in ("http", "https"):
+            return _url_param_names(value)
+    except ValueError:
+        raise ValueError("a parameter holds a URL that can't be parsed, so it can't be "
+                         "checked for a credential") from None
+    return []
+
+
+def _pair_names(text: str) -> list[str]:
+    """The names in a query string or form body, and the names in their values.
+
+    Read twice, split on `&` alone and on `&` and `;`, since servers differ: splitting on `;`
+    alone would cut up a JSON value holding one. A segment with no `=` is a flag or a bare
+    value, not a named parameter."""
+    names = []
+    for separators in ("[&]", "[&;]"):
+        for segment in re.split(separators, text):
+            name, eq, value = segment.partition("=")
+            if eq:
+                names += [unquote_plus(name), *_value_names(unquote_plus(value))]
+    return names
+
+
+def _url_param_names(url: str) -> list[str]:
+    """The query, the fragment, and the `;` parameters of each path segment."""
+    parts = urlsplit(url)
+    names = _pair_names(parts.query) + _pair_names(parts.fragment)
+    for segment in parts.path.split("/"):
+        names += _pair_names(segment.partition(";")[2])
+    return names
+
+
+def _body_param_names(body: str, content_type: str) -> list[str]:
+    """The field names of a body, read every way the server might: as JSON if it parses, and
+    as a form unless a content type says otherwise (curl sends `-d` as a form by default).
+    A body that is neither can't be checked, so it is refused: a multipart form carries its
+    CSRF token in a part this can't read."""
+    names = None
+    try:
+        names = _json_names(json.loads(body))
+    except ValueError:
+        pass
+    if content_type.partition(";")[0].strip().lower() in ("", "application/x-www-form-urlencoded"):
+        names = (names or []) + _pair_names(body)
+    if names is None:
+        raise ValueError("the body is neither JSON nor form-encoded, so its field names can't "
+                         "be checked for a credential")
+    return names
+
+
+def _shown(name: str) -> bool:
+    return bool(_PARAM_NAME.fullmatch(name)) and not any(
+        len(w) > 24 or (w.isalnum() and not w.isdigit() and sum(c.isdigit() for c in w) > 1)
+        for w in _param_words(name))
+
+
+def _credential_names(names: list[str]) -> str:
+    """The names that look like credentials, for a message, or "" if none does."""
+    bad = {n for n in names if credential_param(n)}
+    shown = sorted(n for n in bad if _shown(n))
+    if len(shown) < len(bad):
+        shown.append("a name that may hold a value")
+    return ", ".join(shown)
+
+
+def _credential_params(url: str, headers: dict[str, str], body: str | None) -> list[str]:
+    """Where a request carries parameters that look like credentials, one message fragment per
+    place ("its URL (api_key)"), or none. The URL is read, and so are the URLs in an `origin`
+    or `referer` header, and the body.
+
+    Refused and named, never dropped: unlike a header, a parameter is part of what the request
+    asks, so a recipe without it can run and answer a different question. Raises ValueError
+    for a body or value that can't be read."""
+    content_type = next((v for k, v in headers.items() if k.lower() == "content-type"), "")
+    try:
+        found = [("its URL", _url_param_names(url))]
+        found += [(f"its {k.lower()} header", _url_param_names(v))
+                  for k, v in headers.items() if k.lower() in _URL_HEADERS]
+        if body:
+            found.append(("its body", _body_param_names(body, content_type)))
+    except RecursionError:
+        raise ValueError("a parameter nests too deeply to be checked for a credential") from None
+    return [f"{where} ({shown})" for where, names in found if (shown := _credential_names(names))]
 
 
 def _page_only(url: str) -> str:
@@ -141,8 +289,8 @@ def find(host_or_url: str, registry: Path | None = None) -> SourceAccess | None:
 
 
 def run(recipe: Recipe, params: dict[str, str], *, timeout: float = 45.0) -> httpx.Response:
-    """Execute a recipe. Credential headers are refused, not stripped: a recipe that needs
-    one is describing a manual retrieval and should be recorded as such."""
+    """Execute a recipe. Credential headers and parameters are refused, not stripped: a
+    recipe that needs one is describing a manual retrieval and should be recorded as such."""
     bad = sorted(k for k in recipe.headers if credential_header(k))
     if bad:
         raise ValueError(f"recipe {recipe.id!r} carries credential headers ({', '.join(bad)}); "
@@ -166,6 +314,14 @@ def run(recipe: Recipe, params: dict[str, str], *, timeout: float = 45.0) -> htt
         raise ValueError(f"recipe {recipe.id!r} puts a username or password in its URL; "
                          "record it as access: manual instead")
     body = fill(recipe.body) if recipe.body else None
+    # Also checked after filling, since a param can hold a whole `name=value` pair.
+    try:
+        found = _credential_params(url, recipe.headers, body)
+    except ValueError as e:
+        raise ValueError(f"recipe {recipe.id!r}: {e}") from None
+    if found:
+        raise ValueError(f"recipe {recipe.id!r} carries what look like credentials in "
+                         f"{'; '.join(found)}; record it as access: manual instead")
     headers = {"user-agent": "Mozilla/5.0", **recipe.headers}
     return httpx.request(recipe.method.upper(), url, timeout=timeout, follow_redirects=True,
                          headers=headers,
@@ -249,6 +405,8 @@ def parse_curl(text: str) -> dict:
     session: they are dropped here and never written to disk, along with any header not
     known to be safe, and the referer loses its query. A login passed any other way
     (`--user`, a username in the URL) means the endpoint needs one, so the import is refused.
+    So does a URL parameter or body field named like a credential, and a body whose fields
+    can't be read: dropping a parameter would change what the request asks.
     """
     text = re.sub(r"\\\s*\n", " ", text).strip()
     tokens = shlex.split(text)
@@ -320,6 +478,15 @@ def parse_curl(text: str) -> dict:
         raise ValueError("the curl command's URL is not an absolute http(s) URL")
     if _has_login(url):
         raise ValueError(f"the URL carries a username or password. {_MANUAL}")
+    try:
+        found = _credential_params(url, headers, body)
+    except ValueError as e:
+        raise ValueError(f"{e}. Record the endpoint by hand with "
+                         "`vg source-note <host> <finding>`") from None
+    if found:
+        raise ValueError(f"the request carries what look like credentials in "
+                         f"{'; '.join(found)}. Remove them from the paste if the request works "
+                         f"without them. {_MANUAL}")
     host = _norm_host(url)
     entry = {
         "host": host,
