@@ -769,25 +769,33 @@ def unjudgeable_page(source, seen, cache_root: Path) -> str:
     return ""
 
 
-def context_token(context: str | None) -> str:
-    """A short fingerprint of a context window, or "" for a source with none. `vg handoff`
+def context_token(claim, source) -> str:
+    """A short fingerprint of what a verifier is handed for `source`: the claim's question and
+    answer, and the source's context window. "" for a source with no context. `vg handoff`
     prints it with each source, and `vg judge --context` must hand it back.
 
     `vg judge` reads the claim file as it is when judge runs, and nothing from the verifier
-    said which context it had read. So a re-verify landing while a verifier worked (another run
+    said what it had read. So a re-verify landing while a verifier worked (another run
     re-fetched the page, and this one rebuilt the context from the new copy) left judge a copy
-    it could stamp and a context no verifier had seen, and the row rendered green on it. The
-    token is how the verifier says which one it read. Longer than a sid, so the two are not
-    mistaken for each other."""
+    it could stamp and a context no verifier had seen, and the row rendered green on it. A retry
+    that rewrote only the answer did the same with a claim no verifier had seen. The token is
+    how the verifier says which one it read. Longer than a sid, so the two are not mistaken
+    for each other."""
+    context = source.verification.context
     if not context:
         return ""
-    return hashlib.sha256(context.encode()).hexdigest()[:16]
+    # surrogatepass: a claim file is read with json.loads, which keeps a lone surrogate that
+    # strict UTF-8 would refuse to encode, and a crash here would stop every verdict on it.
+    parts = "\x00".join((claim.question, claim.answer, context)).encode("utf-8", "surrogatepass")
+    return hashlib.sha256(parts).hexdigest()[:16]
 
 
-def wrong_context(source, token: str, question_id: str, *, required: bool) -> str:
-    """Why a verdict handed back with `token` is not about this source's context now, or "".
-    `required` is whether a verdict on this source must carry a token at all: a page citation's
-    must, and a query citation's, already tied to its run (`unjudgeable_query()`), need not.
+def wrong_context(claim, source, token: str, *, required: bool, handoff: str) -> str:
+    """Why a verdict handed back with `token` is not about what this source's claim and context
+    are now, or "". `required` is whether a verdict on this source must carry a token at all: a
+    page citation's must, and a query citation's, already tied to its run
+    (`unjudgeable_query()`), need not. `handoff` is the `vg handoff` command, with the run's
+    --data and --cache, that prints what to judge.
 
     The token is agent-supplied and the context is read from a claim file loaded trusted, and
     both are safe for the same reason: this can refuse, never grant. A forged token matching
@@ -799,12 +807,12 @@ def wrong_context(source, token: str, question_id: str, *, required: bool) -> st
         if not required:
             return ""
         return (f"a verdict on a page citation must name the context it judged: pass --context "
-                f"with the context token `vg handoff {question_id}` printed beside this source")
-    if token != context_token(source.verification.context):
-        return (f"you were handed a different context (token {token}) from the one this source "
-                f"has now: `vg verify` has rebuilt it since, so your verdict is about text the "
-                f"pipeline no longer shows. Run `vg handoff {question_id}` again, read the context "
-                f"it prints, and judge that")
+                f"with the context token `{handoff}` printed beside this source")
+    if token != context_token(claim, source):
+        return (f"you were handed a different claim or context (token {token}) from the one "
+                f"this source has now: it has changed since, so your verdict is about text the "
+                f"pipeline no longer shows. Run `{handoff}` again, read what it prints, and judge "
+                f"that")
     return ""
 
 

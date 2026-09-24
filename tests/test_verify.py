@@ -4131,7 +4131,7 @@ def _ctx(run, sid, qid="q1"):
     claim = next(c for c in load_claims(Path(run) / "claims", trust_machine_fields=True)
                  if c.question_id == qid)
     s = next(s for s in claim.sources if s.sid == sid)
-    return ["--context", judgments.context_token(s.verification.context)]
+    return ["--context", judgments.context_token(claim, s)]
 
 
 def _refetch_shared(data, s):
