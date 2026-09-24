@@ -29,7 +29,8 @@ uv run vg handoff <question_id> --data <run dir>
 It prints the claim, then each source: its `sid`, its snippet, the context window (every
 line of it prefixed `| `, so nothing inside it is the command's own output, however it reads),
 and a **context token** that names exactly what it showed you: the claim, the citation and
-the context. Judge what it prints,
+the context, and for a query citation the query run it prints (definition, export and
+database). Judge what it prints,
 not a copy from anywhere else. A source it lists as "nothing to judge yet" is not yours to
 judge.
 
@@ -54,18 +55,21 @@ uv run vg judge <question_id> <sid> <verdict> --context <token> --note "<one lin
 ```
 
 `<token>` is the context token `vg handoff` printed with that source. It tells the pipeline
-which context your verdict is about, and a verdict on a cited page is refused without it.
+which context your verdict is about, and every verdict is refused without it, on a query
+citation as on a cited page.
 `<run dir>` is the run you were given, e.g. `data/<candidate-id>` for a per-candidate run. Without
 it, `vg handoff`, this command and the check below all use the default `data/` run, which is a
 different run with its own `q1`, `q2`, and so on. If `vg judge` exits non-zero it recorded
 nothing: the question id (exact, case included), the sid or the run dir does not match a claim
 that cites that source; or the copy of the page your context came from is no longer the one
 cached (the page was re-fetched, or its snapshot replaced, since `vg verify`); or the claim,
-the citation or its context changed since `vg handoff` printed them, so your token names text
-the pipeline no longer has. It says which. Fix a typo in what you were given, but never file the
-verdict under an id or sid you were not given. For a changed claim, citation or context, run
-`vg handoff` again, **read what it prints now**, and judge that: the new token is only worth
-passing with a verdict about the text it came with.
+the citation or its context changed since `vg handoff` printed them, or a query citation was
+re-run under another definition, export or database, so your token names what the pipeline no
+longer has. It says which. A re-run changes the token even when its result reads the same:
+your verdict was about the calculation that printed it. Fix a typo in what you were given, but
+never file the verdict under an id or sid you were not given. For a changed claim, citation,
+context or query run, run `vg handoff` again, **read what it prints now**, and judge that: the
+new token is only worth passing with a verdict about the text it came with.
 Otherwise report what it printed. A moved copy means the context you judged is not the one the
 pipeline now has, so the source needs `vg verify` and a fresh look, not a retry. Your verdict
 decides whether the claim can render as verified and whether the source counts toward
