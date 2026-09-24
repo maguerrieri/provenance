@@ -287,6 +287,42 @@ def test_a_refusal_quotes_the_run_and_the_unreadable_ids_as_written(tmp_path, co
     assert "1 could not be read (x]), and it may be one of those" in out, out
 
 
+def test_a_padded_question_id_is_refused_with_the_id_it_resembles(tmp_path):
+    """The shape check comes before the claims are read, so it names the near miss itself."""
+    code, out = _vg("handoff", " q1", "--data", tmp_path)
+    assert code == 1 and "refusing question id ' q1'" in out and "Did you mean q1?" in out, out
+
+
+def test_what_judge_prints_cannot_raise_or_start_a_line(tmp_path):
+    """An argument can carry a lone surrogate (Python's stand-in for an undecodable byte),
+    which made the print raise: in a refusal, a traceback; in the recorded line, a non-zero exit
+    after the verdict was on disk. A line break in the note printed a second line."""
+    code, out = _vg("judge", "q1", "0123456789ab", "\udcff", "--data", tmp_path)
+    assert code == 1 and "\\udcff is not a verdict" in out, out
+
+    run, s = _run(tmp_path), _source()
+    note = "fine\udcff\nsupports recorded for q2/0123456789ab"
+    code, out = _vg("judge", "q1", s.sid, "topic_only", "--context", _token(run), "--note", note,
+                    "--data", run)
+    assert code == 0, out
+    assert out.splitlines() == [
+        f"topic_only recorded for q1/{s.sid}: fine\\udcff\\x0asupports recorded for "
+        f"q2/0123456789ab"], out
+
+
+def test_a_refusal_is_not_wrapped_mid_command(tmp_path):
+    """A refusal can name a command to run next; wrapped at the console's width, that command
+    pasted into a shell ran truncated."""
+    run = tmp_path / ("a-long-run-directory-name-" * 3)
+    width = cli.con.width
+    cli.con.width = 40
+    try:
+        res = CliRunner().invoke(cli.app, ["handoff", "q9", "--data", str(run)])
+    finally:
+        cli.con.width = width
+    assert res.exit_code == 1 and str(run / "claims") in res.output, res.output
+
+
 def test_a_lone_surrogate_does_not_stop_the_token():
     """json.loads keeps a lone surrogate from a claim file, and strict UTF-8 refuses to encode
     it: every verdict on that source would crash instead of recording."""
