@@ -181,10 +181,10 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
 // recorded by the row's fingerprint (report.review_fingerprint), which covers exactly that. A
 // row reads checked while its fingerprint is recorded. Another question citing the same source
 // has another fingerprint, and so does this row once its claim or evidence changes; a claim
-// renumbered without changing keeps it. Beside each check is the row showing it (every row has
-// its own key: report.ROW_KEY_RE), so a row whose evidence changed can say so. A flag or note
-// is a warning about the source, not an attestation, so it stays per source and shows wherever
-// the source is cited.
+// moved to another question id without changing keeps it. Beside each check is the row showing
+// it (every row has its own key: report.ROW_KEY_RE), so a row whose evidence changed can say
+// so. A flag or note is a warning about the source, not an attestation, so it stays per source
+// and shows wherever the source is cited.
 //
 // KEY holds what earlier versions of this page saved, per source: {"<source id>": {done, flag,
 // note}}. It is only read, to migrate from when STORE is absent, so neither version's tab
@@ -289,8 +289,8 @@ function setChecked(el, on){
 }
 
 function render(){
-  // A check follows its claim, so it names the row showing it now: after a remap, a check made
-  // under the claim's old row key moves to its new one.
+  // A check follows its claim, so it names the row showing it now: when a claim moves to another
+  // question id, a check made under its old row key moves to the new one.
   for (const el of srcs) if (isChecked(el)) state.checked[el.dataset.fp] = el.dataset.key;
   // Rows holding a check on evidence no row shows now: their claim or what they show changed.
   const stale = new Set(Object.keys(state.checked).filter(f => !shown.has(f))
