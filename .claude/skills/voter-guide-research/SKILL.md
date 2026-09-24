@@ -136,9 +136,10 @@ Do not summarize the source rules for them — the agent definition carries them
    `questions.json`. A claim on an id the set no longer lists, or answering another question,
    is left out of the app, and build exits 1, naming it last. Retire the id (Phase 0, step 2),
    or, if the claim only misquotes its question, copy the exact text into its `question`.
-   Build removes the previous render before anything can stop it, so after one that renders
-   nothing `vg serve` refuses until a build succeeds; tell a reviewer with the page already open
-   to stop and reload once one does.
+   Build removes the previous render before anything can stop it. After one that renders
+   nothing, a fresh `vg serve` refuses and a running one answers a reload with a 404, until a
+   build succeeds. A tab already open keeps its page, so tell its reviewer to stop and reload
+   once one does.
 2. `uv run vg serve` — opens the app on `127.0.0.1:8765`. Serve rather than opening the
    file directly: browsers disable `localStorage` on `file://` origins, and the checkbox
    state is what makes a long review session survivable.
