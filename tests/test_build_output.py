@@ -47,7 +47,7 @@ def run(tmp_path):
     _claim(run, "q1", VOTE)
     _claim(run, "q2", FUNDS)
     code, out = _vg("build", "--data", run)
-    assert code == 0 and _left(run) == {report.HTML, report.JSON}, out
+    assert code == 0 and _left(run) == {report.REVIEW_HTML, report.CLAIMS_JSON}, out
     return run
 
 
@@ -110,7 +110,7 @@ def test_a_build_after_the_fix_renders_again(run):
     (run / "questions.json").write_text(json.dumps(
         [{"id": "q1", "text": VOTE}, {"id": "q2", "text": FUNDS}]))
     code, out = _vg("build", "--data", run)
-    assert code == 0 and _left(run) == {report.HTML, report.JSON}, out
+    assert code == 0 and _left(run) == {report.REVIEW_HTML, report.CLAIMS_JSON}, out
 
 
 def test_a_build_that_leaves_a_claim_out_serves_its_own_render(run):
@@ -120,9 +120,9 @@ def test_a_build_that_leaves_a_claim_out_serves_its_own_render(run):
     _claim(run, "q3", FUNDS)   # an id questions.json does not list
     code, out = _vg("build", "--data", run)
     assert code == 1 and "left out of the review app" in out, out
-    assert _left(run) == {report.HTML, report.JSON}, out
+    assert _left(run) == {report.REVIEW_HTML, report.CLAIMS_JSON}, out
     written = {c["question_id"]: c["answer"]
-               for c in json.loads((run / "out" / report.JSON).read_text())}
+               for c in json.loads((run / "out" / report.CLAIMS_JSON).read_text())}
     assert written == {"q1": "the newer answer", "q2": "a"}
 
 
@@ -132,7 +132,7 @@ def test_a_build_that_dies_writing_the_page_leaves_none(run, monkeypatch):
     replace = report.os.replace
 
     def killed_at_the_page(src, dst):
-        if report.Path(dst).name == report.HTML:
+        if report.Path(dst).name == report.REVIEW_HTML:
             raise KeyboardInterrupt
         replace(src, dst)
 
@@ -140,12 +140,22 @@ def test_a_build_that_dies_writing_the_page_leaves_none(run, monkeypatch):
     monkeypatch.setattr(report.os, "replace", killed_at_the_page)
     code, out = _vg("build", "--data", run)
     assert code != 0, out
-    assert _left(run) == {report.JSON}, out   # nor the temp file
-    written = json.loads((run / "out" / report.JSON).read_text())
+    assert _left(run) == {report.CLAIMS_JSON}, out   # nor the temp file
+    written = json.loads((run / "out" / report.CLAIMS_JSON).read_text())
     assert [c["answer"] for c in written if c["question_id"] == "q1"] == ["the newer answer"]
 
     code, out = _vg("serve", "--data", run, "--no-open-browser")
     assert code == 1, out
+
+
+def test_a_build_removes_the_temp_files_a_killed_build_left(run):
+    """A kill skips the cleanup, and serve lists out/, dotfiles included: a leftover temp can
+    hold a whole page no build finished."""
+    for name in (report.REVIEW_HTML, report.CLAIMS_JSON):
+        (run / "out" / f".{name}.4242.tmp").write_text("left by a killed build")
+    _unreadable_questions(run)
+    assert _vg("build", "--data", run)[0] == 1
+    assert _left(run) == set()
 
 
 def test_a_build_removes_only_what_it_writes(run):
