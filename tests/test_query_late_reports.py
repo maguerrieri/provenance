@@ -635,10 +635,10 @@ def test_a_stated_zero_late_amount_holds_nothing(tmp_path):
 
 
 def test_a_ranking_its_own_detail_calls_unsettled_does_not_verify(tmp_path):
-    """Five givers tied, and a late gift nobody in the tie made. The fifth, cut off by the
-    ranking's LIMIT 4 (#79), reads as a contender with no late entry of its own, and holding
+    """Five givers tied, and a late gift nobody in the tie made. While the ranking read only
+    four rows (#79), the fifth read as a contender with no late entry of its own, and holding
     only the contenders' late reports held none: green, beside "they could change the
-    ranking"."""
+    ranking". The detail and the hold must agree either way."""
     words = ["One", "Two", "Three", "Four", "Five"]
     root = build(tmp_path, "".join(rcpt(f"A-{i}", f"Example Giver {w}", "", "1000", "A")
                                    for i, w in enumerate(words)),
