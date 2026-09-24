@@ -645,9 +645,12 @@ too, and that is not a contradiction: its verdict is about the calculation, not 
 it printed. A re-run under a new definition, export or cache root that returns the same value
 and note prints a context identical to the old one, so a token over the text alone could not
 tell the two runs apart. Hash what the verdict is about, which is not always what the verifier
-reads. The root is hashed as the claim file spells it, never resolved: resolving reads the
-working directory, which can differ between `vg handoff` and `vg judge`. A query context with no
-recorded run gets no token at all, since nothing says which calculation printed it.
+reads. The root is hashed resolved, as the run check compares it: hashed as spelled, a re-verify
+naming the same database by an absolute path instead of a relative one changed the token and
+sent the verifier to re-judge identical text. And `vg judge` stamps the run it checked, not a
+second read of the registry and database, which a rebuild between the two could move. A query
+context with no recorded run gets no token at all, since nothing says which calculation printed
+it.
 
 `vg judgments` asks the same question `vg judge` does before counting a source as waiting
 (`judgments.unjudgeable_page()`, the page counterpart of `unjudgeable_query()`): a source

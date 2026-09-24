@@ -627,22 +627,26 @@ def unjudgeable_query(query, ran, cache_root: Path) -> str:
     if (ran is not None and (ran.version, ran.export_date) == (version, export)
             and Path(ran.cache_root).resolve() == root):
         return ""
-    now = f"{query.name} is now v{version}{_against(query.name, export)} under {cache_root}"
+    now = f"{query.name} is now {_run_phrase(query.name, version, export, cache_root)}"
     if ran is None:
         why = (f"this citation has no recorded query run (it was verified before runs were "
                f"stamped, or its query failed), so nothing says what produced the context you "
                f"judged; {now}")
     else:
-        why = (f"this citation was last verified under v{ran.version}"
-               f"{_against(query.name, ran.export_date)} under {ran.cache_root}, but {now}, so "
-               f"the context you judged is not what it gives here")
+        why = (f"this citation was last verified under {describe_run(query.name, ran)}, but "
+               f"{now}, so the context you judged is not what it gives here")
     return (f"{why}. Run `vg verify`, then judge it again, with the same --cache for both "
             f"commands.")
 
 
 def describe_run(name: str, run) -> str:
-    """How `vg handoff` names the `QueryRun` a query citation's context came from."""
-    return f"{name} v{run.version}{_against(name, run.export_date)} under {run.cache_root}"
+    """`v<n> against <the export> under <root>`: how `vg handoff` and `vg judge` name the
+    `QueryRun` a query citation named `name` was verified under."""
+    return _run_phrase(name, run.version, run.export_date, run.cache_root)
+
+
+def _run_phrase(name: str, version: int, export_date: str, cache_root) -> str:
+    return f"v{version}{_against(name, export_date)} under {cache_root}"
 
 
 def _against(name: str, export_date: str) -> str:
@@ -803,9 +807,9 @@ def context_token(claim, source) -> str:
         run = source.verification.query_run
         if run is None:   # nothing says which calculation printed it, so nothing to name
             return ""
-        # The root as the claim file spells it, not resolved: resolving reads the working
-        # directory, which can differ between `vg handoff` and `vg judge`.
-        shown += (str(run.version), run.export_date, run.cache_root)
+        # The root resolved, as the run check (`unjudgeable_query()`) compares it: the same
+        # database spelled another way (absolute for relative) keeps the token.
+        shown += (str(run.version), run.export_date, str(Path(run.cache_root).resolve()))
     # surrogatepass: a claim file is read with json.loads, which keeps a lone surrogate that
     # strict UTF-8 would refuse to encode, and a crash here would stop every verdict on it.
     return hashlib.sha256("\x00".join(shown).encode("utf-8", "surrogatepass")).hexdigest()[:16]
@@ -829,14 +833,13 @@ def wrong_context(claim, source, token: str, *, handoff: str) -> str:
                 f"token `{handoff}` printed beside this source")
     if token != context_token(claim, source):
         if source.query is None:
-            return (f"you were handed a different claim, citation or context (token {token}) "
-                    f"from the one this source has now: it has changed since, so your verdict "
-                    f"is about text the pipeline no longer shows. Run `{handoff}` again, read "
-                    f"what it prints, and judge that")
-        return (f"you were handed a different claim, citation, context or query run (token "
-                f"{token}) from the one this source has now: it has changed since, and a query "
-                f"re-run under another definition, export or cache root changes the token even "
-                f"where its result reads the same, so your verdict is about a calculation the "
+            what, rerun, about = "claim, citation or context", "", "text"
+        else:
+            what, about = "claim, citation, context or query run", "a calculation"
+            rerun = (", and a query re-run under another definition, export or cache root "
+                     "changes the token even where its result reads the same")
+        return (f"you were handed a different {what} (token {token}) from the one this source "
+                f"has now: it has changed since{rerun}, so your verdict is about {about} the "
                 f"pipeline no longer shows. Run `{handoff}` again, read what it prints, and "
                 f"judge that")
     return ""
