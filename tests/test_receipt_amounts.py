@@ -8,6 +8,7 @@ fix first; these hold the receipt side to it.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import zipfile
 
@@ -229,3 +230,30 @@ def test_the_contributions_listing_never_prints_an_unreadable_amount_as_zero(
     cli.calaccess_contributions(MIXED, data=root)
     listed = next(line for line in capsys.readouterr().out.splitlines() if "2026-01-06" in line)
     assert listed.split()[0] == (unread.strip() or "blank")
+
+
+def test_the_listing_bounds_and_sanitizes_what_it_shows_for_unreadable_amounts(tmp_path, capsys):
+    """Unreadable gifts get their own --top slots, not unlimited ones, and the footer says when
+    there may be more. What was filed is filer text: a control character in it would act on
+    the terminal before anything is shown, so it is made visible, and it is cut to fit."""
+    root = _receipts(tmp_path)
+    _set_amount(root, "T1", "5\x1b[2J")          # an escape sequence that would clear the screen
+    _set_amount(root, "T2", "x" * 40)
+
+    got = calaccess.contributions_to(root, MIXED, top=1)
+    assert [c.amount for c in got] == [300.0, None], "one ranked slot, one unreadable slot"
+
+    def plain(out):   # rich's own styling and wrapping, not the text
+        return " ".join(re.sub(r"\x1b\[[0-9;]*m", "", out).split())
+
+    capsys.readouterr()
+    cli.calaccess_contributions(MIXED, data=root, top=1)
+    out = plain(capsys.readouterr().out)
+    assert "The last 1 have no readable amount" in out and "raise --top" in out
+
+    cli.calaccess_contributions(MIXED, data=root, top=5)
+    out = capsys.readouterr().out
+    assert "\x1b[2J" not in out, "the filed escape sequence reached the terminal"
+    shown = {plain(line).split()[0] for line in out.splitlines() if "2026-01-0" in line}
+    assert shown == {"$300", "5\\x1b[2J", "x" * 14}, shown
+    assert "The last 2 have no readable amount" in plain(out) and "raise --top" not in out
