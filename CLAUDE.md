@@ -1094,10 +1094,72 @@ All three now count schedule A unless `form_type` names another schedule (`""` f
 The two ranking and per-contributor queries name the schedule in their detail. When one misses on
 the schedule asked for but the name or filer has receipts on others, the miss suggests
 `form_type=<schedule>` instead of pointing at the name. It reads those schedules from the raw
-rows: the dedup's collapsed cross-form row keeps only one of its two labels. The default has a
-known gap: a late contribution reported only on Form 496 Part 3, not yet restated on a later
-schedule A, is left out (#66). And `vg calaccess contributions` still lists every schedule
-without saying which (#67).
+rows: the dedup's collapsed cross-form row keeps only one of its two labels. A late contribution
+not yet on any schedule A is the next section. And `vg calaccess contributions` still lists
+every schedule without saying which (#67).
+
+## A late report is a contribution schedule A can't see yet
+
+A gift received in the weeks before an election is reported within 24 hours on a late report:
+Form 497 Part 1 (`S497_CD`), or Form 496 Part 3 (`F496P3` rows in `RCPT_CD`) for a committee
+making independent expenditures. It reaches schedule A only when the Form 460 covering its date
+is filed. So the schedule-A default left it out, in exactly the weeks a voter guide is written:
+`top_contributor` could name the wrong donor "the largest contributor", every total came out
+short, and a figure recorded from the query's own output reproduced green.
+
+The queries **flag, and never count**, a late entry that no schedule A restates yet
+(`queries._pending_late`):
+- **`form_type` unset:** a miss while such an entry could change the answer. For a total, that
+  is any pending gift. For `top_contributor`, it is one that could reach the top or break a tie;
+  a gift too small to matter is named, and the ranking stands.
+- **A schedule asked for by name:** `form_type=A` gives the schedule-A figure, and `""` every
+  receipt schedule (which holds Form 496 Part 3, but not Form 497). Each names the late entries
+  it leaves out and says it is not a complete total. This is the tie's rule (a green figure
+  whose detail says how not to word it), not the rejected note below. The researcher reaches
+  it only by asking after the default refused. The judgment pass reads the detail beside the
+  claim. A date window would make such a figure complete through a stated day (#78).
+
+A late entry counts as restated when a schedule-A row carries the same transaction (the
+cross-form key, `tran_base_sql()`), or when a 460 the filer has filed covers its dates, since
+that 460 had to restate it. Anything uncertain leaves it pending: a date or amount that can't be
+read, a name filed another way (matched with `name_match_sql()`, as for a candidate), or a blank
+amount (grouped apart from a stated `0`, which a blank is not).
+
+The options that were rejected, and why:
+- **Count `F496P3` in the default and let the cross-form dedup collapse it with its schedule-A
+  copy.** Right only where the `TRAN_ID` bases match, and nobody has checked how often they do on
+  a real export. Where they don't, the gift counts twice, silently, and large donors are hit
+  hardest (the double-count in (4) above).
+- **Load `S497_CD` and dedup it the same way.** The same unchecked key, for a form nobody has
+  looked at. A gift reported on both late forms is a third copy, which no key here can tell
+  from two gifts.
+- **Keep schedule A as the default and put a note in the detail.** The short total still renders
+  green, for whoever never asked. A note is prose a researcher can skim; a miss is a gate they
+  can't. That was the bug.
+
+This is the general rule in "CAL-ACCESS double-counts" applied again. When the only way to count
+something rests on a key you can't check, don't count it. Hold it against the result instead.
+A key that fails while counting manufactures a figure. A key that fails while flagging only
+makes the query refuse.
+
+A database that can't read Form 497 can't say that nothing is pending. That covers a database
+built before `S497_CD` was loaded, and one whose `S497_CD` lacks a column the check reads
+(`calaccess.LATE_COLUMNS`). The default refuses there (`DegradedDatabase`) until
+`uv run vg calaccess build`, as `ie_total` does: a warning would let the short total render
+green. An export with no `S497_CD.TSV` at all has no late reports to miss. `build()` records
+the tables the export lacked (`EXPORT_META.not_in_export`), which is how the two are told apart.
+Record what the build *found missing*, not what it looked for. A file that was present but
+skipped (no header, none of the wanted columns) is an unreadable table, not an empty one.
+
+What is still unchecked on a real export was chosen to fail toward refusing:
+- whether a 460 cover's `FORM_TYPE` reads `F460`. If not, no period covers anything, and every
+  late entry stays pending.
+- what a Form 497 `DATE_THRU` holds. An entry is covered only when one 460 covers it from
+  `CTRIB_DATE` through `DATE_THRU`, so a date later than expected keeps it pending. An
+  unreadable one does too.
+
+Filing is not the same as restating: a gift inside a filed 460's period that the 460 omitted
+reads as restated, and is left out. That is the filer's error, in their own sworn statement.
 
 ## A surname is not a candidate
 

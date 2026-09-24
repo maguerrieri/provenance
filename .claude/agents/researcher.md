@@ -152,6 +152,12 @@ can come back a miss whose note names the schedule it is on (`form_type=C`, say)
 interest is not a contribution. Cite another schedule only when the claim says so ("in-kind
 contributions"), and word the claim to match the schedule you passed.
 
+A late contribution (Form 497, or Form 496 Part 3) reaches schedule A only when the next Form
+460 is filed. Until then, a total or a ranking it could change comes back a miss, and the note
+names the late report's filing. Don't record the schedule-A figure from that note as the
+total. Either cite the late report's filing page for the gift, or pass `form_type=A` and word
+the claim as a schedule-A figure ("reported on its campaign statements through <date>").
+
 **Never cite the database as a URL.** A row in a local TSV has no URL a human can open and no text
 they can ⌘F, so a claim resting on one is unverifiable by design. Every result prints the
 filing's own CAL-ACCESS page — cite *that*, with a snippet from it. Use the export to find
