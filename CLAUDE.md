@@ -1245,15 +1245,31 @@ Quillon'`. A bare `'Quillon'` could be Rue's or Ada's, but not both. Summing eve
 could be a giver's would put every Quillon's gifts in the bare surname's reach, and an unnamed
 gift, which could be anyone's, would reach the top beside anyone. That refuses wherever a common
 surname or an unnamed row turns up, and a gate that refuses on noise teaches people to route
-around it. So `_best_chains()` bounds each outsider by the best chain through their name. A
-tie's leaders still move with *any* other name that could be theirs, since a tie breaks on a
-cent.
+around it. So `_could_change_ranking()` bounds each outsider by the best chain through their
+name. A tie's leaders still move with *any* other name that could be theirs, since a tie breaks
+on a cent.
 
-An unnamed schedule-A row still gates every default total, as an unnamed late entry does: it
-could be anyone's. `form_type=A` gives the figure and names it.
+Two costs of the check were caught in review and are pinned by tests:
+- **Blame each cause alone.** A refusal said a $10 late gift "could change the ranking" when
+  only two filings of one name could. It also told the researcher to rank each name as filed
+  when the only two names were late givers on no schedule. Each cause is now asked on its own,
+  and when only both together reach the top, both are named.
+- **Don't test every pair.** Comparing each leader of a large tie with every name, on every
+  call, made `top_contributor` five times slower on a synthetic committee of 60,000 gifts.
+  `_name_poset()` finds names that could be one another's through a word index. For the same
+  reason, `contributor_total` lists names before summing them, and sums only the ones that could
+  be the giver's.
 
-What still slips: a name spelled *differently* (a typo), as for late gifts, and one name held by
-two people, which no grouping by name can see.
+An unnamed schedule-A row still gates every default total and every tie, as an unnamed late entry
+does: it could be anyone's. `form_type=A` gives the figure and names it. Nobody has measured how
+often a real export has one (#127). If it's common, this gate refuses on noise, and the escape
+it teaches also skips the late-report gate.
+
+What still slips:
+- a name spelled *differently* (a typo), as for late gifts;
+- a first initial (`'Quillon'/'R'` beside `'Quillon'/'Rue'`), since `_could_be()` compares whole
+  words (#126);
+- one name held by two people, which no grouping by name can see.
 
 ## An agent's declared tools must match what you told it to do
 
