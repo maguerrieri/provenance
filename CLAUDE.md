@@ -80,10 +80,9 @@ correct: it was a judgment about different words.
 never read as "unreviewed".** `load()` used to return `{}` for a file it could not parse or
 that was not a list. A hand-repaired, dict-shaped shard from a live run therefore
 vanished, and every source in it read as unjudged. That says "nobody judged this" when the
-truth is "the verdicts are unreadable". It was also a delete, because both writers load and
-then overwrite: `record()` would have kept only the new verdict, and `rehome()` unlinked
-every shard and rewrote only what it loaded. The general rule: **when a reader feeds a
-writer, reading garbage as empty is a delete.**
+truth is "the verdicts are unreadable". It was also a delete, because the writer loads and
+then overwrites: `record()` would have kept only the new verdict. The general rule: **when a
+reader feeds a writer, reading garbage as empty is a delete.**
 
 The same bug sat one level down. Inside a list that parsed, `load()` skipped any entry it
 could not read: one that was not an object, had a typo'd, extra, or missing key, or carried
@@ -93,8 +92,8 @@ absent from the result and then deleted by the next rewrite. A field of the wron
 numeric note, a string or `NaN` extractor version) loaded fine and crashed a later command,
 or with `NaN` never went stale. A `null` note is allowed: it holds nothing to lose, and every
 reader already takes it as empty. A sid that is not what `Source.sid` makes (empty, padded,
-typo'd) loaded as a verdict that matched nothing, which reads as lapsed, and `rehome()`
-moves lapsed verdicts out of the live shards.
+typo'd) loaded as a verdict that matched nothing, which reads as lapsed: a recorded verdict
+silently judging nothing.
 
 So `load()` raises `UnreadableJudgments` naming the file, and so does `load_every()` for a
 directory it cannot list. Only a file that is really missing reads as empty. For bad entries
@@ -104,12 +103,11 @@ the file named: through `_judgments_or_exit()`, or, for `vg judge`, through its 
 `ValueError` handler around `record()`. Both escape the message, because it quotes the
 file's own text and rich reads brackets as markup.
 
-- **Read everything before writing anything.** A command that rewrites the directory (`remap`,
-  `judgments --repair`) reads every shard with `load_every()` before touching any of them.
-  remap also reads every claim file, stranded ones included, and stages every move before it
-  archives, backs up or moves anything, and it does this in the dry run too. A malformed
-  stranded claim found only by the reload after the move used to stop the apply with its
-  claims moved and their verdicts left on the old ids.
+- **Read everything before acting on any of it.** `vg verify` reads every claim's verdict
+  file before it fetches anything, so a malformed shard for a later claim stops the run before
+  any network time is spent, not after the earlier claims' pages are fetched. A command that
+  rewrites several files reads all of them first, so an unreadable one stops it while nothing
+  has been touched.
 - **Write only what can be read back.** `record()` refuses an entry `load()` would refuse, so
   one bad `vg judge` call cannot stop every reader of the shard.
 - **Replace a shard whole.** `_write()` writes and fsyncs a temp file, then `os.replace`s it
@@ -122,121 +120,23 @@ file's own text and rich reads brackets as markup.
 **A verdict is per question, not per source.** It says whether a source supports *one
 question's claim*, so two questions citing the same page each hold their own verdict for it,
 and the two can legitimately differ: a snippet can support one claim and be `topic_only` for
-another. The live runs had 13 such sources. `rehome()` used to pool every shard by sid, keep
-one verdict per source, and file it under whichever claim cited that source last — deleting
-the other, and able to render a `supports` green on the claim a verifier judged `topic_only`.
+another. The live runs had 13 such sources. A re-home that pooled every shard by sid kept one
+verdict per source and filed it under whichever claim cited that source last. That deleted the
+other verdict, and could render a `supports` green on the claim a verifier judged `topic_only`.
 Nothing may pool verdicts across questions by sid; `load_every()` returns them per question.
 
-**A sid match is not proof of ownership.** After q18→q20 and q20→q22, "q20 cites this source"
-is true of the wrong claim whenever both cite it. So `vg remap` hands `rehome()` its exact
-old-to-new mapping, keyed by the id each claim carries (not its file name, which can differ),
-and each shard follows its own claim.
+**A sid match is not proof of ownership.** When two claims cite one source, "this claim cites
+the source" is true of the wrong claim as often as the right one. A verdict records only the
+source, so which claim it judged rests on the shard it sits in: asserted, never proven (#30).
+That is why nothing moves a claim, or its verdicts, between shards (see "Question ids are
+stable and never reused"). Every re-home had to guess ownership from a sid or trust an operator's
+mapping, and both put verdicts on claims they never judged.
 
-`vg judgments --repair` moves a verdict **only along a mapping it is given**. `--moved OLD:NEW`
-(repeatable) says the verdicts in OLD's shard judged the claim now at NEW. It used to infer moves
-from sids, and was wrong both ways. It moved a verdict out of an id no claim held to the
-one other question citing the source — but a claim deleted by hand leaves the same trace, and
-the verdict rendered green on a claim it never judged. And on a held id, "q26's claim dropped a
-page q11 also cites" looks identical on disk to "q26's claim moved to q11", so a routine retry
-blocked a live repair. Now:
-
-- **With no mapping** it keeps verdicts whose own claim cites them, archives those nobody
-  cites, and refuses on the rest with `CannotRehome`, naming each verdict and the flags that
-  settle it. Nothing is changed.
-- **A mapping speaks only for the shards it names.** Any other shard is held to the no-mapping
-  rule. `OLD:OLD` says the shard judged the claim still on OLD, so a verdict it no longer cites
-  has lapsed and is archived. That settles the routine retry above: `--moved q26:q26`.
-  `--gone OLD` says the claim it judged no longer exists, and archives the shard. It is a
-  separate flag because that can be true while another claim holds OLD, and saying `OLD:OLD`
-  there files the gone claim's verdicts under the new one.
-- **A shard a claim moved onto has to be named too.** Its verdicts judged either the claim
-  there before (say where it went) or the one that arrived, if they were judged since the move
-  (`--moved q18:q18` beside `--moved q21:q18`), or is gone (`--gone q18`). Reading it as "the
-  claim there before is gone" archived verdicts a partial mapping simply had not mentioned. Several shards may name one
-  claim. Where two judged one source, the later `judged_at` replaces the earlier, as
-  `record()` would have, and the earlier is archived; two that cannot be ordered are refused.
-- **The mapping is checked against the shards.** It is false when verdicts were judged after
-  the claims moved, or were already re-homed and would move a second time. The tell is a
-  verdict the claim on its shard's own id cites and the mapped claim does not, and `--repair`
-  refuses on it. That also refuses a verdict that genuinely lapsed when the moved claim
-  dropped a source the new occupant cites; it is ambiguous, so it goes to judgments-archive/
-  by hand. A verdict both claims cite can't be told apart this way, so the mapping is still an
-  assertion. Split a mixed shard by hand.
-- **Out of an id no claim holds, the shard must bear the mapping out alone.** Nothing sits on
-  that id to contradict it, so `--repair` refuses unless the named claim cites every verdict
-  in the shard: a claim that moved keeps its sources. Without this, a hand-deleted q2 whose
-  shard shared one page with q7 went green on q7 under `--moved q2:q7` — the flag the refusal
-  itself seemed to suggest by naming q7. Co-citers are now listed as "also cited by", and
-  the message says they are not candidates for where a claim went.
-- **`remap` passes `exact=True`, and only remap should.** Its mapping names every claim that
-  moves, one per id, and they move inside the re-home, so nothing can have been judged in
-  between: a shard a claim moved onto judged a stranded claim, and a verdict its claim no
-  longer cites has simply lapsed. Holding remap to repair's rule would block it on the same
-  routine retry.
-
-`--repair` does not read a mapping from `maps_from`. A finished migration's `maps_from` still
-reads the same, so applying it by default would move re-homed verdicts twice. In a live run,
-the one refusal's `maps_from` pair pointed away from the claim the verdict judged. Nor does
-`vg remap` print them. Its message for an older version's partial apply
-used to offer a ready-to-run `--moved` command. After a finished apply that command moves every
-verdict twice, and a source both claims cite never trips the check above. The message now
-points at a bare `--repair`, whose refusal names each verdict left behind.
-
-The deeper fix is for a verdict to record which claim it judged. It records only the source,
-so ownership is asserted, never proven (#30). A run
-remapped before re-homing existed should be repaired *before* its next remap: remap trusts its
-mapping, so a verdict stranded by the earlier one is archived rather than re-homed.
-
-**A re-home is a transaction, and never deletes a verdict.** A verdict no current claim cites
-(lapsed, or its claim archived by `--archive-stranded`) goes to
-`judgments-archive/<stamp>/<old shard>.json`. Everything else goes through `_rewrite()`:
-
-- The backup is **complete or absent at every instant**. It is built in
-  `judgments-backup.partial/`, fsynced, and only then renamed to `judgments-backup/`, which is
-  what readers check. It is retired the same way: renamed to `judgments-backup.discard/` (a
-  name nothing reads), and only then deleted. Both ends matter. A half-built or half-deleted
-  backup read as the truth drops every shard it lacks, and `rmtree` is not atomic. The commit
-  used to be `rmtree(backup)`, and a kill partway through left 1 of 3 verdicts after the
-  rollback the readers pointed to.
-- Then the shards, the archive (its name recorded in the backup first), and remap's claim
-  moves, re-apply marker and retired mapping (`then=`) happen, and the backup is retired. The
-  claim files move inside the transaction, and `claims/`, `.remap-applied` and
-  `questions.json` are snapshotted into its backup (`also=`: a directory's `*.json`, or a
-  file's bytes or absence), because the mapping exists only in that run. Verdicts, claims,
-  marker and mapping move, and roll back, together. Rolling back only the shards put verdicts
-  on their old ids under claims already on new ones: a false green, arrived at by
-  recovery.
-- If any step raises, `_restore()` puts back every shard, the claim files, the marker and
-  `questions.json` from the backup, and removes the begun archive. If the process dies, the backup stays and every
-  reader refuses, naming `vg judgments --rollback`, which runs the same restore. Recovery is a
-  command, not a procedure: the hand-written one told operators to remove shards the backup
-  lacked.
-- Every file and directory in the sequence is fsynced before the step that depends on it.
-- Names inside the backup must differ in more than case. macOS's default filesystem is
-  case-insensitive, so an `ALSO` marker beside an `also/` directory is one path: the first
-  run of the claim snapshot failed there with "Is a directory".
-- **Remove before you write.** A shard leaving and a shard arriving can be one file:
-  `q1.json` *is* `Q1.json` on that same filesystem, and `os.replace(tmp, "q1.json")` over it
-  keeps the name `Q1.json`. The commit wrote the new name and then unlinked the old one, so a
-  re-home onto an id differing only in case deleted the verdicts it had just written and
-  reported them re-homed. `_rewrite()` now unlinks leaving shards first and `_mirror()`
-  (the restore) removes extras before copying. The backup makes the order free, and removing
-  first also leaves the claim's exact id on disk, so a case-sensitive checkout reads it.
-  No order helps two shards that both *stay* and are one file (claims `Q1` and `q1`): the
-  second write replaces the first. `_plan()` refuses that with `CannotRehome` before anything
-  is touched, asking the disk even when neither shard exists yet (root cause: #37).
-  CI's disk is case-sensitive, where the two names are two files and the bug cannot happen,
-  so a test pins the order itself, and `_plan()`'s case-insensitive branch is reached there by
-  patching `_same_file()`. When a change touches names, still run the suite on both kinds of
-  disk: a Mac's default volume, and `pytest --basetemp=<dir>` on a case-sensitive one.
-
-`record()` and `rehome()` hold an `flock` on `judgments/` across their read and write, and
-readers take it shared, because a `vg judge` landing between `rehome()`'s read and its rewrite
-used to be deleted by the rewrite. The wait is bounded (`LOCK_TIMEOUT`): every holder
-needs milliseconds, and a verifier blocked forever behind a stuck process would report nothing.
-The lock cannot make a remap safe *during* a judgment pass, though. A verifier that read the
-claims before a remap and records after it files its verdict under an id that now means a
-different claim, and no lock sees that. Finish or stop the judgment pass before remapping.
+`record()` holds an `flock` on `judgments/` across its read and write, and readers take it
+shared. Verifier agents record in parallel, so a `vg judge` landing between another's read and
+its rewrite would otherwise be deleted by the rewrite. The wait is bounded (`LOCK_TIMEOUT`):
+every holder needs milliseconds, and a verifier blocked forever behind a stuck process would
+report nothing.
 
 ## A claim's status is settled last, in dependency order
 
@@ -417,11 +317,8 @@ stale; fresh has to be shown. The same rule, three places:
   `vg judgments` names any shard filed under an id no claim has, and opens a shard by name as
   `vg build` does, so the two agree about `Q1.json` on either kind of disk. Where the disk
   opens `Q1.json` as `q1.json`, it *is* q1's shard, which the disk decides and a source id does
-  not. So a bare `--repair` renames it to the exact id, and `vg remap` moves it with its claim
-  (`_plan()`'s `resolve()`); keyed by its stem, remap archived its verdicts as lapsed.
-  `--repair` refused there until the re-home stopped deleting the verdicts it wrote into that
-  file. On a case-sensitive disk it is simply a shard no claim has: nothing reads it,
-  and `--repair --moved Q1:q1` re-files it.
+  not (`judgments.opened_as()`). On a case-sensitive disk it is simply a shard no claim has:
+  nothing reads it. Either way the fix is to rename it to the claim's exact id by hand.
 - `--cache` names the directory that *holds* `cache/`: `--cache data`, not `--cache
   data/cache`. Every command refuses a `--cache` that is itself a cache directory (it holds
   `pages/` or `calaccess/`), since `fetch` and `verify` used to create a second cache inside
@@ -579,126 +476,55 @@ and take `--cache`, or two commands disagree about where the database lives. Tha
 staleness check used to look under the candidate dir and, through `cache_dir()`'s mkdir,
 recreate the stray on every run (see "A verdict is about a source as cached at judgment time").
 
-## `maps_from` is a migration, not a state — so an apply retires it
+## Question ids are stable and never reused
 
-`maps_from` in `questions.json` says where each question's claims lived BEFORE a migration. It
-used to outlive the migration: after `vg remap --apply` the claims sat on the new ids and
-`maps_from` read exactly the same, so a second apply performed the move again. Old and new ids
-overlap, so every one of those moves looks legal: a run's dry run after an apply
-proposed moving one question's claim onto an unrelated question. A fingerprint marker caught
-the same file applied twice, but not the root cause. A new pair added beside the old ones
-re-ran every old one, because nothing in the content tells "stale pairs plus one new pair" from a
-new migration. `vg new-candidate` copied every pending pair into every new run, whose researchers
-write straight onto the new ids. And the marker lived outside git.
+A question id names one question for the life of a run. **A split or reworded question gets a
+new id, and the old id is retired**: never given to another question. Its claim and verdicts
+stay where they are, or are archived by hand, never re-filed. Nothing in the pipeline moves a
+claim between ids.
 
-So the guard has three layers, and `remap()` states the model once, at the top of the check.
+This rule replaced `vg remap`, which re-filed claims onto a renumbered question set (declared
+as `maps_from` in `questions.json`) and re-homed their verdicts, and `vg judgments --repair`,
+which re-homed verdicts after the fact. Both are retired: invoking either exits 1 and states
+this rule. Question ids are also file names, and a verdict belongs to a claim only through the
+shard it sits in, so every move was a chance to attach a real verdict to the wrong claim. remap
+was the largest single source of defects in the codebase, and each one was a false green or
+lost data: re-application, path traversal through a mapping entry, ids differing only in case,
+a crash mid-move, sources shared across questions, stranded claims, dangling `derives_from`,
+and a dropped `previous_question`. It was written for one migration, which had finished.
+Hardening it further cost more than it could ever save, and stable ids remove the need.
 
-**1. An apply retires its mapping.** Each `maps_from` is renamed in place to `mapped_from`. That
-keeps the record in the tracked file without it being a move, and the next run sees only moves
-nobody has made yet. In normal use nothing stale is ever pending. The whole mapping retires,
-pairs with no claim file included: once any claim has moved, the run's ids are the new ones, and
-a file that later appears under an id is new research on that question. Only an apply that found
-no claim at all retires nothing, because until one has moved the run hasn't left the old id
-space. `vg new-candidate` drops both keys, since a new run has no earlier id space.
+What is left:
+- `maps_from` and `mapped_from` in a `questions.json`, and `previous_question` in a claim file,
+  still load; nothing writes them. `vg new-candidate` copies neither of the first two: they are
+  another run's history, and a new run has no earlier id space.
+- A `judgments-backup/` that an interrupted re-home left behind still stops every command that
+  reads verdicts, because the shards may be half-rewritten. The message says how to undo it:
+  `vg judgments --rollback`, run from a checkout of the commit before the retirement.
+- Question-id validation was never remap's and stays: the id pattern (`models.QID_PATTERN`,
+  checked again in `judgments.path_for()`), and `vg judgments` counting a shard the disk opens
+  under a claim's id as that claim's (`judgments.opened_as()`).
 
-The retire rides the re-home transaction (see "A re-home is a transaction" above) with the claim
-moves and the marker, and `questions.json` is snapshotted with them. Outside it, one order leaves
-a retired mapping over claims that never moved, which in a rotation silently answer the wrong
-questions. The other leaves moved claims with the mapping still pending. A failure puts all four
-back. A kill leaves the backup, which stops remap until `vg judgments --rollback` puts all four
-back.
-
-**2. The file holds the run's mapping state, and the marker records it.** Per question, the state
-is its pending move if it declares one, else its retired `mapped_from`. Identity pairs move
-nothing and are not part of it. `mapped_from` is per question: the move that last brought that
-question's claim to its id. A question a later migration doesn't map keeps the one an earlier
-migration recorded, and so does a question mapped to itself only to adopt new wording. So
-rewording never changes the state. Overwriting on rewording erased a reworded swap from the
-record, and restoring half of it later went unrecognized.
-
-Every apply that moves claims appends a fingerprint of the state it leaves to
-`data/<run>/.remap-applied`. remap then refuses two cases, dry run included:
-- **The state is the latest one recorded, and a move is pending.** That migration already ran:
-  either an older remap applied it without retiring, or `maps_from` was restored on part of a
-  retired mapping. Hashing only the pending pairs let a swap restored by itself pass as a new
-  migration. A swap trips no collision check, so the apply exited 0 with each claim on the
-  other's question. An identity-only declaration is not refused, because it can't move anything
-  into the wrong place.
-- **The state is recorded, but a later state comes after it.** This is an older `questions.json`
-  put back, whether anything is pending or not, and its question set no longer matches the
-  claims. With nothing pending it may be the current file after all: dropping the question the
-  latest migration mapped returns the state to an earlier line. So `vg remap --mark-applied`
-  records it as current, on the operator's word, which beats hand-editing the marker.
-
-A file with no retired pairs hashes exactly as the pending pairs did, so older markers still
-match. Reordering the file, adding an unmapped question, or adding an identity pair can't reopen
-it. The cost is that declaring the very same moves again on purpose is refused too, and the
-refusal says to remove that line from the marker. The marker is written last inside the
-transaction. It was once written before the first move, which left a spurious marker after every
-failed apply, refusing the retry. The leftover-pairs warning fires only when a run with a marker
-has a `questions.json` with no `mapped_from`, since a retired mapping can't leave one behind.
-Warning on every new mapping would teach people to skim past it.
-
-**3. The claim files can disprove a retired mapping, but never prove one.** A move that never ran
-leaves two traces: the claim still in the old id's file, with no current question using that id,
-and no claim on the question it was moving to. That means a `questions.json` retired in another
-checkout arrived without its claims. remap refuses it whether or not a new pair is pending,
-because adding a pair must not wave it through.
-
-Both traces are needed. A retained `mapped_from` names an id from an earlier id space, and later
-edits reuse ids: retained entries named most of one run's current ids. On the first trace alone,
-dropping or renaming a question whose id some other question moved from was refused as "retired
-somewhere else", and nothing could get past that refusal. A file a pending pair is about to move
-is that pair's source, not a leftover.
-
-**What no layer can tell apart** is the original report's own finding: a new migration that
-happens to share pairs with an old one, versus old pairs restored beside a new edit. A restored
-pair plus an unrelated new pair is a new state, and it goes through. The defenses there are:
-- retirement, which makes such an edit abnormal;
-- the dry run, which lists every move;
-- the collision check;
-- committing `questions.json` with the claims it describes.
-
-**Which claims stay put.** Once a run has left its first id space, every question that declares
-no new `maps_from` keeps the claim on its own id. A marker line or any `mapped_from` shows that it
-has. That includes a question the first migration added, which has no `mapped_from` of its own.
-Read as "nothing maps to", one new pair made every other claim stranded,
-and `--archive-stranded` archived them all. A kept claim stays without anyone asking, so the dry
-run names each one whose question now reads differently from the claim's `question`. That covers
-a rewording, which an identity pair adopts. It also covers a different question put at an
-existing id, which otherwise silently inherits the old claim. A run that has never migrated is
-still read as a whole migration: every claim file no pair moves is listed as stranded, and `--archive-stranded`
-archives it, so declare an identity pair for each question that keeps its claim. An identity pair
-keeps the `previous_question` an earlier migration recorded unless the wording actually changed.
-
-Malformed input is refused up front: a `maps_from` or `mapped_from` that isn't one id, two
-questions sharing an id, or one old id mapped into two questions (a split). Each of these used to
-crash or half-apply. For a split, keep `maps_from` on the question that inherits the research.
-
-**Commit the retired `questions.json` and the marker in the same commit as the claims they
-describe**, wherever those claims are tracked (`data/<candidate>/claims/`). Claims without their
-retired mapping read as a migration still to apply. A retired mapping without its claims hides a
-migration that never ran from any checkout still holding the old ids.
-
-A run remapped before this guard existed has its claims on the new ids, `maps_from` still
-pending and no marker, so its dry run proposes the whole migration again and `--apply` would
-perform it. `vg remap --mark-applied` does what a finished apply would have, moving
-nothing: it records the marker and retires `maps_from`. It is the operator's assertion that the
-claims already sit on the new ids. The claim files can *disprove* that assertion but never prove
-it, because the id spaces overlap and a finished permutation looks like an unstarted one. So they
-are only ever grounds to refuse. It refuses a run with no parsed claims, and a run with a claim
-*file* still on a retired id (a `maps_from` value no current question uses), whatever the file
-holds, since an apply would have moved it. It writes a marker only where none exists, or retires
-a mapping the marker already lists as its latest (one an older remap applied without retiring
-it). A mapping the marker lists with a later one after it is an older `questions.json` put back,
-and retiring it would bury the stale question set, so that is refused. A marker listing *other*
-mappings means the run went through the guard, so the current `maps_from` is a pending
-migration, not a finished one. An empty marker means something whose meaning can't be read back.
-On a retired mapping it does nothing, except to record a retired file as current when remap
-has refused it as an older state (layer 2, above).
-
-Run it only where the migrated claims are, then commit `questions.json`, `.remap-applied` and
-the migrated `claims/` together.
+Lessons from it that still apply:
+- **Don't keep hardening a tool for a finished one-off job. Remove the need for it.**
+- **A description of a change must not outlive the change.** `maps_from` said where claims lived
+  *before* a migration, and it read exactly the same after the migration ran, so a second apply
+  moved every claim again. Anything that describes a change rather than a state has to be retired
+  when the change is applied.
+- **When old and new ids overlap, files on disk can disprove that a move happened, never prove
+  it.** A finished permutation and an unstarted one look alike.
+- **If anything rewrites several files as one change again**, keep a backup that is complete or
+  absent at every instant. Build it beside its final name, fsync it, and rename it into place.
+  Retire it by renaming it to a name nothing reads, then delete it. `rmtree` is not atomic, and
+  a half-deleted backup read as the truth drops everything it lacks. Make recovery a command,
+  not a procedure: the hand-written one told operators to remove the shards the backup lacked.
+- **On a case-insensitive disk, remove before you write.** On macOS's default volume, `q1.json`
+  *is* `Q1.json`, and `os.replace(tmp, "q1.json")` over it keeps the name `Q1.json`. Writing the
+  new name and then unlinking the old one deleted what had just been written. For the same
+  reason, names inside one directory must differ in more than case. CI's disk is case-sensitive,
+  so the case-insensitive path never runs there: pin it with a test that patches the disk's
+  answer (`judgments._same_file()`). When a change touches names, run the suite on both kinds of
+  disk: a Mac's default volume, and `pytest --basetemp=<dir>` on a case-sensitive one.
 
 ## A real citation to the wrong document passes every check
 
@@ -1321,6 +1147,15 @@ reverted every one of the parent's new changes in a commit whose message said no
 them. Record the base SHA when you branch, and reset or rebase onto that SHA, not the ref
 name. Before pushing a stacked branch, check that `git diff origin/<parent> HEAD --stat`
 names only your files.
+
+## A typer default is not a value when a test calls the command
+
+Tests call commands as plain functions (`cli.show_judgments(data=...)`), not through typer. A
+parameter declared `repair: bool = typer.Option(False, hidden=True)` then gets its Python
+default, the `OptionInfo` object, which is truthy: every test that omitted the flag ran the
+retired-flag refusal. Give options through `Annotated[bool, typer.Option(...)] = False`, so
+the default is a real value either way. Typer does not resolve a `type` alias to an Annotated,
+so spell each one out.
 
 ## Style
 

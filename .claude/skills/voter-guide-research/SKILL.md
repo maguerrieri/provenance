@@ -13,7 +13,10 @@ whether a citation is real.** Never let a model set a verification status.
 1. Read `data/template.md`.
 2. Split compound questions ("record on X and Y") into **atomic** ones — one claim per
    question — with stable IDs: `q1`, `q2a`, `q2b`. A subagent handling two claims at once
-   produces citations that support one of them.
+   produces citations that support one of them. IDs are **never reused or renumbered**: claims
+   and verdicts are filed by id, and nothing moves them. If a question is split or reworded
+   later in a run, give each new question a new id and retire the old one. Its claim stays
+   where it is, or is archived by hand.
 3. Write `data/questions.json` as `[{"id", "text", "claim_type", "parent", "rationale"}]`.
 4. Mark `claim_type: "adversarial"` for anything negative or contested about a candidate
    (settlements, donor influence, opposition to a popular measure). Adversarial claims
