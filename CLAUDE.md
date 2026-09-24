@@ -898,9 +898,14 @@ Related traps in the same data:
   stated: leave it out of the sum *and* the count, and name it in the detail. Test for "is a
   number", not "is empty": CAST also reads `N/A` as 0.0 and `1,000` as 1.0. A stated `0` is
   the filer's figure and counts. `amount_sql()` is that test, and every query reads `AMOUNT`
-  through it: `ie_total` (v2) and the three receipt queries (v2). `top_contributor` ranks
-  only gifts with an amount, since a blank read as 0.0 tied a stated $0. Both listings print a
-  blank as `blank`, not `$0`, and any other unreadable amount as filed.
+  through it: `ie_total` (v2) and the three receipt queries (v2). A total sums the stated
+  amounts and names what it left out. A rank cannot, because a gift of unknown size could make
+  anyone largest: while any gift to the filer has no amount, `top_contributor` names no
+  largest contributor, only the stated leader as a lead to check. `vg calaccess contributions`
+  reads amounts the same way. It prints a blank as `blank` and any other unreadable amount as
+  filed, and it lists every such gift whatever `--top` says, since those are the gifts a total
+  names as not counted. The IE listing prints a blank as `blank` but still reads other amounts
+  with Python's `float()` (#56).
 - **A dedup reads a value the way the sum does.** `DEDUPED_RECEIPTS` grouped on
   `CAST(AMOUNT AS REAL)`, which reads `300,000` as 300.0. A row filed that way merged into a
   $300 gift under the same transaction base, `MAX()` over the text kept `300,000`, and once
