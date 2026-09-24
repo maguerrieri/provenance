@@ -632,6 +632,12 @@ definitions. A race is one file in `races/` naming its source lists; the source 
 `sources/<region>-sources.yaml` and merge. If you find yourself adding a candidate name to
 the pipeline, put it in the race file instead.
 
+Tests see only the synthetic race in `tests/fixtures/races/`, through conftest's autouse
+`example_race`, which patches `races.RACES_DIR` with the test's own `monkeypatch`. So
+`monkeypatch.undo()` partway through a test undoes that too, and the next `vg` command fails
+to load a race, with a bare exit 1 under `CliRunner`. Scope a temporary patch with
+`with monkeypatch.context() as m:` instead.
+
 ## Researchers search; they are never told what they will find
 
 Two rules, same reason:
