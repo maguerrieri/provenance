@@ -189,7 +189,10 @@ mapping, so a verdict stranded by the earlier one is archived rather than re-hom
 
 **A re-home is a transaction, and never deletes a verdict.** A verdict no current claim cites
 (lapsed, or its claim archived by `--archive-stranded`) goes to
-`judgments-archive/<stamp>/<old shard>.json`. Everything else goes through `_rewrite()`:
+`judgments-archive/<stamp>/<old shard>.json`, and a claim `--archive-stranded` archives goes to
+`claims-archive/<stamp>/`, under the same stamp. Both get a fresh directory per run: one shared
+`claims-archive/` let the next migration that stranded a file of the same name replace the
+research archived there. Everything else goes through `_rewrite()`:
 
 - The backup is **complete or absent at every instant**. It is built in
   `judgments-backup.partial/`, fsynced, and only then renamed to `judgments-backup/`, which is
@@ -198,16 +201,22 @@ mapping, so a verdict stranded by the earlier one is archived rather than re-hom
   backup read as the truth drops every shard it lacks, and `rmtree` is not atomic. The commit
   used to be `rmtree(backup)`, and a kill partway through left 1 of 3 verdicts after the
   rollback the readers pointed to.
-- Then the shards, the archive (its name recorded in the backup first), and remap's claim
-  moves, re-apply marker and retired mapping (`then=`) happen, and the backup is retired. The
-  claim files move inside the transaction, and `claims/`, `.remap-applied` and
+- Then the shards, the archive (its name recorded in the backup first), and remap's stranded
+  archive, claim moves, re-apply marker and retired mapping (`then=`) happen, and the backup is
+  retired. The claim files move inside the transaction, and `claims/`, `.remap-applied` and
   `questions.json` are snapshotted into its backup (`also=`: a directory's `*.json`, or a
   file's bytes or absence), because the mapping exists only in that run. Verdicts, claims,
   marker and mapping move, and roll back, together. Rolling back only the shards put verdicts
   on their old ids under claims already on new ones: a false green, arrived at by
   recovery.
-- If any step raises, `_restore()` puts back every shard, the claim files, the marker and
-  `questions.json` from the backup, and removes the begun archive. If the process dies, the backup stays and every
+- **Every move a command makes is inside the transaction, or its failure message lies.** The
+  stranded archive once ran before the backup, as a plain rename, so a re-home that refused
+  or failed after it left those claims archived under "Nothing moved". Now it is part of
+  `then=`, and what it creates is named up front (`creates=`, the backup's `CREATES`), like the
+  verdict archive: a path there must not exist yet, since a restore deletes it.
+- If any step raises, `_restore()` puts back every shard, the claim files (stranded ones
+  included), the marker and `questions.json` from the backup, and removes the begun archives,
+  verdicts' and claims'. If the process dies, the backup stays and every
   reader refuses, naming `vg judgments --rollback`, which runs the same restore. Recovery is a
   command, not a procedure: the hand-written one told operators to remove shards the backup
   lacked.

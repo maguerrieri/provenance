@@ -2498,7 +2498,8 @@ def test_remap_refuses_to_overwrite_stranded_research(tmp_path, capsys):
 
     # --archive-stranded preserves it and then the move can proceed
     cli.remap(data=tmp_path, apply=True, archive_stranded=True)
-    assert (tmp_path / "claims-archive" / "q3.json").exists(), "archived, not deleted"
+    (archived,) = (tmp_path / "claims-archive").glob("*/q3.json")
+    assert "IE committees" in archived.read_text(), "archived, not deleted"
     moved = json.loads((tmp_path / "claims" / "q3.json").read_text())
     assert moved["answer"] == "who funds them"
     assert moved["question_id"] == "q3"
@@ -4415,7 +4416,7 @@ def test_remap_keeps_the_verdicts_of_a_claim_it_archives(tmp_path):
     assert not judgments.path_for(tmp_path, "q4").exists()
     (kept,) = judgments.archive_dir(tmp_path).iterdir()
     assert json.loads((kept / "q3.json").read_text())[0]["note"] == "judged for the stranded q3"
-    assert (tmp_path / "claims-archive" / "q3.json").exists()
+    assert (tmp_path / "claims-archive" / kept.name / "q3.json").exists()
 
 
 def _swapped_run(tmp_path):

@@ -228,7 +228,8 @@ def _shard_names(stems) -> str:
 
 
 def load_claims(claims_dir: Path, *, trust_machine_fields: bool = False,
-                skipped: list[str] | None = None) -> list[Claim]:
+                skipped: list[str] | None = None,
+                origin: dict[str, str] | None = None) -> list[Claim]:
     """Load claim files. Discards agent-writable verification data unless asked not to.
 
     Defaults to NOT trusting, so a new call site has to say out loud that it wants
@@ -237,10 +238,11 @@ def load_claims(claims_dir: Path, *, trust_machine_fields: bool = False,
     (status), never where it decides whether a citation counts as verified.
 
     Pass `skipped` to collect the question ids of unreadable claims, for a caller whose
-    result would otherwise silently leave them out.
+    result would otherwise silently leave them out, and `origin` to collect the file each
+    claim came from, by question id.
     """
     out: list[Claim] = []
-    origin: dict[str, str] = {}
+    origin = {} if origin is None else origin
     skipped = [] if skipped is None else skipped
     for p in sorted(claims_dir.glob("*.json")):
         try:
@@ -1911,26 +1913,20 @@ def remap(data: Path = DATA, apply: bool = False, archive_stranded: bool = False
         claim["question"] = q["text"]
         staged[dst] = claim
 
-    if stranded and archive_stranded and apply:
-        # Preserved, not deleted: a stranded file answered a question the template does not
-        # ask, which is not the same as being worthless — and the tool cannot tell a correct
-        # loss from an accidental one, so it never decides that.
-        arch_dir = data / "claims-archive"
-        arch_dir.mkdir(parents=True, exist_ok=True)
-        for stem in stranded:
-            srcp = claims_dir / f"{stem}.json"
-            if srcp.exists():
-                srcp.rename(arch_dir / f"{stem}.json")
-        con.print(f"[green]archived {len(stranded)} stranded file(s)[/] to {arch_dir} — kept, "
-                  f"not loaded as claims")
+    # Preserved, not deleted: a stranded file answered a question the template does not ask,
+    # which is not the same as being worthless — and the tool cannot tell a correct loss from an
+    # accidental one, so it never decides that. Archived inside the re-home below, not here.
+    leaving = [claims_dir / f"{stem}.json" for stem in stranded] if archive_stranded else []
 
     # Old and new id spaces overlap, so a destination can already exist as a file that nothing
     # maps FROM — and writing it would destroy research the dry run just listed as stranded.
     # Renaming into an overlapping id space needs the same care as any identity change: the
-    # identity moved, so the old thing must not be assumed gone.
+    # identity moved, so the old thing must not be assumed gone. One --archive-stranded moves
+    # out of the way first is no collision, in the dry run as in the apply.
     sources = {m[0] for m in moves}
     collisions = [(dst, srcp) for srcp, dst, _q in moves
-                  if dst.exists() and dst not in sources]
+                  if dst.exists() and dst not in sources
+                  and not any(os.path.samefile(dst, p) for p in leaving)]
     if collisions:
         con.print("\n[red]refusing to apply: these destinations already hold research that "
                   "nothing maps away from, and would be overwritten:[/]")
@@ -1942,7 +1938,9 @@ def remap(data: Path = DATA, apply: bool = False, archive_stranded: bool = False
         raise typer.Exit(1)
 
     if not apply:
-        con.print("[dim]dry run; pass --apply to move them[/]")
+        con.print("[dim]dry run; pass --apply to move them"
+                  + (f" and archive the {len(leaving)} stranded file(s)" if leaving else "")
+                  + "[/]")
         return
 
     # Back up unconditionally. The collision guard above prevents the known failure; a backup
@@ -1968,12 +1966,29 @@ def remap(data: Path = DATA, apply: bool = False, archive_stranded: bool = False
     # failed after the claims moved could not be finished, claims that failed to move after a
     # re-home left verdicts under ids their claims do not have, and a rollback of the verdicts
     # alone put them back on their old ids under claims already on new ones.
+    #
+    # The stranded files are archived there too, first, since a destination can be one of them.
+    # Archived before the transaction, they stayed archived when the re-home then refused or
+    # failed, while the message said nothing had moved. Each run gets its own directory, named
+    # as its verdict archive is: one shared claims-archive/ let the next run that stranded a
+    # file of the same name replace the one already there.
+    origin: dict[str, str] = {}
+    archived = {p.name for p in leaving}
     will_be = [c.model_copy(update={"question_id": moved.get(c.question_id, c.question_id)})
-               for c in _load_or_exit(claims_dir, trust_machine_fields=True)]
+               for c in _load_or_exit(claims_dir, trust_machine_fields=True, origin=origin)
+               if origin[c.question_id] not in archived]
+    stamp = _j.new_stamp()
+    arch_run = data / "claims-archive" / stamp
+    # What a rollback removes: the run's directory, and claims-archive/ too if this makes it.
+    made = arch_run if arch_run.parent.exists() else arch_run.parent
 
     n_retired = sum(1 for q in questions if q.get("maps_from")) if staged else 0
 
     def move_claims():
+        if leaving:
+            arch_run.mkdir(parents=True)
+            for p in leaving:
+                p.rename(arch_run / p.name)
         for srcp, _dst, _q in moves:
             srcp.unlink()
         # Every file is fsynced before the commit makes the move final: rehome() makes the
@@ -2015,13 +2030,17 @@ def remap(data: Path = DATA, apply: bool = False, archive_stranded: bool = False
     try:
         with _judgments_or_exit():
             done = _j.rehome(data, will_be, moved=moved, then=move_claims,
-                             also=(claims_dir, marker, qpath), exact=True)
+                             also=(claims_dir, marker, qpath), exact=True,
+                             creates=(made,) if leaving else (), stamp=stamp)
     except OSError as e:
         con.print(f"[red]remap failed: {escape(str(e))}. Nothing moved: the verdicts, claim "
                   f"files and {escape(qpath.name)} were put back as they were. If `vg judgments` "
                   f"reports an interrupted re-home instead, run `vg judgments --rollback --data "
                   f"{escape(str(data))}`.[/]")
         raise typer.Exit(1) from None
+    if leaving:
+        con.print(f"[green]archived {len(leaving)} stranded file(s)[/] to {arch_run} — kept, "
+                  f"not loaded as claims")
     con.print(f"[green]re-filed {len(staged)} claim(s)[/]; re-homed {done.moved} verdict(s), "
               f"{done.filed} filed across {len(done.questions)} question(s)"
               + (f", {done.archived} belong to no current source (retracted or archived), kept "
