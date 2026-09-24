@@ -12,19 +12,19 @@ from decimal import Decimal
 
 from .models import Claim
 
-# A unit is a whole word: read as the first letter of the next one, "$5,000 more" was five
-# billion dollars and "$20 by" twenty billion. Nor is it a letter starting a designation like
-# "K-12". The abbreviations are listed because the first-letter read used to catch them.
-MONEY = re.compile(r"\$\s?([\d,]+(?:\.\d+)?)\s*"
-                   r"(?:(k|thousand|m|mm|mn|mil|million|b|bn|bil|billion)(?!\w|-\d))?", re.I)
+# A unit after a dollar figure is one of these forms as a whole word, and nothing else. Read
+# as the first letter of the next word, "$5,000 more" was five billion dollars and "$20 by"
+# twenty billion. Every form is listed, since that loose read caught the abbreviations by
+# accident, and a form missing here reads as a bare figure. A hyphen may follow ("$1.5M-2M",
+# "$7M-a-year"); the cost is "$500 K-12", read as thousands.
+_MULT = {**dict.fromkeys(("k", "thousand", "thousands"), 10**3),
+         **dict.fromkeys(("m", "mm", "mn", "mln", "mil", "million", "millions"), 10**6),
+         **dict.fromkeys(("b", "bn", "bln", "bil", "billion", "billions"), 10**9)}
+MONEY = re.compile(r"\$\s?([\d,]+(?:\.\d+)?)\s*(?:(" + "|".join(_MULT) + r")(?!\w))?", re.I)
 YEAR = re.compile(r"\b(19|20)\d{2}\b")
 DATE = re.compile(
     r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+(?:19|20)\d{2}\b"
     r"|\b(?:19|20)\d{2}-\d{2}-\d{2}\b", re.I)
-
-_MULT = {"k": 10**3, "thousand": 10**3,
-         "m": 10**6, "mm": 10**6, "mn": 10**6, "mil": 10**6, "million": 10**6,
-         "b": 10**9, "bn": 10**9, "bil": 10**9, "billion": 10**9}
 
 
 def money_values(text: str) -> set[float]:
