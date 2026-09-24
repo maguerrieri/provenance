@@ -31,6 +31,15 @@ def _vg(*args):
     return res.exit_code, re.sub(r"\x1b\[[0-9;]*m", "", " ".join(res.output.split()))
 
 
+def _handed(data, qid: str, sid: str) -> list[str]:
+    """`--context` and the token `vg handoff` prints beside `sid`, as a verifier passes it on."""
+    code, out = _vg("handoff", qid, "--data", data)
+    assert code == 0, out
+    token = re.search(rf"sid {re.escape(sid)}\s+context token (\w+)", out)
+    assert token, out
+    return ["--context", token.group(1)]
+
+
 def _source() -> Source:
     return Source(url=URL, publisher="Example News", author="A. Reporter", date="2026-05-14",
                   source_type="bylined_journalism", snippet=SNIPPET)
@@ -69,7 +78,8 @@ def test_files_carrying_remaps_fields_still_load_and_build(tmp_path):
     assert code == 0, out
     (claim,) = cli.load_claims(run / "claims", trust_machine_fields=True)
     assert claim.sources[0].verification.status == "verified"
-    code, out = _vg("judge", "q1", claim.sources[0].sid, "supports", "--data", run)
+    code, out = _vg("judge", "q1", claim.sources[0].sid, "supports", "--data", run,
+                    *_handed(run, "q1", claim.sources[0].sid))
     assert code == 0 and "supports recorded" in out, out
     code, out = _vg("judgments", "--data", run)
     assert code == 0 and "0 of 1 cited source(s) need a verdict" in out, out

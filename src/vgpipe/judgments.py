@@ -22,6 +22,7 @@ leaves the verdict naming words the claim no longer says.
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -765,6 +766,45 @@ def unjudgeable_page(source, seen, cache_root: Path) -> str:
         judged_copy(source, cache_root, seen=seen)
     except Unjudgeable as e:
         return str(e)
+    return ""
+
+
+def context_token(context: str | None) -> str:
+    """A short fingerprint of a context window, or "" for a source with none. `vg handoff`
+    prints it with each source, and `vg judge --context` must hand it back.
+
+    `vg judge` reads the claim file as it is when judge runs, and nothing from the verifier
+    said which context it had read. So a re-verify landing while a verifier worked (another run
+    re-fetched the page, and this one rebuilt the context from the new copy) left judge a copy
+    it could stamp and a context no verifier had seen, and the row rendered green on it. The
+    token is how the verifier says which one it read. Longer than a sid, so the two are not
+    mistaken for each other."""
+    if not context:
+        return ""
+    return hashlib.sha256(context.encode()).hexdigest()[:16]
+
+
+def wrong_context(source, token: str, question_id: str, *, required: bool) -> str:
+    """Why a verdict handed back with `token` is not about this source's context now, or "".
+    `required` is whether a verdict on this source must carry a token at all: a page citation's
+    must, and a query citation's, already tied to its run (`unjudgeable_query()`), need not.
+
+    The token is agent-supplied and the context is read from a claim file loaded trusted, and
+    both are safe for the same reason: this can refuse, never grant. A forged token matching
+    the current context gets exactly what `vg judge` recorded before tokens existed, and any
+    other blocks the verdict. So the refusal never prints the current token: a verifier handed
+    one could retry with it and record a verdict about text it has not read."""
+    token = token.strip().lower()
+    if not token:
+        if not required:
+            return ""
+        return (f"a verdict on a page citation must name the context it judged: pass --context "
+                f"with the context token `vg handoff {question_id}` printed beside this source")
+    if token != context_token(source.verification.context):
+        return (f"you were handed a different context (token {token}) from the one this source "
+                f"has now: `vg verify` has rebuilt it since, so your verdict is about text the "
+                f"pipeline no longer shows. Run `vg handoff {question_id}` again, read the context "
+                f"it prints, and judge that")
     return ""
 
 

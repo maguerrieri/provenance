@@ -107,6 +107,15 @@ def _vg(*args) -> tuple[int, str]:
     return res.exit_code, re.sub(r"\x1b\[[0-9;]*m", "", " ".join(res.output.split()))
 
 
+def _handed(data, qid: str, sid: str) -> list[str]:
+    """`--context` and the token `vg handoff` prints beside `sid`, as a verifier passes it on."""
+    code, out = _vg("handoff", qid, "--data", data)
+    assert code == 0, out
+    token = re.search(rf"sid {re.escape(sid)}\s+context token (\w+)", out)
+    assert token, out
+    return ["--context", token.group(1)]
+
+
 def _rewrite_answer(run: Path, qid: str, answer: str) -> None:
     """A retry that rewrites the answer and keeps every source, quote and all."""
     p = run / "claims" / f"{qid}.json"
@@ -116,7 +125,8 @@ def _rewrite_answer(run: Path, qid: str, answer: str) -> None:
 def test_judge_stamps_the_claim_it_judged(tmp_path):
     shared = src("shared")
     run = _verified_run(tmp_path / "run", c := claim("q1", shared))
-    code, out = _vg("judge", "q1", shared.sid, "supports", "--data", run)
+    code, out = _vg("judge", "q1", shared.sid, "supports", "--data", run,
+                    *_handed(run, "q1", shared.sid))
     assert code == 0, out
     assert judgments.load(run, "q1")[shared.sid].claim_fingerprint == c.fingerprint
     entry = json.loads(judgments.path_for(run, "q1").read_text())[0]
@@ -130,7 +140,8 @@ def test_a_verdict_shows_that_a_retry_rewrote_its_claim(tmp_path):
 
     s = src("a")
     run = _verified_run(tmp_path / "run", claim("q1", s, answer="It approved the appeal."))
-    assert _vg("judge", "q1", s.sid, "supports", "--data", run)[0] == 0
+    assert _vg("judge", "q1", s.sid, "supports", "--data", run,
+               *_handed(run, "q1", s.sid))[0] == 0
     _rewrite_answer(run, "q1", "It denied the appeal.")
 
     (now,) = cli.load_claims(run / "claims")
@@ -144,10 +155,12 @@ def test_judging_again_after_a_retry_stamps_what_the_claim_says_now(tmp_path):
 
     s = src("a")
     run = _verified_run(tmp_path / "run", claim("q1", s, answer="It approved the appeal."))
-    assert _vg("judge", "q1", s.sid, "supports", "--data", run)[0] == 0
+    assert _vg("judge", "q1", s.sid, "supports", "--data", run,
+               *_handed(run, "q1", s.sid))[0] == 0
     _rewrite_answer(run, "q1", "It denied the appeal.")
 
-    code, out = _vg("judge", "q1", s.sid, "topic_only", "--data", run)
+    code, out = _vg("judge", "q1", s.sid, "topic_only", "--data", run,
+                    *_handed(run, "q1", s.sid))
     assert code == 0, out
     (now,) = cli.load_claims(run / "claims")
     j = judgments.load(run, "q1")[s.sid]
