@@ -459,6 +459,13 @@ copy (page text, a query value) is printed as `Text` with `soft_wrap=True`, whic
 `cli.py` (the `[red]{e}[/]` error lines, `vg archive`'s snapshot notes, the query no-match
 note) still don't.
 
+**Escaping each value is not escaping the message.** `escape()` neutralises only a tag complete
+inside the one value it is given. `vg handoff '[/' --data 'x]'` raised MarkupError instead of
+refusing: the id and the path were escaped one at a time, and `[/` from one met `]` from the
+other as a closing tag. Print a message that quotes data as one escaped run, or as `Text`, as
+`cli._refuse()` does for `vg judge` and `vg handoff`. And refuse a malformed argument before
+anything prints it: both commands check the question id with `judgments.path_for()` first.
+
 ## A verdict is about a source as cached at judgment time
 
 Three staleness bugs in one night, all the same shape and caught by three different amounts of
