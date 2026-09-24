@@ -16,6 +16,7 @@ import json
 import re
 import shlex
 from dataclasses import dataclass, field
+from functools import lru_cache
 from itertools import pairwise
 from pathlib import Path
 from urllib.parse import unquote_plus, urlparse, urlsplit, urlunsplit
@@ -68,27 +69,35 @@ def _has_login(url: str) -> bool:
     return "@" in urlparse(url).netloc
 
 
-# Parameter names need a rule of their own. The header pattern reads `sess` as a session, but
-# in public-records APIs `?session=2025-2026` is a legislative session, and `auth` or `pass`
-# anywhere in a name would take `author`, `authority` and `passed` with them. So a name is
-# split into words (`apiKey`, `api_key` and `X-Api-Key` all hold the word `key`) and matched
-# by word: these words whole, these parts anywhere in a word (for names with no case or
-# separator to split on, like `csrfmiddlewaretoken` or `PHPSESSID`), and `session` followed by
-# `id` or `ids`. Bare `session` is not a credential, and neither is `pin`, which is a parcel
-# number. `key` is a whole word, or ends one of a few compounds, so `turkey` is not a key.
-_CREDENTIAL_PARAM_WORDS = frozenset({
-    "auth", "oauth", "authorization", "authcode", "authkey", "pass", "pw", "pwd", "passcode",
-    "passphrase", "cred", "creds", "key", "keys", "sig", "cookie", "cookies", "sess", "sid",
-    "otp",
-})
+# Parameter names need a rule of their own. In a header name, `sess`, `auth`, `pass` and `pin`
+# anywhere are credentials. In a parameter name they are usually something else:
+# `?session=2025-2026` and `?sess=CUR` are legislative sessions, `author` and `authority` are
+# people and bodies, `passed` is a bill's status, `pin` is a parcel and `keys` is a site
+# search box. So a name is split into words (`apiKey`, `api_key` and `X-Api-Key` all hold the
+# word `key`), and only words with no ordinary public-records meaning count:
+# - these whole words;
+# - these parts inside a word, for names with no case or separator to split on
+#   (`csrfmiddlewaretoken`, `PHPSESSID`, `_wpnonce`), including `key` at the end of a few
+#   compounds (`apikey`, `sesskey`), so `turkey` is not a key;
+# - those compounds split in two (`api_keys`), and `session` followed by `id` or `ids`.
+# Left out on purpose: `session`, `sess`, `keys`, `pin`, `ticket` (a citation number) and
+# `sign`. No list of names is complete: a credential under any other name gets through.
+_CREDENTIAL_PARAM_WORD = re.compile(
+    r"o?auth|authori[sz]ation|authentication|authcode|pass|pwd?|pswd|passcode|passphrase"
+    r"|creds?|key\d*|sig|cookies?|sid|otp|saml|appid")
+_KEY_COMPOUND = (r"(?:api|access|app|auth|client|consumer|dev|developer|licen[cs]e|master"
+                 r"|private|sess|session|signing|subscription|user)")
 _CREDENTIAL_PARAM_PART = re.compile(
     r"token|csrf|xsrf|passw|secret(?!ar)|sessid|sessionid|credential|bearer|jwt|hmac|signature"
-    r"|(?:api|access|app|client|consumer|private|session|signing|subscription)keys?$")
+    rf"|nonce$|{_KEY_COMPOUND}keys?\d*$")
+_CREDENTIAL_PARAM_PAIR = re.compile(rf"{_KEY_COMPOUND} keys?\d*|session ids?")
 
-# The characters of a parameter name. A name slot can hold a value (a JSON map keyed by
-# session id, a pair that lost its `=`), so a message repeats only a name made of these whose
-# words are short and not digit-laden, and describes any other.
-_PARAM_NAME = re.compile(r"[\w.\-\[\]$:~*@]{1,64}")
+# A name slot can hold a value (a JSON map keyed by session id, a pair that lost its `=`), so
+# a message repeats a flagged name only if it reads like one a person wrote: short, made of
+# these characters, each word letters with at most one trailing digit, not a run of short
+# words (what a mixed-case token splits into) and not a long run of hex. Anything else is
+# described instead. A value made of ordinary lowercase letters still reads as a name.
+_PARAM_NAME = re.compile(r"[\w.\-\[\]$:~*@]{1,40}")
 
 
 def _param_words(name: str) -> list[str]:
@@ -100,8 +109,9 @@ def _param_words(name: str) -> list[str]:
 def credential_param(name: str) -> bool:
     """A query parameter, path parameter or body field whose name says it is a credential."""
     words = _param_words(name)
-    return (any(w in _CREDENTIAL_PARAM_WORDS or _CREDENTIAL_PARAM_PART.search(w) for w in words)
-            or any(pair in (("session", "id"), ("session", "ids")) for pair in pairwise(words)))
+    return (any(_CREDENTIAL_PARAM_WORD.fullmatch(w) or _CREDENTIAL_PARAM_PART.search(w)
+                for w in words)
+            or any(_CREDENTIAL_PARAM_PAIR.fullmatch(f"{a} {b}") for a, b in pairwise(words)))
 
 
 def _json_container(text: str) -> dict | list | None:
@@ -116,7 +126,7 @@ def _json_container(text: str) -> dict | list | None:
 def _json_names(value) -> list[str]:
     """Every key in a JSON value, at any depth, and the names in any of its strings."""
     if isinstance(value, str):
-        return _value_names(value)
+        return list(_value_names(value))
     if isinstance(value, dict):
         return [n for k, v in value.items() for n in (k, *_json_names(v))]
     if isinstance(value, list):
@@ -124,18 +134,27 @@ def _json_names(value) -> list[str]:
     return []
 
 
-def _value_names(value: str) -> list[str]:
-    """The names a parameter's value holds: the keys of JSON, or the parameters of a URL (a
-    `next` or `callback` link carries a query of its own)."""
+@lru_cache(maxsize=4096)
+def _value_names(value: str) -> tuple[str, ...]:
+    """The names a parameter's value holds: the keys of JSON, the parameters of a URL (a
+    `next` or `callback` link carries a query of its own, relative or not), or form pairs.
+
+    Cached, and cleared after each request, and `_pair_names` keeps each name once: every pair
+    is read two ways, so without both a URL nested in a URL was read twice at every level, and
+    its names listed twice, and a 130-character paste ran for minutes."""
     if (fields := _json_container(value)) is not None:
-        return _json_names(fields)
+        return tuple(_json_names(fields))
     try:
-        if value.startswith("/") or urlsplit(value).scheme in ("http", "https"):
-            return _url_param_names(value)
+        if ("?" in value or "#" in value or value.startswith("/")
+                or urlsplit(value).scheme in ("http", "https")):
+            return tuple(_url_param_names(value))
     except ValueError:
         raise ValueError("a parameter holds a URL that can't be parsed, so it can't be "
                          "checked for a credential") from None
-    return []
+    # Pairs only with an `&`: a lone `name=value` is too often base64 with its padding.
+    if "&" in value and "=" in value:
+        return tuple(_pair_names(value))
+    return ()
 
 
 def _pair_names(text: str) -> list[str]:
@@ -144,13 +163,13 @@ def _pair_names(text: str) -> list[str]:
     Read twice, split on `&` alone and on `&` and `;`, since servers differ: splitting on `;`
     alone would cut up a JSON value holding one. A segment with no `=` is a flag or a bare
     value, not a named parameter."""
-    names = []
+    names: dict[str, None] = {}  # ordered and unique: both readings mostly find the same names
     for separators in ("[&]", "[&;]"):
         for segment in re.split(separators, text):
             name, eq, value = segment.partition("=")
             if eq:
-                names += [unquote_plus(name), *_value_names(unquote_plus(value))]
-    return names
+                names |= dict.fromkeys((unquote_plus(name), *_value_names(unquote_plus(value))))
+    return list(names)
 
 
 def _url_param_names(url: str) -> list[str]:
@@ -181,9 +200,11 @@ def _body_param_names(body: str, content_type: str) -> list[str]:
 
 
 def _shown(name: str) -> bool:
-    return bool(_PARAM_NAME.fullmatch(name)) and not any(
-        len(w) > 24 or (w.isalnum() and not w.isdigit() and sum(c.isdigit() for c in w) > 1)
-        for w in _param_words(name))
+    words = _param_words(name)
+    return (bool(_PARAM_NAME.fullmatch(name))
+            and all(re.fullmatch(r"[a-z]{1,24}\d?", w) and not re.fullmatch(r"[a-f]{8,}", w)
+                    for w in words)
+            and sum(len(w) <= 2 for w in words) <= 2)
 
 
 def _credential_names(names: list[str]) -> str:
@@ -212,6 +233,8 @@ def _credential_params(url: str, headers: dict[str, str], body: str | None) -> l
             found.append(("its body", _body_param_names(body, content_type)))
     except RecursionError:
         raise ValueError("a parameter nests too deeply to be checked for a credential") from None
+    finally:
+        _value_names.cache_clear()
     return [f"{where} ({shown})" for where, names in found if (shown := _credential_names(names))]
 
 
