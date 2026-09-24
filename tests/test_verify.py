@@ -9046,8 +9046,8 @@ def _definition_fingerprint(name):
 # What cannot change a value a query returns: display, messages, listings (finding aids, not
 # citations), the export metadata, and the comparison and command a result is checked with.
 _NOT_A_DEFINITION = {
-    "vgpipe.queries": {"Query", "QueryResult", "REGISTRY", "dataset", "describe_export",
-                       "export_date", "human_command", "matches"},
+    "vgpipe.queries": {"Query", "QueryResult", "REGISTRY", "_other_schedules", "dataset",
+                       "describe_export", "export_date", "human_command", "matches"},
     "vgpipe.calaccess": {"COVER_FALLBACK", "Contribution", "DegradedDatabaseWarning",
                          "EXPORT_META", "EXPORT_URL", "_UNUSABLE", "_export_date",
                          "_read_export_info", "citable_snapshot", "committee_url",
@@ -9059,9 +9059,9 @@ _NOT_A_DEFINITION = {
 
 # name -> (version, fingerprint). See test_a_query_definition_cannot_change_unnoticed.
 QUERY_DEFINITIONS = {
-    "calaccess.contributor_total": (2, "6d0d35903252"),
+    "calaccess.contributor_total": (2, "9a931be48251"),
     "calaccess.filer_total": (1, "bff2b989d16e"),
-    "calaccess.top_contributor": (2, "a147103289f0"),
+    "calaccess.top_contributor": (2, "8e08376e072f"),
     "calaccess.ie_total": (2, "2f8f610a5a0f"),
 }
 

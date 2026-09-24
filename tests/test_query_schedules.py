@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import zipfile
 
+import pytest
+
 from vgpipe import calaccess, queries
 
 FILER = "9990031"
@@ -111,6 +113,69 @@ def test_the_miss_suggests_names_from_the_schedule_it_searched(tmp_path):
                       {"filer_id": FILER, "contributor": "Brightwater"}, root)
     assert not got.found
     assert "Brightwater PAC" in got.note and "Brightwater Bank" not in got.note, got.note
+
+
+def test_a_miss_on_another_schedule_names_the_schedules_as_filed(tmp_path):
+    """Asked for in-kind items, a donor with only monetary gifts misses. The note must point at
+    schedule A, not call the gifts non-contributions. The gift was also reported on Form 496
+    Part 3; the dedup's collapsed row carries only that label, and read from it the hint named
+    F496P3 alone."""
+    root = _export(tmp_path, _row("A-100001", "Brightwater PAC", "", "2500", "A")
+                   + _row("F496P3-100001", "Brightwater PAC", "", "2500", "F496P3",
+                          filing="9990033"))
+
+    got = queries.run("calaccess.contributor_total",
+                      {"filer_id": FILER, "contributor": "Brightwater PAC", "form_type": "C"},
+                      root)
+    assert not got.found
+    assert "form_type=A" in got.note and "form_type=F496P3" in got.note, got.note
+    assert "not counted as contributions" not in got.note
+
+
+def test_a_schedule_hint_leaves_room_for_the_near_names(tmp_path):
+    """The note shows four suggestions. One hint per schedule pushed the schedule-A spelling
+    the researcher needed out of view."""
+    root = _export(tmp_path, _row("A-1", "Brightwater PAC SCC", "", "2500", "A")
+                   + "".join(_row(f"{f}-{i}", "Brightwater PAC", "", "100", f)
+                             for i, f in enumerate(("C", "I", "F401A", "F496P3"), 2)))
+
+    got = queries.run("calaccess.contributor_total",
+                      {"filer_id": FILER, "contributor": "Brightwater PAC"}, root)
+    assert not got.found
+    assert "Brightwater PAC SCC" in got.note and "form_type=F496P3" in got.note, got.note
+
+
+def test_a_receipt_with_no_schedule_is_never_suggested_as_one(tmp_path):
+    """"form_type=" is how to ask for every schedule, so suggesting it for a blank schedule
+    would count refunds and interest back in."""
+    root = _export(tmp_path, _row("X-1", "Example Print Shop", "", "7200", ""))
+
+    got = queries.run("calaccess.contributor_total",
+                      {"filer_id": FILER, "contributor": "Example Print Shop"}, root)
+    assert not got.found and "form_type" not in got.note, got.note
+
+
+def test_a_padded_schedule_is_refused(tmp_path):
+    """" " is truthy: it filtered to the receipts with no schedule, under a label naming none."""
+    root = _export(tmp_path, RECEIPTS)
+    for name, params in (("calaccess.contributor_total", {"contributor": "Brightwater PAC"}),
+                         ("calaccess.top_contributor", {})):
+        for form_type in (" ", " A"):
+            with pytest.raises(ValueError, match="form_type must be a schedule code"):
+                queries.run(name, {"filer_id": FILER, "form_type": form_type, **params}, root)
+
+
+def test_a_filer_with_no_schedule_a_is_not_read_as_receiving_nothing(tmp_path):
+    """A slate mailer's receipts are all Form 401 payments. The ranking misses on schedule A,
+    and says where the receipts are."""
+    root = _export(tmp_path, _row("P-1", "Brightwater PAC", "", "2500", "F401A"))
+
+    got = queries.run("calaccess.top_contributor", {"filer_id": FILER}, root)
+    assert not got.found and "form_type=F401A" in got.note, got.note
+
+    slate = queries.run("calaccess.top_contributor", {"filer_id": FILER, "form_type": "F401A"},
+                        root)
+    assert slate.value == "Brightwater PAC"
 
 
 def test_a_gift_on_two_forms_still_counts_once_across_every_schedule(tmp_path):

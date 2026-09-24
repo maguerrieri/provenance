@@ -1090,12 +1090,14 @@ were not fixed with it. So a refund could make a business that gave nothing "the
 contributor", and the citation reproduced green. When one query is fixed for what it reads, fix
 the rest with it: search for the table or view (`DEDUPED_RECEIPTS`), not the query's name.
 
-All three now count schedule A unless `form_type` names another schedule (`""` for all of them),
-and the detail names the schedule counted. When a contributor misses on schedule A but has rows
-on other schedules, the miss suggests `form_type=<schedule>` instead of pointing at the name. The
-default has a known gap: a late contribution reported only on Form 496 Part 3, not yet restated
-on a later schedule A, is left out (#66). And `vg calaccess contributions` still lists every
-schedule without saying which (#67).
+All three now count schedule A unless `form_type` names another schedule (`""` for all of them).
+The two ranking and per-contributor queries name the schedule in their detail. When one misses on
+the schedule asked for but the name or filer has receipts on others, the miss suggests
+`form_type=<schedule>` instead of pointing at the name. It reads those schedules from the raw
+rows: the dedup's collapsed cross-form row keeps only one of its two labels. The default has a
+known gap: a late contribution reported only on Form 496 Part 3, not yet restated on a later
+schedule A, is left out (#66). And `vg calaccess contributions` still lists every schedule
+without saying which (#67).
 
 ## A surname is not a candidate
 

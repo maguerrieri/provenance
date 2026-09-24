@@ -173,6 +173,29 @@ class QueryResult:
         return n
 
 
+def _other_schedules(con: Any, filer_id: str, form_type: str, who: str = "",
+                     who_args: list[Any] | None = None) -> list[str]:
+    """The receipt schedules besides `form_type` that hold this filer's receipts (narrowed by
+    `who`, a condition on `r`), for a miss to suggest. Empty when `form_type` is "", which
+    already counted every schedule.
+
+    Suggestions only: nothing here reaches a value, which is why the definition fingerprint
+    leaves it out. Read from the raw schedules, not DEDUPED_RECEIPTS, whose collapsed
+    cross-form group carries only one of its schedules (A-100001 and F496P3-100001 read as
+    F496P3). A blank schedule is left out: no form_type selects it alone, and "form_type="
+    would count every schedule.
+    """
+    if not form_type:
+        return []
+    return [r[0] for r in con.execute(f"""
+        SELECT DISTINCT UPPER(TRIM(r.FORM_TYPE)) FROM RCPT_LATEST r
+        JOIN FILER_FILING f ON f.FILING_ID = r.FILING_ID
+        WHERE f.FILER_ID = ?{who}
+          AND UPPER(TRIM(COALESCE(r.FORM_TYPE, ''))) NOT IN ('', UPPER(TRIM(?)))
+        ORDER BY 1
+    """, [str(filer_id), *(who_args or []), form_type])]
+
+
 def _contributor_total(root: Path, *, filer_id: str, contributor: str,
                        contributor_first: str = "", form_type: str = "A") -> QueryResult:
     """Total itemized contributions from one contributor to one filer.
@@ -188,6 +211,11 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
     """
     from . import calaccess
 
+    if form_type != form_type.strip():
+        # " " is truthy, so it filtered to the rows with no schedule at all, under a label
+        # naming none.
+        raise ValueError(f"form_type must be a schedule code, or '' for every schedule, "
+                         f"not {form_type!r}")
     con = calaccess.connect(root)
     who = " AND UPPER(TRIM(r.CTRIB_NAML)) = UPPER(TRIM(?))"
     who_args: list[Any] = [contributor]
@@ -215,19 +243,11 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
         """, [str(filer_id), f"%{contributor.split()[0]}%" if contributor.split() else "%"]
              + schedule_args)]
         detail = f"0 itemized {label} gift(s)"
-        if form_type:
-            # The name matched, on a schedule this did not count: say where, rather than
-            # leave "no match" to send the researcher off retyping a name that was right.
-            elsewhere = con.execute(f"""
-                SELECT d.FORM_TYPE ft, COUNT(*) n
-                FROM ({DEDUPED_RECEIPTS.format(extra=who)}) d
-                GROUP BY UPPER(TRIM(d.FORM_TYPE)) ORDER BY n DESC
-            """, [str(filer_id)] + who_args).fetchall()
-            if elsewhere:
-                detail += (f"; {sum(r['n'] for r in elsewhere)} on other schedules, not counted"
-                           " as contributions")
-                near = [f"form_type={(r['ft'] or '').strip()} ({r['n']} receipt(s))"
-                        for r in elsewhere] + near
+        # The name matched, on a schedule this did not count: say where, rather than leave
+        # "no match" to send the researcher off retyping a name that was right.
+        if others := _other_schedules(con, filer_id, form_type, who, who_args):
+            detail += f"; receipts on schedule {', '.join(others)} not counted"
+            near = ["form_type=" + ", form_type=".join(others)] + near
         con.close()
         return QueryResult(value=None, rows=0, found=False, suggestions=near, detail=detail)
 
@@ -284,6 +304,9 @@ def _top_contributor(root: Path, *, filer_id: str, form_type: str = "A") -> Quer
     """
     from . import calaccess
 
+    if form_type != form_type.strip():
+        raise ValueError(f"form_type must be a schedule code, or '' for every schedule, "
+                         f"not {form_type!r}")
     con = calaccess.connect(root)
     schedule = " AND UPPER(TRIM(r.FORM_TYPE)) = UPPER(TRIM(?))" if form_type else ""
     label = f"schedule-{form_type}" if form_type else "every-schedule"
@@ -296,9 +319,16 @@ def _top_contributor(root: Path, *, filer_id: str, form_type: str = "A") -> Quer
         ORDER BY amt DESC LIMIT 4
     """, [str(filer_id)] + ([form_type] if form_type else [])).fetchall()
     row = rows[0] if rows else None
-    con.close()
     if row is None:
-        return _no_rows(f"no {label} contributions found for filer {filer_id}")
+        # A slate mailer's receipts are all on Form 401: "no schedule-A contributions" alone
+        # read as a committee that received nothing.
+        others = _other_schedules(con, filer_id, form_type)
+        con.close()
+        return _no_rows(f"no {label} contributions found for filer {filer_id}"
+                        + (f"; receipts on schedule {', '.join(others)} not counted"
+                           if others else ""),
+                        ["form_type=" + ", form_type=".join(others)] if others else None)
+    con.close()
     top = float(row["amt"] or 0)
     tied = [r for r in rows if abs(float(r["amt"] or 0) - top) < TOLERANCE]
     names = [" ".join(x for x in (r["nf"], r["nm"]) if x).strip() for r in tied]
