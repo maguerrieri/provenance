@@ -1140,16 +1140,46 @@ def _unjudgeable(s, cache_root: Path, *, seen, last_run) -> str:
     return why or _rebuild_problem(s, cache_root)
 
 
-def _query_run_line(name: str, run) -> str:
+def _query_run_line(run) -> str:
     """The run a query citation's context came from, as `vg handoff` shows it. Facts only: the
     verifier acts on what the hand-off prints, so it carries no instruction (`describe_export()`
     tells an operator to rebuild an undated database, which is not a verifier's step)."""
-    from . import queries
-
-    data = queries.dataset(name)
+    data = run.dataset
     export = (f", {data} export of {run.export_date}" if run.export_date
               else f", undated {data} database") if data else ""
-    return _printable(f"{name} v{run.version}{export}, under {run.cache_root}")
+    return _printable(f"{run.name} v{run.version}{export}, under {run.cache_root}")
+
+
+def _handed(claim, cache_root: Path, *, judged=None):
+    """What `vg handoff` shows a verifier for `claim`, as one value (`judgments.Handoff`): the
+    printer reads nothing else, and the context token hashes it, so nothing can be printed that
+    the token does not cover. `vg handoff` and `vg judge` both build it here, from one read of
+    the claim file. Apply the run's snapshots first (`_apply_archive_rows()`).
+
+    `judged` is a source `vg judge` has already found judgeable, and is not asked again: that
+    would read a query's database a second time, and a rebuild landing between the two reads
+    would refuse a verdict whose stamp comes from the first."""
+    from . import judgments, queries
+
+    sources = []
+    for s in claim.sources:
+        v = s.verification
+        why = ("" if s is judged else
+               _unjudgeable(s, cache_root, seen=v.context_page, last_run=v.query_run)
+               ) or ("" if v.context else "it has no context")
+        context = None
+        if not why:
+            # A query context has a run: `unjudgeable_query()` refuses one without. The root
+            # resolved, as the run check compares it: one database spelled two ways is one run.
+            run = v.query_run if s.query is not None else None
+            context = judgments.HandedContext(v.context, run and judgments.HandedRun(
+                s.query.name, run.version, queries.dataset(s.query.name), run.export_date,
+                str(Path(run.cache_root).resolve())))
+        sources.append(judgments.HandedSource(
+            s.sid, v.status, s.publisher, s.author, s.date, s.source_type, s.url, s.page,
+            s.snippet, context, why))
+    return judgments.Handoff(claim.question_id, claim.claim_type, claim.required_sources,
+                             claim.question, claim.answer, tuple(sources))
 
 
 # Control, format, surrogate and line/paragraph-separator characters: what can move the cursor,
@@ -1174,58 +1204,59 @@ def handoff(question_id: str, data: Path = DATA, cache: Path = None):
     """Print what a verifier judges for one claim: the claim, and each source's context with
     the context token `vg judge --context` must hand back.
 
-    Claim, context and token come from one read of the claim file, the one `vg judge` checks,
-    so the token names what is printed with it (a query run's root hashed resolved, as the run
-    check compares it, so one database spelled two ways is one run). A source `vg judge` would
-    refuse now gets its reason instead of a token. Read-only.
+    Claim, contexts and tokens come from one read of the claim file, the one `vg judge` checks,
+    built into one value (`_handed()`) that this prints and each token hashes, so a token names
+    everything printed with it: the claim, and every source, not only its own. A source `vg
+    judge` would refuse now gets its reason instead of a token. Read-only.
     """
-    from . import judgments
-
     _qid_or_exit(data, question_id)
     cache_root = _verdict_cache_root(data, cache)
     claim, _ = _claim_or_exit(data, question_id, "so what it cites cannot be shown")
     _apply_archive_rows(data, claim.sources, cache_root)
+    _print_handoff(_handed(claim, cache_root), _run_args(data, cache))
+
+
+def _print_handoff(h, run_args: str) -> None:
+    """Print hand-off `h`. Reads nothing but `h` (and the run's --data and --cache, for the
+    command it ends with): a field printed from anywhere else is one the token does not cover."""
+    from . import judgments
 
     def line(text: str, style: str = "") -> None:
         # Everything here is agent- or page-authored: as Text, so no bracket reads as markup,
         # and unwrapped, so a line break is the page's and never the terminal's.
         con.print(Text(text, style=style), soft_wrap=True)
 
-    line(f"{claim.question_id} ({claim.claim_type}, needs {claim.required_sources} "
-         f"source(s)): {_printable(claim.question)}", "bold")
-    line(f"claim: {_printable(claim.answer)}")
-    judgeable = 0
-    for n, s in enumerate(claim.sources, 1):
-        v = s.verification
-        why = _unjudgeable(s, cache_root, seen=v.context_page, last_run=v.query_run)
-        token = "" if why else judgments.context_token(claim, s)
+    line(f"{h.question_id} ({h.claim_type}, needs {h.required_sources} "
+         f"source(s)): {_printable(h.question)}", "bold")
+    line(f"claim: {_printable(h.answer)}")
+    for n, s in enumerate(h.sources, 1):
+        token = judgments.context_token(h, s.sid)
         line("")
-        line(f"[{n}/{len(claim.sources)}] sid {s.sid}  "
+        line(f"[{n}/{len(h.sources)}] sid {s.sid}  "
              + (f"context token {token}" if token else "nothing to judge yet"), "bold")
         byline = _printable(" · ".join((s.publisher, s.author, s.date or "undated")))
         line(f"  {byline} · {s.source_type}")
         line(f"  {s.url}" + (f"  (page {s.page})" if s.page else ""))
-        line(f"  status: {v.status}")
+        line(f"  status: {s.status}")
         line(f"  snippet: {_printable(s.snippet)}")
-        if not token:
-            line(f"  {_printable(why or 'it has no context')}", "yellow")
+        if s.context is None:
+            line(f"  {_printable(s.unjudgeable)}", "yellow")
             continue
-        judgeable += 1
-        if s.query is not None:   # the token names the run too, so show which it was
-            line(f"  query run: {_query_run_line(s.query.name, v.query_run)}")
+        if s.context.query_run is not None:   # the token names the run too, so show which
+            line(f"  query run: {_query_run_line(s.context.query_run)}")
         # Every line of it prefixed, so page text can't end the block early and go on to print
         # what reads as this command's own output. splitlines(), not split("\n"): a \r, \x85
         # or U+2028 is a line break to some reader, and each one starts a prefixed line here.
         line("  context:")
-        for text in v.context.splitlines():
+        for text in s.context.text.splitlines():
             line(f"  | {_printable(text)}")
     line("")
-    if not judgeable:
+    if all(s.context is None for s in h.sources):
         line("Nothing in this claim can be judged yet.", "yellow")
         return
-    line(f"Record each verdict: uv run vg judge {shlex.quote(claim.question_id)} <sid> "
+    line(f"Record each verdict: uv run vg judge {shlex.quote(h.question_id)} <sid> "
          f"supports|topic_only|contradicts|superseded --context <token> --note \"<one line>\""
-         f"{_run_args(data, cache)}")
+         f"{run_args}")
 
 
 @app.command()
@@ -1242,14 +1273,15 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
     verdict: supports | topic_only | contradicts | superseded
 
     --context is the context token `vg handoff` printed beside the source. Required: without
-    it nothing says which claim, context or query run the verdict is about.
+    it nothing says which hand-off the verdict is about.
 
     Refuses, writing nothing, unless the named claim cites the source, the copy of the page
-    `vg verify` built its context from is still the one cached, and the context it has now is
-    the one the token names. A verdict filed anywhere else is read by nothing — `q07` for `q7`,
-    or a sid another claim cites — while the command reported success and the judgment pass
-    looked done; one stamped from another copy, or on a context rebuilt or a query re-run
-    since the verifier was handed it, describes what the verifier never read.
+    `vg verify` built its context from is still the one cached, and the hand-off `vg handoff`
+    would print now is the one the token names. A verdict filed anywhere else is read by
+    nothing — `q07` for `q7`, or a sid another claim cites — while the command reported success
+    and the judgment pass looked done; one stamped from another copy, or on a claim, context or
+    query run changed since the verifier was handed it, or beside other sources than it was
+    handed, describes what the verifier never read.
 
     The verdict also records the claim's fingerprint (its question and answer as the claim file
     reads now), so a retry that rewrites the claim after this can be told apart from one that
@@ -1284,8 +1316,9 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
     # that no longer exists. Same root, same lookup as the check in `apply_to()`, or the stamp
     # describes a page the check never looks at.
     page_url, page_at, ver, query_ver, export = "", "", 0, 0, ""
-    # An archive-verified context comes from the snapshot the run's records name.
-    _apply_archive_rows(data, [source], cache_root)
+    # An archive-verified context comes from the snapshot the run's records name. Every source:
+    # the token covers the whole hand-off, which prints them all.
+    _apply_archive_rows(data, claim.sources, cache_root)
     if source.query is None:
         try:
             page_url, page_at, ver = judgments.judged_copy(source, cache_root)
@@ -1310,8 +1343,9 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
         _refuse(f"not recorded: {why}")
     # Last, so a wrong id, sid or copy is still what a refusal names first. The copy check above
     # passes a re-verify that rebuilt the context from a newer cached copy; this is what doesn't.
+    # The hand-off as `vg handoff` would print it now, from the claim file judge just read.
     if why := judgments.wrong_context(
-            claim, source, context,
+            _handed(claim, cache_root, judged=source), sid, context,
             handoff=f"vg handoff {shlex.quote(question_id)}{_run_args(data, cache)}"):
         _refuse(f"not recorded: {why}")
     try:

@@ -30,7 +30,7 @@ import shlex
 import shutil
 import time
 from contextlib import contextmanager
-from dataclasses import MISSING, asdict, dataclass, fields
+from dataclasses import MISSING, asdict, dataclass, fields, is_dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import get_type_hints
@@ -773,66 +773,133 @@ def unjudgeable_page(source, seen, cache_root: Path) -> str:
     return ""
 
 
-def context_token(claim, source) -> str:
-    """A short fingerprint of what `vg handoff` shows a verifier for `source`: the claim's
-    question and answer, the source's citation (url, publisher, author, date, source type,
-    page, snippet) and its context window, and for a query citation the run that produced that
-    context (definition, export and cache root). Everything it prints for the verifier to judge
-    from, that is, but the status. "" for a source with no context, or a query citation with no
-    recorded run. `vg judge --context` must hand it back.
+@dataclass(frozen=True)
+class HandedRun:
+    """The run a query citation's context came from, as `vg handoff` prints it."""
+    name: str
+    version: int
+    dataset: str       # "" for a query whose data has no exports
+    export_date: str   # "" for an undated database
+    cache_root: str    # resolved, as the run check (`unjudgeable_query()`) compares it
 
-    `vg judge` reads the claim file as it is when judge runs, and nothing from the verifier
-    said what it had read. So a re-verify landing while a verifier worked (another run
-    re-fetched the page, and this one rebuilt the context from the new copy) left judge a copy
-    it could stamp and a context no verifier had seen, and the row rendered green on it. A retry
-    that rewrote only the answer, or only a filing's date, keeps the sid and the context, and
-    did the same with a claim no verifier had seen: `superseded` turns on exactly that date.
-    A query re-verified under a new definition or export rewrites the run beside a context that
-    can read exactly as before, and judge then stamped the new definition on a verdict about the
-    old one: the run is in the token because the text alone cannot tell the two apart.
-    The token is how the verifier says which one it read. Longer than a sid, so the two are not
-    mistaken for each other. A field added to the hand-off belongs here too."""
-    context = source.verification.context
-    if not context:
+
+@dataclass(frozen=True)
+class HandedContext:
+    """What `vg handoff` prints for a source there is something to judge on."""
+    text: str
+    query_run: HandedRun | None   # a query citation's run; None for a page
+
+
+@dataclass(frozen=True)
+class HandedSource:
+    """One source as `vg handoff` prints it."""
+    sid: str
+    status: str
+    publisher: str
+    author: str
+    date: str | None
+    source_type: str
+    url: str
+    page: int | None
+    snippet: str
+    context: HandedContext | None   # None: nothing to judge on it yet
+    unjudgeable: str                # why, when `context` is None
+
+
+@dataclass(frozen=True)
+class Handoff:
+    """Everything `vg handoff` prints for one claim, as one value (`cli._handed()` builds it).
+    The printer reads nothing else and `context_token()` hashes it, so a field the hand-off
+    prints is one the token covers without anyone listing it."""
+    question_id: str
+    claim_type: str
+    required_sources: int
+    question: str
+    answer: str
+    sources: tuple[HandedSource, ...]
+
+
+# What the token leaves out of the hand-off, by name; everything else is in it. The ids: `vg judge`
+# takes the question id and the judged source's sid as arguments and checks them itself, and
+# every sid is a hash of its citation, whose printed fields are in the token. The status and the
+# reason a source has nothing to judge are the pipeline's account of the source, not evidence;
+# whether it has a context to judge is in the token, as its `context`. The reason also names the
+# cache root as spelled, so one database under two spellings would read as two.
+_NOT_HASHED = {Handoff: {"question_id"}, HandedSource: {"sid", "status", "unjudgeable"}}
+
+
+def _hashed(value):
+    """`value` as plain JSON data, minus `_NOT_HASHED`."""
+    if isinstance(value, tuple):
+        return [_hashed(v) for v in value]
+    if not is_dataclass(value):
+        return value
+    left_out = _NOT_HASHED.get(type(value), set())
+    return {f.name: _hashed(getattr(value, f.name)) for f in fields(value)
+            if f.name not in left_out}
+
+
+def context_token(handed: Handoff, sid: str) -> str:
+    """A short fingerprint of the hand-off a verifier was given to judge source `sid` from: all
+    of `handed` but what `_NOT_HASHED` names, and which source's block it was printed beside
+    (`[n/N]`). "" when the hand-off has nothing to judge on that source. `vg judge --context`
+    must hand it back.
+
+    `vg judge` reads the claim file as it is when judge runs, and nothing from the verifier said
+    what it had read. So a re-verify landing while a verifier worked (another run re-fetched the
+    page, and this one rebuilt the context from the new copy) left judge a copy it could stamp
+    and a context no verifier had seen, and the row rendered green on it. The token is how the
+    verifier says which hand-off it read. Longer than a sid, so the two are not mistaken for
+    each other.
+
+    It covers the hand-off as a whole, never a list of its fields. It used to list them, and
+    four fixes each found one the list had missed: the claim and the citation (a retry that
+    rewrote only the answer, or only a filing's date, kept the sid and the context), a query's
+    run (a re-run under a new definition prints a context that reads the same), the claim type
+    (it sets what the verifier is asked), and the claim's other sources (an adversarial claim's
+    verifier judges them together, so a retry that swapped one for a reprint of the other carried
+    an independence verdict onto a pair no verifier saw). Every source's block is in every
+    token, so any change to one refuses an outstanding verdict on each.
+
+    Serialized as JSON with sorted keys, where every string is quoted and escaped and every list
+    bracketed, so each field's extent is explicit. The fields used to be joined with NUL, which
+    json.loads keeps inside a string: text moved from a publisher into its author, across the
+    separator, left the token as it was. ensure_ascii also escapes a lone surrogate, which
+    json.loads keeps and strict UTF-8 refuses to encode."""
+    n = next((n for n, s in enumerate(handed.sources, 1) if s.sid == sid), None)
+    if n is None or handed.sources[n - 1].context is None:
         return ""
-    shown = (claim.question, claim.answer, source.url, source.publisher, source.author,
-             source.date or "", source.source_type, str(source.page or ""), source.snippet,
-             context)
-    if source.query is not None:
-        run = source.verification.query_run
-        if run is None:   # nothing says which calculation printed it, so nothing to name
-            return ""
-        # The root resolved, as the run check (`unjudgeable_query()`) compares it: the same
-        # database spelled another way (absolute for relative) keeps the token.
-        shown += (str(run.version), run.export_date, str(Path(run.cache_root).resolve()))
-    # surrogatepass: a claim file is read with json.loads, which keeps a lone surrogate that
-    # strict UTF-8 would refuse to encode, and a crash here would stop every verdict on it.
-    return hashlib.sha256("\x00".join(shown).encode("utf-8", "surrogatepass")).hexdigest()[:16]
+    shown = json.dumps({"handoff": _hashed(handed), "judged": n}, sort_keys=True,
+                       ensure_ascii=True, allow_nan=False, separators=(",", ":"))
+    return hashlib.sha256(shown.encode("ascii")).hexdigest()[:16]
 
 
-def wrong_context(claim, source, token: str, *, handoff: str) -> str:
-    """Why a verdict handed back with `token` is not about what this source's claim and context
-    are now, or "". Every verdict must carry a token: a query citation's too, since the run
-    check (`unjudgeable_query()`) ties it only to the run on disk when judge runs, not to the
-    one the verifier read. `handoff` is the `vg handoff` command, with the run's --data and
-    --cache, that prints what to judge.
+def wrong_context(handed: Handoff, sid: str, token: str, *, handoff: str) -> str:
+    """Why a verdict on `sid` handed back with `token` is not about the hand-off `handed` gives
+    now, or "". Every verdict must carry a token: a query citation's too, since the run check
+    (`unjudgeable_query()`) ties it only to the run on disk when judge runs, not to the one the
+    verifier read. `handoff` is the `vg handoff` command, with the run's --data and --cache,
+    that prints what to judge.
 
-    The token is agent-supplied and the context is read from a claim file loaded trusted, and
+    The token is agent-supplied and the hand-off is built from a claim file loaded trusted, and
     both are safe for the same reason: this can refuse, never grant. A forged token matching
-    the current context gets exactly what `vg judge` recorded before tokens existed, and any
+    the current hand-off gets exactly what `vg judge` recorded before tokens existed, and any
     other blocks the verdict. So the refusal never prints the current token: a verifier handed
     one could retry with it and record a verdict about text it has not read."""
     token = token.strip().lower()
     if not token:
         return (f"a verdict must name the context it judged: pass --context with the context "
                 f"token `{handoff}` printed beside this source")
-    if token != context_token(claim, source):
-        what = ("claim, citation or context" if source.query is None else
-                "claim, citation, context or query run (a re-run under another definition, "
-                "export or database changes the token even where its result reads the same)")
-        return (f"you were handed a different {what} (token {token}) from the one this source "
-                f"has now: it has changed since, so your verdict is about what the pipeline no "
-                f"longer shows. Run `{handoff}` again, read what it prints, and judge that")
+    if token != context_token(handed, sid):
+        source = next(s for s in handed.sources if s.sid == sid)
+        run = ("" if source.context is None or source.context.query_run is None else
+               ", its query run (a re-run under another definition, export or database changes "
+               "the token even where its result reads the same)")
+        return (f"you were handed a different hand-off (token {token}) from the one this claim "
+                f"gives now: the claim, this source's citation or context{run}, or another "
+                f"source printed with it has changed since, so your verdict is about what the "
+                f"pipeline no longer shows. Run `{handoff}` again, read what it prints, and "
+                f"judge that")
     return ""
 
 

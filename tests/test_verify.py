@@ -4122,16 +4122,19 @@ def _candidate_run(tmp_path):
     return data, cand, s
 
 
-def _ctx(run, sid, qid="q1"):
-    """`--context <token>` for the context the claim file gives `sid` now: what `vg handoff`
-    prints beside it, and what `vg judge` checks every verdict against."""
+def _ctx(run, sid, qid="q1", cache=None):
+    """`--context <token>` for `sid` in the hand-off the claim file gives now: what `vg handoff`
+    (with the run's --cache, when judge is given one) prints beside it, and what `vg judge`
+    checks every verdict against."""
     from vgpipe import judgments
-    from vgpipe.cli import load_claims
+    from vgpipe.cli import _apply_archive_rows, _cache_root, _handed, load_claims
 
-    claim = next(c for c in load_claims(Path(run) / "claims", trust_machine_fields=True)
+    run = Path(run)
+    root = _cache_root(run, None if cache is None else Path(cache))
+    claim = next(c for c in load_claims(run / "claims", trust_machine_fields=True)
                  if c.question_id == qid)
-    s = next(s for s in claim.sources if s.sid == sid)
-    return ["--context", judgments.context_token(claim, s)]
+    _apply_archive_rows(run, claim.sources, root)
+    return ["--context", judgments.context_token(_handed(claim, root), sid)]
 
 
 def _refetch_shared(data, s):
@@ -4229,7 +4232,8 @@ def test_an_explicit_cache_is_the_one_both_sides_use(tmp_path):
     (moved / "cache").mkdir(parents=True)
     (data / "cache").rename(moved / "cache")
 
-    res = CliRunner().invoke(cli.app, ["judge", "q1", s.sid, "supports", *_ctx(cand, s.sid),
+    res = CliRunner().invoke(cli.app, ["judge", "q1", s.sid, "supports",
+                                       *_ctx(cand, s.sid, cache=moved),
                                        "--data", str(cand), "--cache", str(moved)])
     assert res.exit_code == 0, res.output
     assert _unjudged(cand, cache=moved) == (0, 1, 0, 0)
@@ -5981,7 +5985,7 @@ def test_a_cache_root_holding_only_the_calaccess_database_is_accepted(tmp_path, 
     (root / "cache" / "calaccess").mkdir(parents=True)
     assert _vg("verify", "--data", run, "--cache", root)[0] == 0
     code, out = _vg("judge", "q1", q.sid, "supports", "--data", run, "--cache", root,
-                    *_ctx(run, q.sid))
+                    *_ctx(run, q.sid, cache=root))
     assert code == 0, out
     assert judgments.load(run, "q1")[q.sid].verdict == "supports"
 
