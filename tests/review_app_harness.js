@@ -86,11 +86,11 @@ class Doc {
   }
 }
 
-// A claim citing one url and snippet twice has two rows with one key; `index` picks among them.
-function row(doc, key, index = 0) {
-  const el = doc.querySelectorAll(".src").filter(e => e.dataset.key === key)[index];
-  if (!el) throw new Error("harness: no row " + key + " #" + index);
-  return el;
+// Every row has its own key (report.ROW_KEY_RE), so a key names exactly one.
+function row(doc, key) {
+  const found = doc.querySelectorAll(".src").filter(e => e.dataset.key === key);
+  if (found.length !== 1) throw new Error("harness: " + found.length + " rows keyed " + key);
+  return found[0];
 }
 
 async function main() {
@@ -114,14 +114,14 @@ async function main() {
 
   for (const a of input.actions || []) {
     if (a.do === "tick") {
-      const cb = row(doc, a.row, a.index).querySelector(".cb");
+      const cb = row(doc, a.row).querySelector(".cb");
       cb.checked = a.checked;
       doc.dispatch("change", cb);
     } else if (a.do === "key") {
-      doc.dispatch("click", row(doc, a.row, a.index));  // select the row, as a click does
+      doc.dispatch("click", row(doc, a.row));  // select the row, as a click does
       doc.dispatch("keydown", doc.body, {key: a.key});
     } else if (a.do === "flag") {
-      doc.dispatch("click", row(doc, a.row, a.index).querySelector(".flag"));
+      doc.dispatch("click", row(doc, a.row).querySelector(".flag"));
     } else if (a.do === "dismiss") {
       doc.getElementById("dismiss").click();
     } else if (a.do === "import") {
