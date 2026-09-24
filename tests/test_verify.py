@@ -1104,6 +1104,8 @@ def test_curl_import_drops_credentials(tmp_path):
 
     from vgpipe.access import parse_curl
 
+    # .gitleaks.toml allowlists "tokensecret" by exact value. Renaming it, or adding another
+    # fake credential here, needs a matching entry there or the secret-scan job fails.
     curl = (
         "curl --url 'https://example.gov/api/Search' "
         "-H 'accept: */*' -H 'content-type: application/json' "

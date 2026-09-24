@@ -5,7 +5,7 @@
 useDefault = true
 
 [allowlist]
-description = "Dummy credentials in tests that prove the curl importer strips them"
+description = "Dummy credentials in test_curl_import_drops_credentials (tests/test_verify.py)"
 # Matched against the extracted secret, so only this exact placeholder passes.
 regexes = [
   '''^tokensecret$''',
