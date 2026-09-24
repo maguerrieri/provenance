@@ -483,16 +483,35 @@ hand, in three parts:
 - move its verdict shard out of `judgments/`;
 - point any `derives_from` that names the old id at the new one.
 
-`vg build` renders every claim in `claims/`, so a claim left on a retired id still shows beside
-its replacement. A dependent still naming the old id goes to `human_review` with the input
-missing. Nothing in the pipeline moves a claim between ids.
+Nothing in the pipeline moves a claim between ids. A dependent still naming a retired id goes to
+`human_review` with the input missing.
 
-Nothing checks the rule yet: no command compares `claims/` with `questions.json` (#112). Until
-one does, every command exits 0 on a claim left on a retired id, and on a reused id. A reused id
-is worse than a leftover claim: its shard's verdicts apply to the new claim wherever it cites the
-same source, and they render green on a claim no verifier judged, because a verdict names only
-its source (#30). A `maps_from` still pending in a `questions.json`, declared and never applied,
-is never applied now: settle it by hand before anyone researches on those ids.
+**`vg build` and `vg status` are the rule's gate** (`questions.check()`, run by
+`cli._question_ids_fail()`). Each compares every claim with the question the run's
+`questions.json` holds for its id, and exits 1 on either break:
+- a claim on an id the set does not list: a retired id whose claim was left in `claims/`, which
+  would otherwise render beside its replacement;
+- a claim whose `question` differs from the text at its id, whitespace aside: a reworded or
+  reused id, or a claim that misquotes its question. On disk the two look alike, so both fail,
+  and the message gives the fix for each.
+
+Build renders nothing until both are fixed. Before the gate, `vg build` never read
+`questions.json`, and every command exited 0 on both. A `maps_from` still declared in the set is
+reported without failing: nothing applies it now, so no claim moves, and each is checked against
+the question at the id it sits on. Settle it and delete the key.
+
+Which `questions.json` is the run's is #8. Until a run declares it, the gate reads the run's own
+(`data/<candidate>/questions.json`, which `vg new-candidate` writes), else the data root's. A set
+that can't be read as one question per id fails and names every problem: not a list, an entry
+with no id or text, or one id given twice. Read as empty, it would report every claim as retired.
+Read as missing, it would check nothing. With no set at all, the gate says so and checks
+nothing.
+
+What the gate can't see is a reused id once the new question's research has replaced the old
+claim. The claim then matches the set, and the shard's old verdicts apply to it wherever it cites
+the same source. They render green on a claim no verifier judged, because a verdict names only
+its source (#30). The gate catches the reuse only while the old claim is still in `claims/`, so
+move a reworded or replaced question to a new id before anyone researches it.
 
 This rule replaced `vg remap`, which re-filed claims onto a renumbered question set (declared
 as `maps_from` in `questions.json`) and re-homed their verdicts, and `vg judgments --repair`,
@@ -507,8 +526,9 @@ Hardening it further cost more than it could ever save, and stable ids remove th
 
 What is left:
 - `maps_from` and `mapped_from` in a `questions.json`, and `previous_question` in a claim file,
-  still load; nothing writes them. `vg new-candidate` copies neither of the first two: they are
-  another run's history, and a new run has no earlier id space. `Claim` has no
+  still load; nothing writes them, and the gate reports a `maps_from` (above). `vg new-candidate`
+  copies neither of the first two: they are another run's history, and a new run has no earlier
+  id space. `Claim` has no
   `previous_question` field, so it is ignored on load and the next `vg verify` write-back drops
   it, as it always has (#85, closed with remap, since nothing writes it now).
 - A `judgments-backup/` that an interrupted re-home left behind still stops every command that
