@@ -556,7 +556,7 @@ def _top_contributor(root: Path, *, filer_id: str,
     between two donors. Pass another schedule to rank by that one, or "" for every schedule.
 
     A tie is every contributor within half a cent (TOLERANCE) of the top, listed whole however
-    many there are, in name order. A large tie is not refused: the whole set is a true answer
+    many there are, sorted by name as displayed (first name first), ignoring case. A large tie is not refused: the whole set is a true answer
     that reproduces, the detail says it is no single largest contributor, and a cap would be an
     arbitrary number turning that answer into a miss.
 
@@ -588,7 +588,7 @@ def _top_contributor(root: Path, *, filer_id: str,
     # Every contributor's total, not the first few: a tie is everyone at the top. Fetched with
     # LIMIT 4, five givers at the contribution limit came back as a four-way tie naming
     # whichever four SQLite picked, and that value reproduced. The names order equal totals, so
-    # the late-report check below reads them in one order too.
+    # the tie and the late-report check below read them in one order.
     groups = con.execute(f"{group} ORDER BY amt DESC, kl, kf", args).fetchall()
     row = groups[0] if groups else None
     if row is None:
@@ -604,22 +604,27 @@ def _top_contributor(root: Path, *, filer_id: str,
     top = float(row["amt"] or 0)
     tied = [r for r in groups if abs(float(r["amt"] or 0) - top) < TOLERANCE]
     names = [" ".join(x for x in (r["nf"], r["nm"]) if x).strip() for r in tied]
+    # Sorted as displayed, ignoring case. Each name is spelled as one of its group's rows,
+    # whichever SQLite reads, so a case-sensitive sort put "Rue ABBOT" before "Rue Aaron" or
+    # after it depending on that row, and `matches()` ignores case but not order.
+    listed = " | ".join(sorted(names, key=str.casefold))
     contenders = []
     if late:
         contenders = _could_change_ranking(groups, tied, top, late, label)
     con.close()
     if contenders and gated:
-        return _no_rows(f"{' | '.join(sorted(names))} lead{'s' if len(tied) == 1 else ''} "
+        more = f"; and {len(contenders) - 3} more" if len(contenders) > 3 else ""
+        return _no_rows(f"{listed} lead{'s' if len(tied) == 1 else ''} "
                         f"schedule A at ${top:,.0f}, but {_late_note(late)} could change the "
-                        f"ranking: {'; '.join(contenders[:3])} — not a settled ranking; pass "
-                        "form_type=A to rank schedule A alone", ["form_type=A"])
+                        f"ranking: {'; '.join(contenders[:3])}{more} — not a settled ranking; "
+                        "pass form_type=A to rank schedule A alone", ["form_type=A"])
     note = _late_note(late, checked_497, ", not counted — they " + (
         "could change the ranking" if contenders else "cannot change the ranking"))
     note = f"; {note}" if note else ""
     if len(tied) > 1:
         # ORDER BY ... LIMIT 1 makes an arbitrary pick among equals, and a verifier rightly
         # rejected a "largest contributor" that was really a two-way tie. Return the tie.
-        return QueryResult(value=" | ".join(sorted(names)), rows=len(tied),
+        return QueryResult(value=listed, rows=len(tied),
                            detail=f"{len(tied)}-WAY TIE at ${top:,.0f} in {label} gifts — not "
                                   "a single largest contributor; do not word this as one"
                                   + note)
@@ -657,7 +662,9 @@ def _could_change_ranking(groups: list[Any], tied: list[Any], top: float,
             owed.setdefault(k, []).append(a)
             lo[k] = -float("inf") if a is None else lo[k] + min(a, 0.0)
             hi[k] = float("inf") if a is None else hi[k] + max(a, 0.0)
-    leaders = {(r["kl"], r["kf"]) for r in tied}
+    # Ordered as the tie is, so the leaders who could move list in one order: as a set they
+    # listed by hash, which changes from one process to the next.
+    leaders = dict.fromkeys((r["kl"], r["kf"]) for r in tied)
     floor = min(lo[k] for k in leaders)
     could = [k for k in hi if k not in leaders and hi[k] > floor - TOLERANCE]
     if len(leaders) > 1:
