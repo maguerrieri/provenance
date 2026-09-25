@@ -487,12 +487,36 @@ def test_a_ranking_with_nothing_counted_is_a_miss_whatever_its_blank_gift_holds(
     amendment, it names no largest contributor; withdrawn, nothing is counted. Either way the
     ranking names nobody, so the filing is not one a person need open, and the miss stays one
     to retry rather than going to human_review."""
-    root = _blank_export(tmp_path, settled=False)
+    root = _blank_export(tmp_path / "alone", settled=False)
     result = queries.run("calaccess.top_contributor", {"filer_id": BLANK_FILER}, root)
     assert not result.found and result.omitted == [] and not result.unsettled
     v = verify_source(cited("calaccess.top_contributor", {"filer_id": BLANK_FILER},
                             "Tamsin Oyelaran"), root).verification
     assert v.status == "snippet_not_found"
+
+    # Beside a left-out gift with an amount it is named too: a person who restores Hollis's
+    # $900 as the leader has to see the gift of unknown size that could overturn it.
+    root = _blank_export(tmp_path / "beside", settled=False, more=True)
+    result = queries.run("calaccess.top_contributor", {"filer_id": BLANK_FILER}, root)
+    assert not result.found
+    assert unread(result.omitted) == [(BLANK_GAP, "A", 0.0, 0, 1),
+                                      (BLANK_MORE, "A", 900.0, 1, 0)]
+    v = verify_source(cited("calaccess.top_contributor", {"filer_id": BLANK_FILER},
+                            "Wren Hollis"), root).verification
+    assert v.status == "human_review"
+    assert BLANK_GAP in v.reason and BLANK_MORE in v.reason
+
+
+def test_a_reason_listing_a_share_of_unknown_size_first_does_not_call_the_rest_smaller():
+    """Shares with a gift of unknown size come first, so one cut off after them can hold more
+    stated money than any listed: the reason must not call it smaller."""
+    blank = [calaccess.UnrestatedSchedule(f"888470{i}", "A", 0, 1, unread=1)
+             for i in range(queries.UNSETTLED_SHOWN)]
+    stated = calaccess.UnrestatedSchedule("8884799", "A", 0, 1, amount=900.0, rows=1)
+    reason = queries.QueryResult(value="Ansel Veldt", omitted=blank + [stated]).unsettled
+    assert "and 1 more schedule(s), which `vg query` lists" in reason
+    assert "smaller shares" not in reason and "8884799" not in reason
+    assert "no largest contributor can be named" in reason
 
 
 def test_a_left_out_miss_still_names_the_schedules_that_count_the_gift(root):
