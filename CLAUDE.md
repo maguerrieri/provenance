@@ -1248,10 +1248,11 @@ Related traps in the same data:
   stated: leave it out of the sum *and* the count, and name it in the detail. Test for "is a
   number", not "is empty": CAST also reads `N/A` as 0.0 and `1,000` as 1.0. A stated `0` is
   the filer's figure and counts. `amount_sql()` is that test, and every query reads `AMOUNT`
-  through it: `ie_total` and the three receipt queries, from their v2. A total sums the stated
-  amounts and names what it left out. A rank cannot, because a gift of unknown size could make
-  anyone largest: while any gift on the schedule it ranks has no amount, `top_contributor` names no
-  largest contributor, only the stated leader as a lead to check. `vg calaccess contributions`
+  through it: `ie_total` and the three receipt queries, from their v2, and the receipt queries'
+  late-report check. A total sums the stated amounts and names what it left out. A rank cannot,
+  because a gift of unknown size could make anyone largest: while any gift on the schedule it
+  ranks has no amount, `top_contributor` names no largest contributor, only the stated leader
+  as a lead to check. `vg calaccess contributions`
   reads amounts the same way. It prints a blank as `blank` and any other unreadable amount as
   filed, and it gives such gifts their own `--top` slots after the ranked ones, since those
   are the gifts a total names as not counted. The IE listing prints a blank as `blank` but
@@ -1666,7 +1667,10 @@ A late entry counts as restated when a schedule-A row carries the same transacti
 cross-form key, `tran_base_sql()`), or when a 460 the filer has filed covers its dates, since
 that 460 had to restate it. Anything uncertain leaves it pending: a date that can't be read, or
 an amount that isn't a plain number (a blank, `$5,000` and `1,000` never pair with a stated
-`0` or `1`, as a CAST would pair them).
+`0` or `1`, as a CAST would pair them). The key reads amounts through `amount_sql()`, as the
+sums and the dedup do. It first had its own Python copy of that rule, which drifted at the
+edges (it stripped tabs and non-breaking spaces that `TRIM` keeps): two readings of one value,
+the trap in "A dedup reads a value the way the sum does".
 
 A late entry is held against every contributor it could be. That is `_could_be()`: one name's
 words all appear in the other's, whatever the case, punctuation or field. So "LAST, FIRST" in

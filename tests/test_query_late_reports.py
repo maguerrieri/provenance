@@ -352,6 +352,24 @@ def test_the_same_gift_on_both_forms_still_counts_once_without_a_460(tmp_path):
     assert run(root, "top_contributor").value == "Fernhollow Growers PAC"
 
 
+def test_a_late_gift_pairs_with_a_schedule_a_copy_only_as_the_dedup_reads_it(tmp_path):
+    """The restatement key reads amounts through amount_sql(), as the sums and DEDUPED_RECEIPTS
+    do. Its own Python copy of that rule stripped whitespace that TRIM keeps (here a vertical
+    tab), so a schedule-A copy the sum cannot read still "restated" the late gift: every
+    schedule counted the two as different gifts, while the default counted the late one as on
+    schedule A."""
+    root = build(tmp_path, ON_SCHEDULE_A
+                 + rcpt("A-100001", "Saltmarsh", "Tobiah", "2500\x0b", "A", date="9/18/2026")
+                 + rcpt("F496P3-100001", "Saltmarsh", "Tobiah", "2500", "F496P3", filing=F496,
+                        date="9/18/2026"))
+
+    every = run(root, "filer_total", form_type="")
+    assert every.value == 10500.0 and "1 more gift(s) with no readable amount" in every.note
+    total = run(root, "filer_total")
+    assert not total.found and total.value is None, total.note
+    assert "1 late-report entry ($2,500.00; filing 9990663)" in total.note, total.note
+
+
 def test_another_filers_460_restates_nothing_of_ours(tmp_path):
     root = build(tmp_path, ON_SCHEDULE_A,
                  late=s497("L-1", "Saltmarsh", "Tobiah", "700", date="11/1/2026"))
