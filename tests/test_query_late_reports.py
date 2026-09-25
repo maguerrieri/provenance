@@ -297,6 +297,26 @@ def test_a_late_name_filed_another_way_still_counts_against_her(tmp_path, last, 
     assert not her.found and "late-report entry" in her.note, her.note
 
 
+@pytest.mark.parametrize("also", [
+    "",
+    # seen first, "Ada Quennell" joined "Ada C Quennell" and never met "Ada B Quennell"
+    s497("L-0", "Quennell", "Ada C", "100", date="10/1/2026"),
+], ids=["two-names", "after-a-third-name"])
+def test_a_late_giver_filed_two_ways_is_held_as_one(tmp_path, also):
+    """Two $3,000 late gifts, as "Ada Quennell" and "Ada B Quennell", could be one giver's
+    $6,000, past the $5,000 leader. Neither name is on schedule A, so each was held only against
+    itself, and the ranking was said to be one they "cannot change"."""
+    root = build(tmp_path, ON_SCHEDULE_A,
+                 late=also + s497("L-1", "Quennell", "Ada", "3000")
+                 + s497("L-2", "Quennell", "Ada B", "3000", date="10/3/2026"))
+
+    got = run(root, "top_contributor")
+    assert not got.found, got.note
+    assert "Ada B Quennell ($0 on schedule-A, $6,000 late)" in got.note, got.note
+    named = run(root, "top_contributor", form_type="A")
+    assert named.value == "Fernhollow Growers PAC" and named.unsettled, named.note
+
+
 def test_one_giver_filed_two_ways_is_not_two_people(tmp_path):
     """Schedule A files her whole name in the last-name field, the late report splits it."""
     root = build(tmp_path, rcpt("A-1", "Odile Marwick", "", "3000", "A"),

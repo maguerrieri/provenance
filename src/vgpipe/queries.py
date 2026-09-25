@@ -900,25 +900,36 @@ def _could_change_ranking(groups: list[Any], tied: list[Any], top: float,
     Every contributor could end anywhere from their total plus every negative pending amount
     to it plus every positive one, as if no entry were a copy of another, and an unreadable
     amount could be anything. A late entry counts for every contributor it could be
-    (`_could_be`), and for a new one when it could be nobody here. Each of these only widens a
-    range, which only makes the answer refuse more often. The answer stands if nobody outside
-    the leaders could come within a cent of the lowest a leader could fall to, and no leader of
-    a tie could move.
+    (`_could_be`). A late name that could be nobody on the schedule is a giver of its own, and
+    every late entry that could be them counts for them too: names that could all be one giver
+    are each within the fullest of them, so that name's range holds all of their gifts. Each of
+    these only widens a range, which only makes the answer refuse more often. The answer stands
+    if nobody outside the leaders could come within a cent of the lowest a leader could fall
+    to, and no leader of a tie could move.
     """
     scheduled = {(g["kl"], g["kf"]): float(g["amt"] or 0) for g in groups}
     names = {(g["kl"], g["kf"]): " ".join(x for x in (g["nf"], g["nm"]) if x).strip()
              for g in groups}
     words = {(g["kl"], g["kf"]): _name_words(g["nm"], g["nf"]) for g in groups}
+    # Givers only the late reports name. Found before any entry is counted, so each is held
+    # against every late entry, not only those after it: counted as they came, "Ada Quennell"
+    # joined an earlier "Ada C Quennell" and never "Ada B Quennell", and a $3,000 gift under
+    # each of her names fell short of a $5,000 leader she might pass.
+    on_schedule = list(words.values())
+    for e in late:
+        mine = _name_words(e["naml"], e["namf"])
+        if not any(_could_be(mine, w) for w in on_schedule):
+            words.setdefault(("", mine), mine)
+            names.setdefault(("", mine), " ".join(x for x in (e["namf"], e["naml"]) if x)
+                             .strip())
     lo = dict(scheduled)
     hi = dict(scheduled)
     owed: dict[Any, list[float | None]] = {}
     entries: dict[Any, list[dict[str, Any]]] = {}
     for e in late:
         mine = _name_words(e["naml"], e["namf"])
-        matched = [k for k, w in words.items() if _could_be(mine, w)] or [("", mine)]
         a = e["amt"]
-        for k in matched:
-            names.setdefault(k, " ".join(x for x in (e["namf"], e["naml"]) if x).strip())
+        for k in [k for k, w in words.items() if _could_be(mine, w)]:
             lo.setdefault(k, 0.0)
             hi.setdefault(k, 0.0)
             owed.setdefault(k, []).append(a)
