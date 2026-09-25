@@ -6506,7 +6506,7 @@ QUERY_DEFINITIONS = {
     # it does not run; then the left-out-schedule flag beside them; then the flag for rows a
     # later cover reattributed (`reattributed`), which verification acts on and which changes
     # no value, on a total and on a miss
-    "calaccess.ie_total": (2, "f5f91351acea"),
+    "calaccess.ie_total": (2, "2f9fc985b53d"),
 }
 
 

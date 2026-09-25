@@ -30,6 +30,7 @@ STANCE = "8890304"     # a0 supports her; a1's cover opposes her
 UNREAD = "8890305"     # moved like MOVED, but its amount is blank: never counted
 ORPHAN = "8890306"     # the only filing naming Wren Larkspur, and a1 names no candidate
 BACK = "8890307"       # a0 names Tamsin Juniper, a1 another candidate, a2 her again
+NOSIDE = "8890308"     # a0 names Rook Ashdown with a blank stance; a1 supports them
 
 IES = ("FILING_ID\tAMEND_ID\tTRAN_ID\tLINE_ITEM\tAMOUNT\tEXP_DATE\tEXPN_DSCR\n"
        f"{MOVED}\t0\tIE1\t1\t3000\t3/2/2026 12:00:00 AM\tmailer\n"
@@ -39,12 +40,14 @@ IES = ("FILING_ID\tAMEND_ID\tTRAN_ID\tLINE_ITEM\tAMOUNT\tEXP_DATE\tEXPN_DSCR\n"
        f"{STANCE}\t0\tIE4\t1\t500\t3/6/2026 12:00:00 AM\tdoor hangers\n"
        f"{UNREAD}\t0\tIE5\t1\t\t3/12/2026 12:00:00 AM\tphone bank\n"
        f"{ORPHAN}\t0\tIE6\t1\t900\t3/10/2026 12:00:00 AM\tyard signs\n"
-       f"{BACK}\t0\tIE7\t1\t250\t3/11/2026 12:00:00 AM\tpostcards\n")
+       f"{BACK}\t0\tIE7\t1\t250\t3/11/2026 12:00:00 AM\tpostcards\n"
+       f"{NOSIDE}\t0\tIE8\t1\t400\t3/13/2026 12:00:00 AM\tbanners\n")
 
 ONDINE = ("Fairweather", "Ondine")
 CASPIAN = ("Brightwater", "Caspian")
 WREN = ("Larkspur", "Wren")
 TAMSIN = ("Juniper", "Tamsin")
+ROOK = ("Ashdown", "Rook")
 NOBODY = ("", "")
 
 
@@ -62,6 +65,7 @@ COVER_ROWS = [
     _cover(ORPHAN, "0", WREN, "S"), _cover(ORPHAN, "1", NOBODY, ""),
     _cover(BACK, "0", TAMSIN, "S"), _cover(BACK, "1", CASPIAN, "S"),
     _cover(BACK, "2", TAMSIN, "S"),
+    _cover(NOSIDE, "0", ROOK, ""), _cover(NOSIDE, "1", ROOK, "S"),
 ]
 
 
@@ -183,6 +187,7 @@ def test_a_candidate_whose_only_rows_were_left_out_is_a_miss_naming_them(root):
     result = queries.run("calaccess.ie_total", ie(WREN), root)
     assert not result.found and result.value is None
     assert "1 more whose filing's latest cover names another candidate" in result.note
+    assert "($900.00 between them)" in result.note, "the figure a researcher would cite"
     assert "NO MATCH" not in result.note, "there was a match: it was left out"
     assert left_out(result) == [(ORPHAN, 900.0, 1)], "carried, so `vg query` can list them all"
     assert ORPHAN in result.unsettled and "$900.00" in result.unsettled
@@ -255,6 +260,16 @@ def test_the_listing_shows_the_row_under_the_candidate_its_own_cover_named(root)
     assert orphan["FILING_ID"] == ORPHAN and orphan["reattributed"] is not None
     assert {r["FILING_ID"] for r in calaccess.independent_expenditures(
         root, "Brightwater", first="Caspian")} == {MOVED, UNREAD}
+
+
+def test_a_stance_no_total_asks_for_is_not_a_flip(root):
+    """The listing marks a stance flip only where ie_total leaves the row out. A blank own
+    stance is none a total asks for, so every total that could count the row does, and a mark
+    would name a filing no flag holds open."""
+    [row] = calaccess.independent_expenditures(root, "Ashdown", first="Rook")
+    assert row["FILING_ID"] == NOSIDE and row["reattributed"] is None
+    for stance in ("", "support", "oppose"):
+        assert not queries.run("calaccess.ie_total", ie(ROOK, stance=stance), root).reattributed
 
 
 def test_the_cli_listing_marks_the_row_and_says_what_it_means(root):
