@@ -6488,15 +6488,15 @@ _NOT_A_DEFINITION = {
 
 # name -> (version, fingerprint). See test_a_query_definition_cannot_change_unnoticed.
 QUERY_DEFINITIONS = {
-    "calaccess.contributor_total": (6, "38a5333f0cdc"),
-    "calaccess.filer_total": (6, "6e9d2eae3574"),
-    "calaccess.top_contributor": (6, "406d81691c56"),
+    "calaccess.contributor_total": (6, "f37ab574741a"),
+    "calaccess.filer_total": (6, "f1743dc041fa"),
+    "calaccess.top_contributor": (6, "f1a079c22860"),
     # moved without a bump: amount_sql() is ie_total's own amount expression, extracted
     # unchanged, and DEDUPED_RECEIPTS, which it does not read, changed beside it; then the
     # unsettled-amendment flag and its shared helpers, which change no value it returns; then
     # _schedule(), the receipt queries' schedule filter, which it does not call; then the
     # late-report helpers and the Form 497 load, which it does not run
-    "calaccess.ie_total": (2, "1ded5136f61b"),
+    "calaccess.ie_total": (2, "04a49a997c31"),
 }
 
 

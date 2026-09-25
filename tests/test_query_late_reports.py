@@ -217,6 +217,28 @@ def test_every_schedule_names_the_form_497_gifts_it_leaves_out(tmp_path):
     assert [r.filing_id for r in every.late] == [int(F497)], every.unsettled
 
 
+def test_every_schedule_holds_a_form_496_row_her_total_did_not_sum(tmp_path):
+    """Every schedule sums the Form 496 Part 3 rows, but one contributor's total sums only
+    those filed under the name it matches. Her $9,000 gift with the whole name in the
+    last-name field was dropped as "already summed", and her $3,000 verified green."""
+    root = build(tmp_path, ON_SCHEDULE_A
+                 + rcpt("F496P3-8", "Odile Marwick", "", "9000", "F496P3", filing=F496,
+                        date="9/18/2026")
+                 + rcpt("F496P3-9", "Marwick", "Odile", "400", "F496P3", filing=F496,
+                        date="9/19/2026"))
+
+    her = run(root, "contributor_total", contributor="Marwick", contributor_first="Odile",
+              form_type="")
+    assert her.value == 3400.0, her.note
+    # held for the row filed another way; the one filed as the sum matches it is in the figure
+    assert [(r.filing_id, r.amount) for r in her.late] == [(int(F496), 9000.0)], her.unsettled
+    assert not run(root, "contributor_total", contributor="Marwick",
+                   contributor_first="Odile").found
+    # a filer's figure sums both rows, so neither is held
+    every = run(root, "filer_total", form_type="")
+    assert every.value == 17400.0 and not every.late, every.unsettled
+
+
 def test_a_blank_late_amount_is_not_restated_by_a_zero(tmp_path):
     """Grouped by CAST, a blank reads as 0 and paired with a schedule-A row of "0"."""
     root = build(tmp_path, ON_SCHEDULE_A

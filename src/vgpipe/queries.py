@@ -541,15 +541,17 @@ def _could_be(a: frozenset[str], b: frozenset[str]) -> bool:
     return a <= b or b <= a
 
 
-def _late_reports(con: Any, filer_id: str, form_type: str, last: str = "",
-                  first: str = "") -> list[dict[str, Any]]:
+def _late_reports(con: Any, filer_id: str, form_type: str, last: str = "", first: str = "",
+                  who: str = "", who_args: list[Any] | None = None) -> list[dict[str, Any]]:
     """The pending late entries a result leaves out, for one contributor when `last` is given.
+    `who` and `who_args` are the name filter the result's sum runs (a condition on `r`).
 
-    For schedule A, every pending entry. For every schedule (""), the Form 497 entries only:
-    that sum already holds the Form 496 Part 3 rows. For any other schedule, none, and nothing
-    is read. For A or "", a database that cannot read Form 497 cannot say none is pending, so
-    it refuses like a degraded one does, whether or not the schedule was named: a figure it
-    could not check would otherwise verify green (`QueryResult.unsettled`).
+    For schedule A, every pending entry. For every schedule (""), the Form 497 entries, and the
+    Form 496 Part 3 ones the sum's name filter does not take: that sum holds the rest. For any
+    other schedule, none, and nothing is read. For A or "", a database that cannot read Form 497
+    cannot say none is pending, so it refuses like a degraded one does, whether or not the
+    schedule was named: a figure it could not check would otherwise verify green
+    (`QueryResult.unsettled`).
     """
     from . import calaccess
 
@@ -562,10 +564,16 @@ def _late_reports(con: Any, filer_id: str, form_type: str, last: str = "",
     # A stated $0 changes no total and moves no one in a ranking, so it holds nothing.
     late = [e for e in _pending_late(con, filer_id) if e["amt"] != 0]
     if last:
-        who = _name_words(last, first)
-        late = [e for e in late if _could_be(_name_words(e["naml"], e["namf"]), who)]
+        theirs = _name_words(last, first)
+        late = [e for e in late if _could_be(_name_words(e["naml"], e["namf"]), theirs)]
     if not schedule:
-        late = [e for e in late if "F496P3" not in e["forms"]]
+        # A contributor's total sums only the Form 496 Part 3 rows filed under the name it
+        # matches, and a late entry is held against every name it could be: one filed another
+        # way ("DOE JANE" whole in the last-name field) is a gift that sum leaves out. Asked of
+        # the sum's own filter, so the two can't disagree about a name.
+        late = [e for e in late if "F496P3" not in e["forms"] or not con.execute(
+            f"SELECT 1 FROM (SELECT ? AS CTRIB_NAML, ? AS CTRIB_NAMF) r WHERE 1{who}",
+            [e["naml"], e["namf"], *(who_args or [])]).fetchone()]
     return late
 
 
@@ -645,12 +653,12 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
     gated, form_type = _gate(form_type)
     schedule, schedule_args, label = _schedule(form_type)
     con = calaccess.connect_citable(root)
-    late = _late_reports(con, filer_id, form_type, contributor, contributor_first)
     who = " AND UPPER(TRIM(r.CTRIB_NAML)) = UPPER(TRIM(?))"
     who_args: list[Any] = [contributor]
     if contributor_first:
         who += " AND UPPER(TRIM(COALESCE(r.CTRIB_NAMF,''))) = UPPER(TRIM(?))"
         who_args.append(contributor_first)
+    late = _late_reports(con, filer_id, form_type, contributor, contributor_first, who, who_args)
     args: list[Any] = [str(filer_id)] + who_args + schedule_args
     inner = DEDUPED_RECEIPTS.format(extra=who + schedule)
     # One pass for the sum, both counts and the filings: the dedup is the expensive part. The
