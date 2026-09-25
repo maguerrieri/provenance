@@ -8,7 +8,10 @@ none of them needs an entry in .gitleaks.toml.
 
 from __future__ import annotations
 
+import ast
 import json
+import re
+from pathlib import Path
 
 import pytest
 
@@ -200,6 +203,83 @@ def test_run_refuses_a_login_that_a_param_puts_in_the_url():
     r = Recipe(id="bad", method="GET", url="https://{host}/api", params=["host"])
     with pytest.raises(ValueError, match="username or password"):
         run(r, {"host": f"{USER}:{PASSWORD}@portal.example"})
+
+
+# #158. `\uff20` is the fullwidth `@`, which NFKC reads as `@`, so `urlsplit()` refuses this
+# host, and its error quotes the whole netloc, login included.
+UNREADABLE_LOGIN = "user:fake\uff20canary@portal.example"
+
+
+def _refused_unrepeated(call, where: str) -> None:
+    with pytest.raises(ValueError, match=f"{re.escape(where)} can't be parsed") as e:
+        call()
+    assert not re.search("fake|canary|\uff20|portal", str(e.value)), str(e.value)
+
+
+@pytest.mark.parametrize("curl, where", [
+    (f"curl 'https://{UNREADABLE_LOGIN}/api'", "the curl command's URL"),
+    (f"curl --url 'https://{UNREADABLE_LOGIN}/api'", "the curl command's URL"),
+    # The stdlib has other errors for a host it can't read, and one quotes the host.
+    ("curl 'https://user:fake@[canary]/api'", "the curl command's URL"),
+    (f"curl -H 'Referer: https://{UNREADABLE_LOGIN}/' https://x.example/",
+     "the referer header's URL"),
+    (f"curl -e 'https://{UNREADABLE_LOGIN}/' https://x.example/", "the referer header's URL"),
+    (f"curl -H 'Origin: https://{UNREADABLE_LOGIN}' https://x.example/", "the origin header's URL"),
+])
+def test_a_url_whose_host_cant_be_parsed_is_refused_without_repeating_it(curl, where):
+    _refused_unrepeated(lambda: parse_curl(curl), where)
+
+
+@pytest.mark.parametrize("recipe, params, where", [
+    (Recipe(id="bad", method="GET", url=f"https://{UNREADABLE_LOGIN}/api"), {}, "its URL"),
+    (Recipe(id="bad", method="GET", url="https://{host}/api", params=["host"]),
+     {"host": UNREADABLE_LOGIN}, "its URL"),
+    (Recipe(id="bad", method="GET", url="https://x.example/",
+            headers={"Referer": f"https://{UNREADABLE_LOGIN}/"}), {}, "its referer header's URL"),
+    (Recipe(id="bad", method="GET", url="https://x.example/",
+            headers={"Origin": f"https://{UNREADABLE_LOGIN}"}), {}, "its origin header's URL"),
+])
+def test_run_refuses_a_url_whose_host_cant_be_parsed_without_repeating_it(recipe, params, where,
+                                                                          monkeypatch):
+    sent = []
+    monkeypatch.setattr(access.httpx, "request", lambda *a, **kw: sent.append(a))
+    _refused_unrepeated(lambda: run(recipe, params), f"recipe 'bad': {where}")
+    assert not sent
+
+
+def test_the_commands_refuse_a_url_whose_host_cant_be_parsed_without_repeating_it(tmp_path,
+                                                                                   monkeypatch):
+    """What a person sees: the refusal is printed, and a terminal can be logged."""
+    from typer.testing import CliRunner
+
+    from vgpipe import cli
+
+    reg = tmp_path / "access"
+    reg.mkdir()
+    (reg / "x.example.yaml").write_text(
+        "recipes:\n  - {id: r, method: GET, url: 'https://{host}/api', params: [host]}\n")
+    monkeypatch.setattr(access, "REGISTRY", reg)
+    monkeypatch.setattr(access.httpx, "request", lambda *a, **kw: pytest.fail("sent"))
+    paste = tmp_path / "paste.txt"
+    paste.write_text(f"curl 'https://{UNREADABLE_LOGIN}/api'\n")
+    for args in (["source-import-curl", str(paste)],
+                 ["source-access", "x.example", "--run-recipe", "r",
+                  "--param", f"host={UNREADABLE_LOGIN}"]):
+        r = CliRunner().invoke(cli.app, args)
+        assert r.exit_code == 1 and "can't be parsed" in r.output, r.output
+        assert not re.search("fake|canary|\uff20", r.output), r.output
+    assert [p.name for p in reg.iterdir()] == ["x.example.yaml"]
+
+
+def test_every_url_from_a_paste_or_a_recipe_is_split_where_its_error_is_replaced():
+    """A split anywhere else raises the stdlib's error, which quotes the netloc (#158).
+    `_norm_host` reads a host a person typed, or a URL `parse_curl` has already split."""
+    tree = ast.parse(Path(access.__file__).read_text())
+    splits = [(f.name, node.func.id) for f in ast.walk(tree) if isinstance(f, ast.FunctionDef)
+              for node in ast.walk(f)
+              if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+              and node.func.id in ("urlsplit", "urlparse")]
+    assert sorted(splits) == [("_norm_host", "urlsplit"), ("_split", "urlsplit")]
 
 
 def test_run_allows_a_hand_added_header_that_is_not_a_credential(monkeypatch):

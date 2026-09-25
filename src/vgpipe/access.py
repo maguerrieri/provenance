@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from itertools import pairwise
 from pathlib import Path
-from urllib.parse import unquote_plus, urlparse, urlsplit, urlunsplit
+from urllib.parse import SplitResult, unquote_plus, urlsplit, urlunsplit
 
 import httpx
 import yaml
@@ -64,9 +64,24 @@ def credential_header(name: str) -> bool:
     return bool(_CREDENTIAL_HEADER.search(name.strip().lower()))
 
 
-def _has_login(url: str) -> bool:
+def _split(url: str, where: str) -> SplitResult:
+    """`urlsplit(url)` for a URL from a paste or a recipe, refused without repeating it.
+
+    The stdlib's error for a host it can't read quotes the whole netloc, login included: a
+    fullwidth `@` (U+FF20) in a password reads as `@` once normalized, and the refusal of
+    `user:pass<U+FF20>x@host` printed all of it (#158). `where` names the URL instead ("the
+    referer header's URL"). Every split of such a URL is made here, and the `try` holds the
+    split alone: what a caller reads from the parts raises refusals of its own."""
+    try:
+        return urlsplit(url)
+    except ValueError:
+        raise ValueError(f"{where} can't be parsed, so it can't be checked for a "
+                         "credential") from None
+
+
+def _has_login(url: str, where: str) -> bool:
     """A username or password in the URL itself: basic auth by another route."""
-    return "@" in urlparse(url).netloc
+    return "@" in _split(url, where).netloc
 
 
 # Parameter names need a rule of their own. In a header name, `sess`, `auth`, `pass` and `pin`
@@ -144,13 +159,10 @@ def _value_names(value: str) -> tuple[str, ...]:
     its names listed twice, and a 130-character paste ran for minutes."""
     if (fields := _json_container(value)) is not None:
         return tuple(_json_names(fields))
-    try:
-        if ("?" in value or "#" in value or value.startswith("/")
-                or urlsplit(value).scheme in ("http", "https")):
-            return tuple(_url_param_names(value))
-    except ValueError:
-        raise ValueError("a parameter holds a URL that can't be parsed, so it can't be "
-                         "checked for a credential") from None
+    where = "a URL in a parameter"
+    if ("?" in value or "#" in value or value.startswith("/")
+            or _split(value, where).scheme in ("http", "https")):
+        return tuple(_url_param_names(value, where))
     # Pairs only with an `&`: a lone `name=value` is too often base64 with its padding.
     if "&" in value and "=" in value:
         return tuple(_pair_names(value))
@@ -172,9 +184,9 @@ def _pair_names(text: str) -> list[str]:
     return list(names)
 
 
-def _url_param_names(url: str) -> list[str]:
+def _url_param_names(url: str, where: str) -> list[str]:
     """The query, the fragment, and the `;` parameters of each path segment."""
-    parts = urlsplit(url)
+    parts = _split(url, where)
     names = _pair_names(parts.query) + _pair_names(parts.fragment)
     for segment in parts.path.split("/"):
         names += _pair_names(segment.partition(";")[2])
@@ -233,8 +245,9 @@ def _credential_params(url: str, headers: dict[str, str], body: str | None) -> l
     for a body or value that can't be read."""
     content_type = next((v for k, v in headers.items() if k.lower() == "content-type"), "")
     try:
-        found = [("its URL", _url_param_names(url))]
-        found += [(f"its {k.lower()} header", _url_param_names(v))
+        found = [("its URL", _url_param_names(url, "its URL"))]
+        found += [(f"its {k.lower()} header",
+                   _url_param_names(v, f"its {k.lower()} header's URL"))
                   for k, v in headers.items() if k.lower() in _URL_HEADERS]
         if body:
             found.append(("its body", _body_param_names(body, content_type)))
@@ -245,10 +258,10 @@ def _credential_params(url: str, headers: dict[str, str], body: str | None) -> l
     return [f"{where} ({shown})" for where, names in found if (shown := _credential_names(names))]
 
 
-def _page_only(url: str) -> str:
+def _page_only(url: str, where: str) -> str:
     """A URL without its query, fragment, or `;` parameters in any path segment
     (`/app;jsessionid=…/search`), which is where a session id rides in a page's URL."""
-    parts = urlsplit(url)
+    parts = _split(url, where)
     return urlunsplit((parts.scheme, parts.netloc, re.sub(r";[^/]*", "", parts.path), "", ""))
 
 
@@ -287,7 +300,7 @@ class SourceAccess:
 def _norm_host(host_or_url: str) -> str:
     h = host_or_url.strip()
     if "://" in h:
-        h = urlparse(h).hostname or h
+        h = urlsplit(h).hostname or h
     h = h.lower()
     return h[4:] if h.startswith("www.") else h
 
@@ -321,11 +334,18 @@ def find(host_or_url: str, registry: Path | None = None) -> SourceAccess | None:
 def run(recipe: Recipe, params: dict[str, str], *, timeout: float = 45.0) -> httpx.Response:
     """Execute a recipe. Credential headers and parameters are refused, not stripped: a
     recipe that needs one is describing a manual retrieval and should be recorded as such."""
+    def has_login(url: str, where: str) -> bool:
+        try:
+            return _has_login(url, where)
+        except ValueError as e:
+            raise ValueError(f"recipe {recipe.id!r}: {e}") from None
+
     bad = sorted(k for k in recipe.headers if credential_header(k))
     if bad:
         raise ValueError(f"recipe {recipe.id!r} carries credential headers ({', '.join(bad)}); "
                          "record it as access: manual instead")
-    if any(_has_login(v) for k, v in recipe.headers.items() if k.lower() in _URL_HEADERS):
+    if any(has_login(v, f"its {k.lower()} header's URL")
+           for k, v in recipe.headers.items() if k.lower() in _URL_HEADERS):
         raise ValueError(f"recipe {recipe.id!r} puts a username or password in a header's URL; "
                          "record it as access: manual instead")
     missing = [p for p in recipe.params if p not in params]
@@ -340,7 +360,7 @@ def run(recipe: Recipe, params: dict[str, str], *, timeout: float = 45.0) -> htt
 
     url = fill(recipe.url)
     # Checked after filling: a param can land in the host part too.
-    if _has_login(url):
+    if has_login(url, "its URL"):
         raise ValueError(f"recipe {recipe.id!r} puts a username or password in its URL; "
                          "record it as access: manual instead")
     body = fill(recipe.body) if recipe.body else None
@@ -459,12 +479,12 @@ def parse_curl(text: str) -> dict:
             dropped.append(name)
         elif name not in SAFE_HEADERS:
             unknown.append(name)
-        elif name in _URL_HEADERS and _has_login(value):
+        elif name in _URL_HEADERS and _has_login(value, f"the {name} header's URL"):
             raise ValueError(f"the {name} header carries a username or password. {_MANUAL}")
         elif name == "referer":
             # The URL of the page the request came from, and a session id can ride in that
             # page's query or `;jsessionid=` parameters. The page itself is what a site checks.
-            headers[name] = _page_only(value)
+            headers[name] = _page_only(value, "the referer header's URL")
         else:
             headers[name] = value
 
@@ -503,10 +523,10 @@ def parse_curl(text: str) -> dict:
     if len(urls) > 1:
         raise ValueError(f"{len(urls)} URLs in the curl command; import one request at a time")
     url = urls[0]
-    parts = urlparse(url)
+    parts = _split(url, "the curl command's URL")
     if parts.scheme not in ("http", "https") or not parts.hostname:
         raise ValueError("the curl command's URL is not an absolute http(s) URL")
-    if _has_login(url):
+    if _has_login(url, "the curl command's URL"):
         raise ValueError(f"the URL carries a username or password. {_MANUAL}")
     try:
         found = _credential_params(url, headers, body)
