@@ -177,14 +177,20 @@ def test_stance_decides_which_side_a_row_is_on(root):
 def test_a_candidate_whose_only_rows_were_left_out_is_a_miss_naming_them(root):
     """The update whose later cover names no candidate: its rows reach no total, so the
     candidate it was about gets a miss. A miss never verifies, and it must say why, or it
-    reads as "nobody spent on this candidate"."""
+    reads as "nobody spent on this candidate". It goes to a person, as a receipt query's miss
+    on a left-out schedule does: no retry of these parameters reproduces a figure, and only
+    the filing says which cover is right."""
     result = queries.run("calaccess.ie_total", ie(WREN), root)
     assert not result.found and result.value is None
-    assert ORPHAN in result.note and "$900.00" in result.note
-    assert calaccess.filing_url(ORPHAN) in result.note
+    assert "1 more whose filing's latest cover names another candidate" in result.note
+    assert "NO MATCH" not in result.note, "there was a match: it was left out"
+    assert left_out(result) == [(ORPHAN, 900.0, 1)], "carried, so `vg query` can list them all"
+    assert ORPHAN in result.unsettled and "$900.00" in result.unsettled
+    assert calaccess.filing_url(ORPHAN) in result.unsettled
 
     v = verify_source(cited(ie(WREN), "900"), root).verification
-    assert v.status != "verified" and ORPHAN in v.reason
+    assert v.status == "human_review" and ORPHAN in v.reason
+    assert v.reason.count(calaccess.filing_url(ORPHAN)) == 1, "named once, not in the note too"
 
 
 def test_latest_means_the_last_amendment_not_any_later_one(root):
@@ -235,10 +241,15 @@ def test_the_listing_shows_the_row_under_the_candidate_its_own_cover_named(root)
     assert (moved["CAND_NAMF"], moved["CAND_NAML"], moved["stance"]) == (
         "Ondine", "Fairweather", "support"), "listed as its own amendment's cover has it"
     assert moved["reattributed"].latest == "'Caspian Brightwater' (support)"
+    assert moved["reattributed"].own == "'Ondine Fairweather' (support)"
     assert by_id[UNNAMED]["reattributed"].latest == ""
     assert by_id[SETTLED]["reattributed"] is None
-    assert by_id[STANCE]["reattributed"] is None, "listed once, as the latest cover has it"
-    assert by_id[STANCE]["stance"] == "oppose"
+    # Listed once, under the latest cover, since the oppose total counts it. Still marked:
+    # ie_total(stance=support) flags this filing, and the listing must agree about it.
+    stance = by_id[STANCE]
+    assert stance["stance"] == "oppose"
+    assert (stance["reattributed"].own, stance["reattributed"].latest) == (
+        "'Ondine Fairweather' (support)", "'Ondine Fairweather' (oppose)")
 
     [orphan] = calaccess.independent_expenditures(root, "Larkspur", first="Wren")
     assert orphan["FILING_ID"] == ORPHAN and orphan["reattributed"] is not None
@@ -250,9 +261,13 @@ def test_the_cli_listing_marks_the_row_and_says_what_it_means(root):
     out = plain(CliRunner().invoke(cli.app, [
         "calaccess", "independent-expenditures", "Fairweather", "--first", "Ondine",
         "--cache", str(root)]).output)
-    assert f"{MOVED}: a1 has none; a1's cover names 'Caspian Brightwater' (support)" in out
-    assert f"{UNNAMED}: a1 has none; a1's cover names no candidate" in out
-    assert "3 row(s) are listed under the candidate their own amendment's cover named" in out
+    own = "a0's cover names 'Ondine Fairweather' (support)"
+    assert f"{MOVED}: a1 has none; {own}; a1's names 'Caspian Brightwater' (support)" in out
+    assert f"{UNNAMED}: a1 has none; {own}; a1's names no candidate" in out
+    assert f"{STANCE}: a1 has none; {own}; a1's names 'Ondine Fairweather' (oppose)" in out
+    assert "4 row(s) have an earlier cover naming this candidate" in out
+    assert "No total for this candidate counts them" not in out, (
+        "not true of the stance flip, which the oppose total counts")
 
 
 def test_a_database_without_cover_amend_ids_says_the_listing_cannot_check(tmp_path):
@@ -285,3 +300,44 @@ def test_vg_query_warns_and_lists_every_filing_left_out(root, monkeypatch):
     assert "Will not verify" in out
     assert all(out.count(f"filing {u.filing_id}'s rows") == 1 for u in shares), (
         "every filing, each once")
+
+
+def test_a_miss_lists_every_filing_its_reason_leaves_to_vg_query(root, monkeypatch):
+    """A miss's reason names the largest few and says `vg query` lists the rest, so the miss
+    path of `vg query` must, or the pointer leads nowhere."""
+    shares = [calaccess.Reattributed(f"889050{i}", 0, 1, "", amount=1000.0 - i, rows=1)
+              for i in range(queries.UNSETTLED_SHOWN + 2)]
+    miss = queries.QueryResult(value=None, found=False, reattributed=shares,
+                               detail="no support-stance expenditures counted; 7 more whose "
+                                      "filing's latest cover names another candidate, the "
+                                      "other stance or none, not counted")
+    monkeypatch.setattr(queries, "run", lambda name, params, root: miss)
+    res = CliRunner().invoke(cli.app, ["query", "calaccess.ie_total", "--param",
+                                       "candidate_last=Larkspur", "--param", "first=Wren",
+                                       "--cache", str(root)])
+    out = plain(res.output)
+    assert res.exit_code == 1 and "which `vg query` lists" in out
+    assert "nothing counted" in out and "Not a finding" in out
+    assert all(out.count(f"filing {u.filing_id}'s rows") == 1 for u in shares), (
+        "every filing, each once")
+
+
+def test_a_short_reason_claims_no_more_filings():
+    """The count of filings past the shown few was tested for truthiness, and fewer than
+    UNSETTLED_SHOWN made it negative: every one-filing reason said "and -4 more filing(s)"."""
+    one = calaccess.Unrestated("8890601", 0, 1, amount=10.0, rows=1)
+    moved = calaccess.Reattributed("8890602", 0, 1, "", amount=10.0, rows=1)
+    for result in (queries.QueryResult(value=1.0, unrestated=[one]),
+                   queries.QueryResult(value=1.0, reattributed=[moved])):
+        assert "more filing" not in result.unsettled, result.unsettled
+
+
+def test_a_stance_code_is_named_only_as_the_total_reads_it():
+    """ie_total's test does not trim the stance code, so "S " is not support to it. Calling it
+    support would make the cover that kept a row out read as the one the total asked for."""
+    assert calaccess.cover_names("Fairweather", "Ondine", "S") == "'Ondine Fairweather' (support)"
+    assert calaccess.cover_names("Fairweather", "Ondine", "S ") == (
+        "'Ondine Fairweather' (stance 'S ')")
+    assert calaccess.cover_names("Fairweather", "Ondine", "") == (
+        "'Ondine Fairweather' (no stance)")
+    assert calaccess.cover_names("", " ", "S") == ""

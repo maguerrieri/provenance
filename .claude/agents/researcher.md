@@ -170,8 +170,8 @@ is the exception: hand the claim on with `notes` naming the filings the warning 
 person to open.
 
 If it says **"nothing counted"** and **"Not a finding"**, every row matching your parameters
-that states an amount is on such a left-out schedule. The export has the gift; only the filing
-says whether it stands. It is not a misspelled name, so don't try other spellings or a mirror.
+that states an amount is on such a left-out schedule, or (`ie_total`) in a filing whose latest
+cover names someone else. The export has the money; only the filing says whether it stands. It is not a misspelled name, so don't try other spellings or a mirror.
 Cite the query with the amount the warning says it leaves out as `expected`, and hand it on the
 same way. If the note also names another `form_type` as "not counted here", that schedule's
 figure is a different one: cite it only when the claim is about that schedule.

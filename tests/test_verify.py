@@ -6505,8 +6505,8 @@ QUERY_DEFINITIONS = {
     # top_contributor shows and orders a ranking's names (_shown, the late-report check), which
     # it does not run; then the left-out-schedule flag beside them; then the flag for rows a
     # later cover reattributed (`reattributed`), which verification acts on and which changes
-    # no value
-    "calaccess.ie_total": (2, "84ff6226c9f7"),
+    # no value, on a total and on a miss
+    "calaccess.ie_total": (2, "f5f91351acea"),
 }
 
 

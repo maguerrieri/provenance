@@ -1513,9 +1513,13 @@ window and amount rules would count whose own amendment's cover matches what it 
 and stance, while no cover of the latest amendment does (`calaccess.left_out_sql()`). They go
 in `QueryResult.reattributed`, and `unsettled` sends the total to `human_review` naming each
 filing and the amount left out, in its own phrase, which the skill also does not retry. A
-total with no counted rows at all is a miss, as before, and its detail names the filings
-instead, so it never reads as "nobody spent on this candidate". The listing shows such a row
-under the candidate its own cover named, marked with who the latest cover names.
+total with no counted rows at all is a miss that carries the flag, as a receipt query's miss on
+a left-out schedule does (above): its note says the rows were not counted, never "NO MATCH",
+`unsettled` names the filings, and the citation goes to `human_review`, so it never reads as
+"nobody spent on this candidate". The listing shows such a row
+under the candidate its own cover named. A row whose later cover only flipped the stance stays
+under the latest cover, since the other stance's total counts it, and is marked all the same:
+the mark names both covers, so the listing and the flag agree about which filings are open.
 
 Two things made that check cost 0.6s rather than 5s on a synthetic export of 1.5 million
 covers, and both apply to any second pass over these views:
