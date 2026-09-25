@@ -108,9 +108,10 @@ Do not summarize the source rules for them — the agent definition carries them
    **Not a retry: a `contradicts`.** It says the record argues against the claim, not that
    the citation is wrong. The claim is `human_review` whatever its other sources say, and
    the contradiction is listed with the conflicts. A retry that swaps the source for one
-   that agrees takes the disagreement off the review page without resolving it, so leave
-   it for the human. When a claim carrying one is retried for another failure, tell the
-   researcher to keep the contradicting source as it is.
+   that agrees resolves nothing: the claim stays `human_review`, with the contradiction
+   still listed but only by source id, and only a human can clear it. So leave it for the
+   human. When a claim carrying one is retried for another failure, tell the researcher to
+   keep the contradicting source as it is, so the reviewer can still open it.
 
    For each failing source, hand the failure reason back to a fresh
    `researcher` for that question — "your snippet was not on the page", "your snippet

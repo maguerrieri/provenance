@@ -93,11 +93,77 @@ own evidence disagree, which `conflicts.py` treats as a finding, not noise to av
   review only when every source is rejected.
 - **A `contradicts` is not retried away.** The skill's retry loop used to count it with the
   other two as "the citation is wrong". A retry that swaps the source for one that agrees
-  takes the disagreement off the review page without resolving it, and the verdict lapses with
-  its sid. So the skill leaves it for the human, and a retry for another failure keeps the
-  source. That is prose, not a gate (#73).
+  takes the disagreement off the review page without resolving it. So the skill leaves it for
+  the human, and a retry for another failure keeps the source. That is prose an agent can skim,
+  so the pipeline also makes dropping the source change nothing (below).
 
-**So does an answer whose figures none of its snippets carry.** `conflicts.py` finds two kinds
+**A dropped contradiction holds its claim until a human clears it.** Keyed by sid, a
+`contradicts` whose source a retry dropped matched nothing the claim cites. The conflict line
+went, and the claim rendered `verified` on the sources that agree, with no trace that a record
+argued against it. Now `judgments.dropped()` reads every `contradicts` in a claim's own shard on
+a source it no longer cites. `_settle()` sets them on `Claim.dropped_contradictions` before
+`check_inputs()`, which reads the status they set. The claim is `human_review` exactly as for a
+cited one, and `detect()` lists each with the conflicts. It names the source by id, with the
+verifier's note: a verdict records no URL, so the citation itself is in the claim file's history.
+Each of these is load-bearing:
+- **The status and the conflict line**, rebuilt from the shard on every build. The field is
+  machine-owned: stripped from agent-authored files, and overwritten, never read, when build
+  loads a claim file trusted.
+- **Nothing else takes it out of the shard.** Re-homing (`vg remap --apply`, bare `vg
+  judgments --repair`) archived every verdict its claim no longer cites as lapsed, which would
+  have released the claim in silence. The issue proposed teaching re-homing to keep a
+  `contradicts` with its claim. #101 retires re-homing instead: question ids are stable and
+  claims do not move between them, so no command moves or archives a verdict, and clearing
+  (below) is the one way out.
+- **Clearing is a command, and it is on the record.** Dropping the source is sometimes right:
+  the verifier was wrong, or the claim was re-scoped. `vg clear-contradiction QID SID` moves the
+  verdict to `judgments-archive/<stamp>/` with a `CLEARED` note holding the reason. The archive
+  is complete or absent (built beside its name, then renamed), and it and every directory above
+  it are durable before the shard is rewritten. A failure that leaves the shard holding the
+  verdict takes the archive back out, placed or half-built. So a failure leaves the verdict
+  live, never lost and never in two places. It refuses a source the claim still cites (that is
+  the claim's own evidence disagreeing), any verdict that is not a dropped `contradicts`, and an
+  empty reason. It checks the claim again after the person answers, since a retry can cite the
+  source again while the prompt waits, and refuses a verdict judged again since it was shown:
+  the reason was given for the one the person read. When another claim cites the source, it
+  names that claim before asking. Clearing touches that one shard. A verdict records only its
+  source (#30), so which claim it judged rests on the shard it sits in, and clearing one that
+  judged another claim costs that claim nothing: it is judged by the verdicts in its own shard,
+  or waits for a verifier.
+- **Only a person can clear one, and that is a step that fails, not a sentence.** The command
+  is named wherever the contradiction is, including `vg judgments`, which agents run, and the
+  whole point of the command is to release a claim from review: the thing an agent is steered
+  toward. So it asks for the reason at a terminal and refuses when stdin is not one, which is
+  how an agent's shell tool runs everything (`cli._at_a_terminal()`). The first version took
+  `--reason` and said "not an agent's step" in its docstring; review caught that it was the
+  prose rule this section exists to replace. It is a gate against being steered, not a security
+  boundary: an agent determined to get past it can fake a terminal, or edit the shard, and no
+  local check stops a process with Bash from doing either.
+
+"No longer cites" is by sid, so a retry that keeps the page and changes the quote holds the
+claim too: a new quote can be a more agreeable passage of the page that argued against it. The
+conflict line says the claim "no longer cites [it] as it did", since which one changed is not
+recorded (#90). A verdict filed under a claim before `vg judge` checked that the claim cites
+its source is held the same way. Both fail toward review, where a person reads the note and
+clears it.
+
+A dropped contradiction is never checked for staleness. `is_stale()` compares a verdict with
+the source it judged, which the claim no longer carries, and `vg judge` refuses a source nothing
+cites, so a stale one could never be re-judged. It holds until the source is cited again, which
+applies and checks it as usual, or until a human clears it. `vg judgments` names these apart
+from lapsed verdicts and leaves them out of its gate, which counts only what a verifier can
+close.
+
+Rejected: making `vg verify` or `vg check-claim` refuse such a claim. A refusal in `vg verify`
+stops the mechanical pass for a whole run over one claim's triage question. It also reaches
+none of the surfaces the status does: the review filter, `vg status`, `derives_from`. A refusal
+in `vg check-claim` blocks a researcher who has to drop the source for a good reason (the page
+is gone, the question was narrowed) with a failure only a human can clear. The status gate
+makes the drop pointless, and that is what the prose rule was for. Also rejected: a `cleared`
+flag on the verdict itself. Shard entries are exactly `Judgment`, an older checkout refuses
+an unknown key, and #30 and #74 are changing that record.
+
+**An answer whose figures none of its snippets carry goes to review too.** `conflicts.py` finds two kinds
 of disagreement inside one claim: (1) its sources disagree on a dollar figure or a year, and
 (2) the answer states dollar figures or years, the snippets state some, and none of the
 answer's is among them. Both were flags only. `Claim.status` never read them, so the claim
@@ -146,7 +212,8 @@ the claim file**.
 `vg verify` reloads claims with `strip_machine_fields()` on (that is what stops a researcher
 self-certifying), so a verdict written inline is destroyed by the next verify run. Keying by
 source id also means a judgment lapses on its own when a retry changes the quote, which is
-correct: it was a judgment about different words.
+correct: it was a judgment about different words. A `contradicts` is the exception: it holds
+its claim instead (above).
 
 **An unreadable verdict must fail, whether it is a whole file or a single entry. It must
 never read as "unreviewed".** `load()` used to return `{}` for a file it could not parse or
@@ -1180,7 +1247,8 @@ not the live result, so a verdict survives a refresh either way — but the row 
 green if the same definition still reproduces `expected` on the new export: the same number
 from the same calculation, which is what the verdict was about. If the figure moved, the row
 fails verification whatever its verdict, and correcting `expected` changes the sid, so the
-verdict lapses. The report counts only verdicts that were applied on a row that reproduced.
+verdict lapses (a `contradicts` holds its claim instead: "A dropped contradiction holds its
+claim"). The report counts only verdicts that were applied on a row that reproduced.
 
 And the trap that produced it, worth naming because it will recur: that session trusted a
 freshly-fixed query over a human-sourced figure that disagreed, treating the disagreement as
