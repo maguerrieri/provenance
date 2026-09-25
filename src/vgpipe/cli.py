@@ -1001,7 +1001,8 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", data: Path =
     Judgments live in data/judgments/, not in the claim file: `vg verify` reloads claims with
     stripping on — which is what stops a researcher self-certifying — so a verdict written
     into the claim is destroyed by the next verify run. Keyed by source id, so it follows the
-    citation and lapses automatically when a retry changes the quote.
+    citation and lapses automatically when a retry changes the quote. A contradicts does not:
+    it holds its claim in review until the source is cited again or a person clears it.
 
     verdict: supports | topic_only | contradicts | superseded
 
