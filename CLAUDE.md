@@ -1206,8 +1206,9 @@ listing more names:
   `:` or `/` (a fullwidth `@` in a password), and its message quotes the whole netloc, login
   included. Passed on as the refusal, it printed the login it was refusing (#158). So every URL
   from a paste or a recipe is split through `_split()`, which names the URL ("the referer
-  header's URL") instead. A test fails on a split anywhere else in `access.py` but
-  `_norm_host()`, which reads a host a person typed or a URL `parse_curl()` has already split.
+  header's URL") instead, and `parse_curl()` adds what to do. A test fails on any other
+  reference in `access.py` to a function that splits, but `_norm_host()`: it reads a command's
+  host argument, which is #161's to guard.
 - **A deny-list of names can't anticipate what a site calls its session.** Only `Cookie`,
   `Authorization` and a few more were dropped, so `x-csrf-token` and `x-xsrf-token` reached
   disk. Credential headers now match by pattern (`credential_header()`), and `run()` uses the
