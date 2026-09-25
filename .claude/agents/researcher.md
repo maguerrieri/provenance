@@ -190,7 +190,6 @@ the claim as that filing name's figure, not the donor's whole total, cite it any
 on with `notes` naming the other names. The two switches are separate: each lifts only its own
 check.
 
-
 **Never cite the database as a URL.** A row in a local TSV has no URL a human can open and no text
 they can ⌘F, so a claim resting on one is unverifiable by design. Every result prints the
 filing's own CAL-ACCESS page — cite *that*, with a snippet from it. Use the export to find

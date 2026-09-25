@@ -809,6 +809,40 @@ def test_a_late_givers_name_does_not_depend_on_the_order_rows_come_in(tmp_path):
     assert "ADA QUENNELL or Ada B Quennell ($0 on schedule-A, $6,100 late)" in note, note
 
 
+def test_a_leader_filed_as_punctuation_is_no_name(tmp_path):
+    """'-' has no words: it is no name, as '' is. Only an empty name was refused, so a leader
+    filed as '-' was named "-" and a citation of it verified."""
+    root = build(tmp_path, [(("-", ""), "5000"), (VARDLE, "4000")])
+    for params in ({}, {"names": "as_filed"}, {"form_type": "A", "names": "as_filed"}):
+        got = run(root, "top_contributor", **params)
+        assert not got.found and "1 filed with no name at all" in got.note, (params, got.note)
+    assert cite(root, "top_contributor", "-").status != "verified"
+
+
+def test_a_late_gift_a_names_hold_needs_is_held_beside_the_names(tmp_path):
+    """$3,000 + $1,500 under two names that could be one giver's reach $5,000 only with a $600
+    late gift under a third. With names=as_filed the names were held and the late report was
+    not, and the detail said it "cannot change the ranking"."""
+    root = build(tmp_path, [(VARDLE, "5000"), (RUE, "3000"), (R, "1500")], late=[(RM, "600")])
+    got = run(root, "top_contributor", names="as_filed")
+    assert got.value == "Tamsin Vardle" and got.names, got.note
+    assert [r.filing_id for r in got.late] == [int(F497)], got.unsettled
+    assert "they could change the ranking" in got.detail, got.detail
+
+
+def test_a_name_shown_as_its_key_reads_it_whatever_spelling_a_later_export_adds(tmp_path):
+    """One key holds 'Rue Ann' spelled with a non-breaking space and with a plain one. The value
+    was the least spelling, and a later export adding the other moved it, which a recorded
+    `expected` no longer matched."""
+    nbsp = ("Quillon", "Rue\u00a0Ann")
+    before = run(build(tmp_path / "before", [(nbsp, "5000")]), "top_contributor").value
+    after = run(build(tmp_path / "after", [(nbsp, "5000"), (("Quillon", "Rue Ann"), "10")]),
+                "top_contributor").value
+    assert before == after == "Rue Ann Quillon", (before, after)
+    assert queries.matches("Rue\u00a0Ann QUILLON", "Rue Ann Quillon")
+    assert not queries.matches("Rue Ann", "Roe Ann")
+
+
 def test_a_refusal_says_where_each_name_in_a_group_gave_from(tmp_path):
     """So a person can tell one giver from two without running another query."""
     root = build(tmp_path, [(VARDLE, "5000"),
