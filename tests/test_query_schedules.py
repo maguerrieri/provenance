@@ -10,6 +10,7 @@ contributions (C), and miscellaneous receipts such as a vendor's refund or inter
 from __future__ import annotations
 
 import inspect
+import re
 import zipfile
 
 import pytest
@@ -167,10 +168,16 @@ RECEIPT_QUERIES = (("calaccess.contributor_total", {"contributor": "Brightwater 
 def test_every_receipt_query_is_tested_for_its_schedule_handling():
     """RECEIPT_QUERIES is a hand-kept list, and filer_total was the query a hand-kept fix
     missed. So the list is checked against the registry: a new query over the receipts must be
-    added here, where the tests below hold it to the guards."""
+    added here, where the tests below hold it to the guards. A query's own source is read, and
+    that of each module function it calls: the ranking and the total run on an open connection
+    in a helper of their own (`_ranking`, `_contributor_figure`)."""
+    def source(fn):
+        own = inspect.getsource(fn)
+        called = {getattr(queries, c, None) for c in re.findall(r"\b(_\w+)\(", own)}
+        return own + "".join(inspect.getsource(c) for c in called if inspect.isfunction(c))
+
     reads_receipts = {name for name, q in queries.REGISTRY.items()
-                      if "DEDUPED_RECEIPTS" in inspect.getsource(q.fn)
-                      or "RCPT_LATEST" in inspect.getsource(q.fn)}
+                      if "DEDUPED_RECEIPTS" in source(q.fn) or "RCPT_LATEST" in source(q.fn)}
     assert reads_receipts == {name for name, _ in RECEIPT_QUERIES}
 
 

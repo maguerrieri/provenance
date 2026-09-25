@@ -17,9 +17,12 @@ same self-certification problem `verification` has elsewhere.
 from __future__ import annotations
 
 import datetime
-import json
+import functools
+import itertools
 import re
 import shlex
+import unicodedata
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, NamedTuple
@@ -167,7 +170,7 @@ _RECEIPT_GIFTS = f"""
                  {amount_sql("r.AMOUNT")} AS AMT
           FROM {{rows}} r JOIN FILER_FILING f ON f.FILING_ID = r.FILING_ID
           WHERE f.FILER_ID = ?{{extra}}) x
-    GROUP BY x.tbase, UPPER(TRIM(x.CTRIB_NAML)), UPPER(TRIM(COALESCE(x.CTRIB_NAMF,''))),
+    GROUP BY x.tbase, vg_name_key(x.CTRIB_NAML), vg_name_key(x.CTRIB_NAMF),
              x.RCPT_DATE, x.AMT
 """
 DEDUPED_RECEIPTS = _RECEIPT_GIFTS.replace("{rows}", "RCPT_LATEST").replace("{columns}", "")
@@ -293,6 +296,10 @@ class QueryResult:
     # an amount nobody stated first, then the most money either way. A value with any is not
     # verified.
     late: list = field(default_factory=list)
+    # Other names that could be the same giver's, which a value for one name as filed leaves out
+    # although they could change it (`_name_line`, or a ranking's `_contender_line`), largest
+    # first. A value with any is not verified either.
+    names: list = field(default_factory=list)
 
     @property
     def note(self) -> str:
@@ -320,8 +327,8 @@ class QueryResult:
 
     @property
     def unsettled(self) -> str:
-        """Why this value cannot verify as it stands, or "". Four reasons, each with the filings
-        a person opens, since a note alone would still render green:
+        """Why this value cannot verify as it stands, or "". Five reasons, each with what a person
+        opens, since a note alone would still render green:
 
         - `unrestated`: a filing's latest amendment can carry a cover and no rows in a table,
           and the rows the value counts are then an earlier amendment's. That amendment either
@@ -338,6 +345,9 @@ class QueryResult:
           is not in it: "gave $3,000" reads as the whole story a week after a $4,000 late gift.
           Only the claim's wording settles whether it holds: as a schedule-A figure as filed,
           it stands; as the whole total or the largest giver, it may not.
+        - `names`: a value for one name as filed (names=as_filed) leaves out other names that
+          could be the same giver's, and they could change it. Each is listed as filed, with its
+          figure and where its gifts came from.
 
         The first two say "rows a later amendment may have withdrawn", which the research skill
         matches to leave the row for a person rather than retry it; the third says LEFT_OUT,
@@ -375,6 +385,13 @@ class QueryResult:
                        "schedule's figure or ranking as filed, the value stands; worded as the "
                        "whole total, or as who gave the most, it may not: check whether these "
                        "gifts change it.")
+        if self.names:
+            each = _listed(self.names, str, LATE_SHOWN, "name(s)")
+            why.append("is for names exactly as filed, and other names that could be the same "
+                       f"giver's could change it: {each}. Worded as this name's figure or the "
+                       "ranking of names as filed, the value stands; worded as the giver's whole "
+                       "total, or as who gave the most, it may not: check whether these are the "
+                       "same giver.")
         return "it " + " It also ".join(why) if why else ""
 
 UNSETTLED_SHOWN = 5
@@ -411,7 +428,7 @@ def left_out_text(u) -> str:
             f"(open {u.cite_url})")
 
 
-# How many late reports `QueryResult.unsettled` names. Display only.
+# How many late reports, and other names, `QueryResult.unsettled` names. Display only.
 LATE_SHOWN = 5
 
 
@@ -624,8 +641,7 @@ def _pending_late(con: Any, filer_id: str) -> list[dict[str, Any]]:
         return (_real_day(start) and _real_day(end)
                 and any(pf <= start <= pt and pf <= end <= pt for pf, pt in periods))
 
-    return sorted((e for e in entries.values() if not covered(e)),
-                  key=lambda e: (e["d"], e["filing_id"]))
+    return sorted((e for e in entries.values() if not covered(e)), key=_late_order)
 
 
 def _transaction(r: Any) -> tuple[Any, ...]:
@@ -649,10 +665,84 @@ def _real_day(iso: Any) -> bool:
         return False
 
 
-def _name_words(last: Any, first: Any = "") -> frozenset[str]:
-    """A name as the set of its words, case and punctuation aside, so the spellings filers use
-    for one name read alike: split, whole in the last-name field, or "LAST, FIRST"."""
-    return frozenset(re.findall(r"[^\W_]+", f"{first or ''} {last or ''}".upper()))
+_WORD = re.compile(r"[^\W_]+")
+# A name's tokens, as whitespace, commas and semicolons separate them: "QUILLON, R" is two.
+_TOKEN = re.compile(r"[^\s,;]+")
+# A token that is initials: one letter, or letters each followed by a point ("R", "R.", "R.M.").
+_INITIALS = re.compile(r"(?:[^\W\d_]\.)*[^\W\d_]\.?")
+
+
+# Letters NFKD leaves whole, spelled as an English-language filer would type them. The export
+# is latin-1, so Ø, Æ, Ð and Þ do occur.
+_UNFOLDED = str.maketrans({"Ø": "O", "Æ": "AE", "Œ": "OE", "Ð": "D", "Đ": "D", "Þ": "TH",
+                           "Ł": "L"})
+
+
+def _fold(text: Any) -> str:
+    """Text upper-cased with its accents dropped (NFKD, combining marks removed, and the letters
+    that have no decomposition spelled out), so 'Élise' and 'ELISE' read alike and 'E' is an
+    initial of both, as 'O' is of 'Øystein'. Unfolded, an initial missed its word and two names
+    that could be one giver's read as two, which fails toward green."""
+    return "".join(c for c in unicodedata.normalize(
+        "NFKD", str(text or "").upper().translate(_UNFOLDED)) if not unicodedata.combining(c))
+
+
+# An initial run into the next word by its point: 'R.Quillon' is R. and Quillon.
+_RUN_ON = re.compile(r"(?<![^\W\d_])([^\W\d_]\.)(?=[^\W\d_])")
+
+
+def _tokens(text: Any) -> list[str]:
+    """A name field's tokens (`_TOKEN`), after `_fold`, with an initial run into the next word
+    split off, and without tokens that hold no word: a first name filed as '-' is no first
+    name, and read as one it stopped the last-name field from being read as a whole name."""
+    return [t for t in _TOKEN.findall(_RUN_ON.sub(r"\1 ", _fold(text))) if _WORD.search(t)]
+
+
+class _Name(NamedTuple):
+    """A name as `_could_be` compares it (`_name`)."""
+    words: frozenset[str]       # every word, an initial as its letter and a point ('R.')
+    surnames: frozenset[str]    # the words spelled out that could be the surname
+    spelled: frozenset[str]     # the words that are not initials
+    abbreviated: bool           # whether it holds an initial
+
+
+def _name(last: Any, first: Any = "") -> _Name:
+    """A name as its words, case, accents and punctuation aside, so the spellings filers use
+    for one name read alike: split, whole in the last-name field, or "LAST, FIRST".
+
+    An initial is kept as its letter and a point ('R.', `_initial`), and only where a given
+    name can be: a token of the first-name field, or of the last-name field when the first is
+    blank and the last holds more than one token (the whole name filed there). Anywhere else a
+    letter is a word, which fits only itself:
+    - a one-letter surname ('O'/'Hanu'), which as an initial would stand for every O word;
+    - a letter split off inside a word: 'QX&T' is QX and T, and 'Orrin's' is ORRIN and S;
+    - a letter with no case, such as a CJK character: a one-character given name is a name,
+      not an abbreviation.
+
+    The surname is the last-name field's words when both fields are filled. With either one
+    blank, the name was filed whole in the other, and any word spelled out in it could be.
+    """
+    return _name_of(str(last or ""), str(first or ""))
+
+
+@functools.lru_cache(maxsize=1 << 17)
+def _name_of(last: str, first: str) -> _Name:
+    """`_name`, remembered: a ranking asks for every name on it each time it groups them."""
+    given = _tokens(first)
+    family = _tokens(last)
+    words: set[str] = set()
+    for tokens, abbreviates in ((given, True), (family, not given and len(family) > 1)):
+        for t in tokens:
+            letters = t.replace(".", "")
+            if (abbreviates and _INITIALS.fullmatch(t)
+                    and all(c.lower() != c for c in letters)):
+                words.update(f"{c}." for c in letters)
+            else:
+                words.update(_WORD.findall(t))
+    spelled = frozenset(w for w in words if not _initial(w))
+    surnames = (frozenset(w for t in family for w in _WORD.findall(t)) if given and family
+                else spelled)
+    return _Name(frozenset(words), surnames, spelled, len(spelled) < len(words))
 
 
 def _shown(first: Any, last: Any) -> str:
@@ -662,23 +752,314 @@ def _shown(first: Any, last: Any) -> str:
     return " ".join(p for p in (str(first or "").strip(), str(last or "").strip()) if p)
 
 
-def _could_be(a: frozenset[str], b: frozenset[str]) -> bool:
-    """Whether two names could be one giver: one's words all in the other's. A middle
-    initial, a bare surname, a short form of an organization's name, or no name at all could
-    each be the same giver. Used only to widen what a late entry could change, never to add it
-    to a total, so a false match makes a query refuse and a missed one lets a short figure
-    through. A name spelled differently, not merely filed differently, is still missed."""
-    return a <= b or b <= a
+def _filed(last: Any, first: Any) -> str:
+    """A name as filed, field by field: 'last'/'first'. Two filings that show alike can then be
+    told apart: 'Rue Quillon'/'' and 'Quillon'/'Rue' both show as Rue Quillon. Not display only:
+    a tie of two such names lists them this way in its value, which a citation records."""
+    return f"{str(last or '').strip()!r}/{str(first or '').strip()!r}"
 
 
-def _late_reports(con: Any, filer_id: str, form_type: str, last: str = "", first: str = "",
-                  who: str = "", who_args: list[Any] | None = None) -> list[dict[str, Any]]:
-    """The pending late entries a result leaves out, for one contributor when `last` is given.
-    `who` and `who_args` are the name filter the result's sum runs (a condition on `r`).
+def _initial(word: str) -> bool:
+    """Whether a word of `_name` is an initial, which could stand for any word starting with
+    its letter."""
+    return len(word) == 2 and word[1] == "."
 
-    For schedule A, every pending entry. For every schedule (""), the Form 497 entries, and the
-    Form 496 Part 3 ones the sum's name filter does not take: that sum holds the rest. For any
-    other schedule, none, and nothing is read. For A or "", a database that cannot read Form 497
+
+def _word_fits(a: str, b: str) -> bool:
+    """Whether two words of names could be one: the same word, or an initial and a word
+    starting with its letter, either way round."""
+    return a == b or (_initial(a) and b[0] == a[0]) or (_initial(b) and a[0] == b[0])
+
+
+def _could_be(a: _Name, b: _Name) -> bool:
+    """Whether two names could be one giver's. Both must hold:
+    - they share a surname: a word spelled out in both that is a surname of one of them
+      (`_name`), so names are only ever compared within a surname;
+    - each word of the one with fewer words is a different word of the other, or an initial of
+      one, either way round (`_word_fits`).
+    A name with no words at all could be anyone's.
+
+    So 'Quillon'/'R' could be 'Quillon'/'Rue', and so could 'Quillon'/'R M', each shorter than
+    the other somewhere. A middle or first initial, a bare surname, fields swapped, or a short
+    form of an organization's name could each be the same giver. Missed: a name spelled
+    differently (a typo, a nickname), and one sharing no spelled-out surname with the other
+    ('R Q' for Rue Quillon, or 'Quillon' for a 'Rue'/'Q' whose Q might be it).
+
+    It is not transitive: Rue could be R, and R could be Roe, but Rue could not be Roe. It only
+    links two names; `_groups` closes it. One word matches one word, so 'Rue'/'R' is not a
+    filing of Rue Quillon, which has one R word.
+    """
+    if not a.words or not b.words:
+        return True
+    shared = a.spelled & b.spelled
+    if not (shared & a.surnames or shared & b.surnames):
+        return False
+    # The cheap test first: most pairs that could be one are one inside the other.
+    if a.words <= b.words or b.words <= a.words:
+        return True
+    if not (a.abbreviated or b.abbreviated):
+        return False   # whole words fit only themselves, so that was the whole test
+    few, many = sorted((a.words, b.words), key=len)
+    return _each_to_one(few, many)
+
+
+def _each_to_one(few: frozenset[str], many: frozenset[str]) -> bool:
+    """Whether each word of `few` fits a different word of `many`: a matching, found by
+    augmenting paths. 'R' has to leave 'Rue' for 'Rue' when both are in `few`. Names are a few
+    words long, so this is cheap."""
+    # Most pairs fail on a word with nothing in `many` it could be: reject those unmatched.
+    letters = {w[0] for w in many}
+    if any(w not in many and (w[0] not in letters if _initial(w) else f"{w[0]}." not in many)
+           for w in few):
+        return False
+    targets = sorted(many)
+    owner: dict[int, str] = {}
+
+    def place(word: str, seen: set[int]) -> bool:
+        for j, other in enumerate(targets):
+            if j not in seen and _word_fits(word, other):
+                seen.add(j)
+                if j not in owner or place(owner[j], seen):
+                    owner[j] = word
+                    return True
+        return False
+
+    return all(place(w, set()) for w in sorted(few))
+
+
+def _groups(names: dict[Any, _Name]) -> dict[Any, int]:
+    """Each key's group: the names `_could_be` links, closed transitively with union-find.
+
+    A group is a safety check, never a figure. No query adds a group's names together, and
+    every figure a query reports is for a name exactly as filed. Two names in one group can be
+    two people, and the closure over-merges by construction: Rue could be R and R could be
+    Roe, so Rue and Roe share a group, and a bare surname joins every giver who has it. That is
+    what makes it safe: every giver's names are in one group, so a group's total is an upper
+    bound for any real giver in it (CLAUDE.md, "One giver filed two ways is flagged, never
+    merged").
+
+    Names link only within a surname (`_could_be`). A name with no words could be anyone's, so
+    it is in every group, but it links none: bridged through it, every giver on a committee was
+    one group, and a total listed unrelated givers as names that could be the giver's. It gets
+    the group `_ANYONE`, which callers count as a member of each group. Pairs are found through an index, never all against all: a ranking
+    can hold tens of thousands of names. A name can link with one of at least as many words
+    only if that one holds a word `s` they share, a surname of one of them, and for each of its
+    other words: that word or its initial, or for an initial, a word starting with its letter.
+    So each name is tested only against the names holding `s` beside its rarest such word (as
+    a surname, where `s` is not its own), and only while the two are apart. Keying every word
+    by its first letter instead made each initial a candidate for every name sharing the
+    letter: 4 million tests on 30,000 synthetic names.
+
+    The groups do not depend on the order names come in, only their numbers do, and callers
+    compare numbers only with each other.
+    """
+    by_name: dict[_Name, list[Any]] = {}
+    for k, n in names.items():
+        by_name.setdefault(n, []).append(k)
+    order = list(by_name)
+    parent = {v: v for v in order}
+
+    def find(v: _Name) -> _Name:
+        while parent[v] is not v:
+            parent[v] = parent[parent[v]]
+            v = parent[v]
+        return v
+
+    def join(a: _Name, b: _Name) -> None:
+        ra, rb = find(a), find(b)
+        if ra is not rb:
+            parent[rb] = ra
+
+    # (a word spelled out, "", another of the name's words, or "^" and the first letter of
+    # any of them) -> the names holding both: as any word, and as a surname.
+    holding: dict[tuple[str, str], list[_Name]] = {}
+    as_surname: dict[tuple[str, str], list[_Name]] = {}
+    for v in order:
+        beside = ["", *(w for w in v.words), *{f"^{w[0]}" for w in v.words}]
+        for s in v.spelled:
+            for index in (holding, as_surname) if s in v.surnames else (holding,):
+                for x in beside:
+                    if x != s:
+                        index.setdefault((s, x), []).append(v)
+
+    def partners(index: dict[tuple[str, str], list[_Name]], s: str,
+                 x: str) -> list[list[_Name]]:
+        # The names that could hold a match for word x beside s: an initial matches any
+        # word starting with its letter, and a word matches itself or its initial.
+        if _initial(x):
+            return [index.get((s, f"^{x[0]}"), [])]
+        return [index.get((s, x), []), index.get((s, f"{x[0]}."), [])]
+
+    for v in order:
+        size = len(v.words)
+        for s in v.spelled:
+            # A word that is not this name's surname links only where it is the other's.
+            index = holding if s in v.surnames else as_surname
+            options = ([partners(index, s, x) for x in v.words if x != s]
+                       or [[index.get((s, ""), [])]])
+            for part in min(options, key=lambda lists: sum(map(len, lists))):
+                for u in part:
+                    if (len(u.words) >= size and u is not v and find(u) is not find(v)
+                            and _could_be(v, u)):
+                        join(v, u)
+
+    ids: dict[_Name, int] = {}
+    return {k: _ANYONE if not v.words else ids.setdefault(find(v), len(ids))
+            for v in order for k in by_name[v]}
+
+
+# The group of a name with no words (`_groups`): it could be in any group.
+_ANYONE = -1
+
+
+# A name's key, as `_givers` groups it: last and first name, trimmed, ignoring case.
+_KL = "vg_name_key({t}.CTRIB_NAML)"
+_KF = "vg_name_key({t}.CTRIB_NAMF)"
+
+
+def _name_key(part: Any) -> str:
+    """One part of a name's key (`_KL`, `_KF`, and the cross-form dedup's): trimmed and
+    upper-cased as Python does it, the way `_shown` trims what a result displays. SQLite's TRIM
+    and UPPER know only ASCII spaces and letters, so a surname filed with a trailing tab or
+    non-breaking space was a name of its own that displayed like the plain one: a tie could
+    read "Rue Abbot | Rue Abbot". `calaccess.connect` registers it as vg_name_key. The dedup
+    has to use the same key as the names: with ASCII rules there and these here, a gift's two
+    copies filed 'Élise' and 'élise' stayed apart and were summed under one name."""
+    return str(part or "").strip().upper()
+
+
+def _named(keys: list[tuple[str, str]]) -> Any:
+    """(SQL keeping the receipts `r` filed under `keys`, its args), in chunks: each name is two
+    SQL variables, and SQLite before 3.32 takes 999 in all."""
+    keys = list(dict.fromkeys(keys))
+    for i in range(0, len(keys), 400):
+        chunk = keys[i:i + 400]
+        yield (f" AND ({_KL.format(t='r')}, {_KF.format(t='r')}) IN "
+               f"(VALUES {', '.join(['(?, ?)'] * len(chunk))})",
+               [part for key in chunk for part in key])
+
+
+def _givers(con: Any, filer_id: str, form_type: str,
+            only: list[tuple[str, str]] | None = None) -> list[Any]:
+    """Every name a filer's receipts on `form_type` ("" for every schedule) are filed under,
+    with its total, largest first and equal totals by name: what a ranking ranks. Or only the
+    names in `only`, as (kl, kf) keys. A name is its last and first name, trimmed and ignoring
+    case, so one giver filed two ways is two names here. A missing name part groups as a blank
+    one, so every key is text and sorts.
+
+    `pos` sums the gifts with a readable amount above zero and `unread` counts those with none,
+    which `amt` and `n` leave out: the two a group's upper bound is made of
+    (`_could_change_ranking`)."""
+    schedule, schedule_args, _ = _schedule(form_type)
+    if only is not None:
+        found = [g for extra, args in _named(only)
+                 for g in _ranked(con, filer_id, schedule + extra, [*schedule_args, *args])]
+        return sorted(found, key=lambda g: (-float(g["amt"] or 0), g["kl"], g["kf"]))
+    return _ranked(con, filer_id, schedule, schedule_args)
+
+
+def _ranked(con: Any, filer_id: str, extra: str, args: list[Any]) -> list[Any]:
+    """`_givers`, for the receipts `extra` keeps."""
+    # MIN, not a bare column: a group's rows can spell its name in another case or with padding,
+    # and a bare column is whichever row SQLite reads, so the value's spelling could change
+    # with the order the rows were loaded in. Amounts are read as the sums read them
+    # (`amount_sql()`): `amt` and `n` count only gifts with a readable amount, and a name
+    # whose every gift has none sums to NULL, which sorts last.
+    return con.execute(f"""
+        SELECT MIN(d.CTRIB_NAML) nm, MIN(d.CTRIB_NAMF) nf, SUM(d.AMT) amt, COUNT(d.AMT) n,
+               {_KL.format(t='d')} kl, {_KF.format(t='d')} kf,
+               SUM(CASE WHEN d.AMT > 0 THEN d.AMT ELSE 0 END) pos,
+               COUNT(*) - COUNT(d.AMT) unread
+        FROM ({DEDUPED_RECEIPTS.format(extra=extra)}) d
+        GROUP BY {_KL.format(t='d')}, {_KF.format(t='d')}
+        ORDER BY amt DESC, kl, kf
+    """, [str(filer_id), *args]).fetchall()
+
+
+def _name_sql(alias: str, first: bool) -> str:
+    """SQL matching a contributor's name as filed on table `alias`: CTRIB_NAML exactly, and
+    CTRIB_NAMF too when `first`. Its args are the name, then the first name. One rule for the
+    rows a total sums and the names it holds against it: two copies that drifted apart would
+    flag the counted name as another one."""
+    sql = f"{_KL.format(t=alias)} = vg_name_key(?)"
+    if first:
+        sql += f" AND {_KF.format(t=alias)} = vg_name_key(?)"
+    return sql
+
+
+def _whereabouts(places: list[str], employers: list[str]) -> str:
+    """How a flag says where a name's gifts came from: its cities and ZIPs, and its employers,
+    each as filed. Display only."""
+    def few(values: list[str]) -> str:
+        distinct = sorted({v for v in values if v}, key=str.casefold)
+        return " / ".join(distinct[:3]) + (" / ..." if len(distinct) > 3 else "")
+
+    parts = [few(places)] + ([f"employer {e}"] if (e := few(employers)) else [])
+    return ", ".join(p for p in parts if p)
+
+
+def _identity(con: Any, filer_id: str, form_type: str,
+              keys: list[tuple[str, str]]) -> dict[tuple[str, str], str]:
+    """Where each name's receipts on `form_type` came from, as `_whereabouts` says it, so a
+    person resolving a flag can tell two givers apart without querying again. Only what the
+    database loaded: one built before CTRIB_CITY and CTRIB_ZIP4 were has only employers.
+    Display only."""
+    cols = {r[1] for r in con.execute('PRAGMA main.table_info("RCPT_CD")')}
+
+    def col(name: str) -> str:
+        return f"TRIM(COALESCE(r.{name}, ''))" if name in cols else "''"
+
+    schedule, schedule_args, _ = _schedule(form_type)
+    seen: dict[tuple[str, str], tuple[list[str], list[str]]] = {}
+    for extra, args in _named(keys):
+        for r in con.execute(f"""
+            SELECT DISTINCT {_KL.format(t='r')} kl, {_KF.format(t='r')} kf,
+                   {col('CTRIB_CITY')} city, {col('CTRIB_ZIP4')} zip, {col('CTRIB_EMP')} emp
+            FROM RCPT_LATEST r JOIN FILER_FILING f ON f.FILING_ID = r.FILING_ID
+            WHERE f.FILER_ID = ?{schedule}{extra}
+        """, [str(filer_id), *schedule_args, *args]):
+            places, employers = seen.setdefault((r["kl"], r["kf"]), ([], []))
+            places.append(f"{r['city']} {r['zip']}".strip())
+            employers.append(r["emp"])
+    return {k: _whereabouts(*v) for k, v in seen.items()}
+
+
+def _name_line(g: Any, where: str = "") -> str:
+    """One name a flag lists: as filed, with its figure and where its gifts came from. Display
+    only."""
+    if g["n"]:
+        held = (f"${float(g['amt']):,.2f} in {g['n']} gift(s)"
+                + (f" and {g['unread']} more with no readable amount" if g["unread"] else ""))
+    else:
+        held = f"{g['unread']} gift(s) with no readable amount"
+    return f"{_filed(g['nm'], g['nf'])} {held}" + (f" ({where})" if where else "")
+
+
+def _names_note(others: list[Any], where: dict[tuple[str, str], str], then: str = "") -> str:
+    """How a detail names the other names in a giver's group, `then` following them. Display
+    only."""
+    if not others:
+        return ""
+    listed = "; ".join(_name_line(g, where.get((g["kl"], g["kf"]), "")) for g in others[:4])
+    return (f"{len(others)} other name{'' if len(others) == 1 else 's'} that could be this "
+            f"giver's, or another giver's ({listed}{'; ...' if len(others) > 4 else ''})" + then)
+
+
+def _late_order(e: dict[str, Any]) -> tuple[Any, ...]:
+    """The order `_pending_late` gives late entries: by date and filing, then by what they
+    hold, never by load order within a filing and a day, since which name a late giver is
+    shown under, and where it falls among equals, come from the first entry read."""
+    return (e["d"] or "", e["filing_id"], str(e["tbase"]), str(e["naml"] or "").strip().upper(),
+            str(e["namf"] or "").strip().upper(), str(e["amount"] or "").strip())
+
+
+def _late_reports(con: Any, filer_id: str, form_type: str) -> list[dict[str, Any]]:
+    """The pending late entries a result on `form_type` leaves out. Which of them could be one
+    contributor's is their group's to say (`_groups`).
+
+    For schedule A, every pending entry. For every schedule (""), the Form 497 entries only:
+    that sum holds every Form 496 Part 3 row, under the name it was filed under. For any other
+    schedule, none, and nothing is read. For A or "", a database that cannot read Form 497
     cannot say none is pending, so it refuses like a degraded one does, whether or not the
     schedule was named: a figure it could not check would otherwise verify green
     (`QueryResult.unsettled`).
@@ -689,21 +1070,16 @@ def _late_reports(con: Any, filer_id: str, form_type: str, last: str = "", first
     if schedule not in ("A", ""):
         return []
     if not calaccess.late_reports_loaded(con):
-        con.close()
         raise calaccess.DegradedDatabase(calaccess.LATE_FALLBACK)
     # A stated $0 changes no total and moves no one in a ranking, so it holds nothing.
     late = [e for e in _pending_late(con, filer_id) if e["amt"] != 0]
-    if last:
-        theirs = _name_words(last, first)
-        late = [e for e in late if _could_be(_name_words(e["naml"], e["namf"]), theirs)]
     if not schedule:
-        # A contributor's total sums only the Form 496 Part 3 rows filed under the name it
-        # matches, and a late entry is held against every name it could be: one filed another
-        # way ("DOE JANE" whole in the last-name field) is a gift that sum leaves out. Asked of
-        # the sum's own filter, so the two can't disagree about a name.
-        late = [e for e in late if "F496P3" not in e["forms"] or not con.execute(
-            f"SELECT 1 FROM (SELECT ? AS CTRIB_NAML, ? AS CTRIB_NAMF) r WHERE 1{who}",
-            [e["naml"], e["namf"], *(who_args or [])]).fetchone()]
+        # Every schedule sums every Form 496 Part 3 row, each under the name it was filed
+        # under. One filed under another name that could be the giver's ("DOE JANE" whole in
+        # the last-name field) is another name on that schedule, and the name check holds it
+        # against a figure for the giver like any other name (`_groups`): one rule for "could
+        # be one giver", not a second check here.
+        late = [e for e in late if "F496P3" not in e["forms"]]
     return late
 
 
@@ -751,6 +1127,11 @@ def _late_note(entries: list[dict[str, Any]], then: str = "") -> str:
 # (`QueryResult.unsettled`).
 NOT_COMPLETE = (", not counted — a figure for this schedule as filed, NOT a complete total; "
                 "do not word it as one")
+# And a figure asked for as filed, when it leaves out other names in the giver's group.
+AS_FILED = (", not counted — a figure for this name as filed, NOT a complete total; do not "
+            "word it as one")
+# How a ranking names what it would not count as one giver. Display only.
+SPLIT = "names ranked apart that could be one giver's"
 
 
 def _gate(form_type: str | None) -> tuple[bool, str]:
@@ -760,8 +1141,21 @@ def _gate(form_type: str | None) -> tuple[bool, str]:
     return form_type is None, "A" if form_type is None else form_type
 
 
+
+def _names_gate(names: str) -> bool:
+    """Whether other names in the giver's group gate the result: unless names=as_filed, which
+    counts the name asked for alone, or ranks each name apart, and names the others. A switch
+    of its own, not form_type's: with one way past both gates, getting past a name nobody could
+    place also let a pending late gift through."""
+    if names not in ("", "as_filed"):
+        raise ValueError(f"names must be 'as_filed', or unset to hold other names against the "
+                         f"result, not {names!r}")
+    return not names
+
+
 def _contributor_total(root: Path, *, filer_id: str, contributor: str,
-                       contributor_first: str = "", form_type: str | None = None) -> QueryResult:
+                       contributor_first: str = "", form_type: str | None = None,
+                       names: str = "") -> QueryResult:
     """Total itemized contributions from one contributor to one filer.
 
     For an INDIVIDUAL pass `contributor_first` too: CTRIB_NAML holds only the surname, so a
@@ -773,33 +1167,90 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
     as a gift, and a vendor's refund or a bank's interest (I) made a business that gave nothing
     a contributor. Pass another schedule to count that one, or "" for every schedule.
 
-    Left unset, it is a miss while this contributor has a late-reported gift no schedule A
-    restates yet (`_pending_late`): the schedule-A sum is then short of what they gave. Pass
-    form_type=A for the schedule-A figure alone. It still does not verify while such a gift is
-    pending (`QueryResult.unsettled`): a person opens the late reports it names.
+    Left unset, it is a miss while a late-reported gift no schedule A restates yet
+    (`_pending_late`) is in this contributor's group (`_groups`): the schedule-A sum could then
+    be short of what they gave. Pass form_type=A for the schedule-A figure alone. It still does
+    not verify while such a gift is pending (`QueryResult.unsettled`): a person opens the late
+    reports it names.
+
+    The figure is always for the name as filed: `contributor` against CTRIB_NAML, and
+    `contributor_first` against CTRIB_NAMF, exactly. Filers don't reliably split or spell out
+    names, so one giver can also be 'Rue Quillon'/'' or 'Quillon'/'R'. Those names are never
+    added to the figure, and never silently left out of it either: the figure is a miss while
+    the name's group holds any other name with receipts on this schedule, unless
+    names=as_filed, which gives the figure for this name alone, for a person to check against
+    the other names it lists (`QueryResult.unsettled`).
     """
     from . import calaccess
 
     gated, form_type = _gate(form_type)
-    schedule, schedule_args, label = _schedule(form_type)
+    names_gated = _names_gate(names)
+    _schedule(form_type)   # refuses a padded form_type before anything is opened
     con = calaccess.connect_citable(root)
-    who = " AND UPPER(TRIM(r.CTRIB_NAML)) = UPPER(TRIM(?))"
-    who_args: list[Any] = [contributor]
-    if contributor_first:
-        who += " AND UPPER(TRIM(COALESCE(r.CTRIB_NAMF,''))) = UPPER(TRIM(?))"
-        who_args.append(contributor_first)
-    late = _late_reports(con, filer_id, form_type, contributor, contributor_first, who, who_args)
+    try:
+        return _contributor_figure(con, filer_id, contributor, contributor_first, form_type,
+                                   gated, names_gated)
+    finally:
+        con.close()
+
+
+def _contributor_figure(con: Any, filer_id: str, contributor: str, contributor_first: str,
+                        form_type: str, gated: bool, names_gated: bool) -> QueryResult:
+    """`_contributor_total`, on an open connection."""
+    late = _late_reports(con, filer_id, form_type)
+    first = bool(contributor_first)
+    who = " AND " + _name_sql("r", first)
+    who_args: list[Any] = [contributor] + ([contributor_first] if first else [])
+    schedule, schedule_args, label = _schedule(form_type)
     args: list[Any] = [str(filer_id)] + who_args + schedule_args
     inner = DEDUPED_RECEIPTS.format(extra=who + schedule)
-    # One pass: the dedup is the expensive part, and the first-name count needs it too. The
-    # names come back whole, not counted, since a late giver may add to them (below).
     row = con.execute(f"""
         SELECT SUM(d.AMT) amt, COUNT(d.AMT) n, COUNT(*) gifts,
-               json_group_array(DISTINCT UPPER(TRIM(COALESCE(d.CTRIB_NAMF,'')))) firsts,
                GROUP_CONCAT(DISTINCT CASE WHEN d.AMT IS NOT NULL THEN d.FILING_IDS END) ids
         FROM ({inner}) d
     """, args).fetchone()
     n, gifts = int(row["n"] or 0), int(row["gifts"] or 0)
+
+    # Every name the filer's receipts on this schedule are filed under, and whether the figure
+    # counts it. Listed before anything is summed: summing every name first took ten times as
+    # long as the figure itself, on a synthetic committee of 60,000 gifts.
+    listed = con.execute(f"""
+        SELECT {_KL.format(t='r')} kl, {_KF.format(t='r')} kf, MAX({_name_sql('r', first)}) mine
+        FROM RCPT_LATEST r JOIN FILER_FILING f ON f.FILING_ID = r.FILING_ID
+        WHERE f.FILER_ID = ?{schedule}
+        GROUP BY kl, kf
+    """, [*who_args, str(filer_id), *schedule_args]).fetchall()
+    counted = {("name", r["kl"], r["kf"]) for r in listed if r["mine"]}
+    on_schedule = {("name", r["kl"], r["kf"]): _name(r["kl"], r["kf"]) for r in listed}
+    late_names = {("late", i): _name(e["naml"], e["namf"]) for i, e in enumerate(late)}
+    asked = {("asked",): _name(contributor, contributor_first)}
+
+    def group(*parts: dict[Any, _Name]) -> list[Any]:
+        # The group of the names the figure counts, or of the name asked for when it counts
+        # none. Not the asked-for name beside counted ones: a surname alone would join every
+        # giver who has it, and another Quillon's whole name is not a name of this Rue's.
+        words = {k: w for part in parts for k, w in part.items()}
+        of = _groups(words)
+        seeds = {of[k] for k in (counted or asked)} | {_ANYONE}
+        if _ANYONE in {of[k] for k in (counted or asked)}:
+            seeds = set(of.values())   # a name with no words could be anyone's
+        return [k for k in words if of[k] in seeds and k not in counted and k not in asked]
+
+    seed = {} if counted else asked
+    # The name check groups the names on the schedule alone. A late entry that links this name
+    # to another is in its group for the late check, which form_type=A lifts; it does not hold
+    # the other name against the figure once it does.
+    others = [(k[1], k[2]) for k in group(on_schedule, seed)]
+    together = group(on_schedule, late_names, seed) if late else []
+    theirs = [late[k[1]] for k in together if k[0] == "late"]
+    # Names on the schedule a late entry links to this one: shown with the late entries held,
+    # since the late report alone may look too small to matter.
+    linked = [(k[1], k[2]) for k in together if k[0] == "name" and (k[1], k[2]) not in others]
+
+    def other_names() -> tuple[list[Any], dict[tuple[str, str], str]]:
+        rows = _givers(con, filer_id, form_type, others)
+        return rows, _identity(con, filer_id, form_type, [(g["kl"], g["kf"]) for g in rows[:4]])
+
     if gifts == 0:
         # A zero here is ambiguous and dangerous: it reads as "this donor gave nothing" when
         # it usually means the name was typed slightly differently ("… PAC" vs "… PAC SCC").
@@ -815,60 +1266,84 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
         # The name matched, on a schedule this did not count: say where, rather than leave
         # "no match" to send the researcher off retyping a name that was right.
         note, hint = _elsewhere(con, filer_id, form_type, who, who_args)
-        if late_note := _late_note(late):
+        if names_note := _names_note(*other_names()):
+            note += f"; {names_note}"
+        if late_note := _late_note(theirs):
             note += f"; {late_note}"
         omitted = _left_out_receipts(con, str(filer_id), who + schedule, args[1:])
-        con.close()
         return QueryResult(value=None, rows=0, found=False, suggestions=hint + near,
                            detail=f"0 itemized {label} gift(s){note}", omitted=omitted)
 
-    if not contributor_first:
-        firsts = json.loads(row["firsts"])
-        # A late giver counts too, when their name could be nobody's here: a surname shared
-        # with another giver is ambiguous whichever form that giver is on, and the detail would
-        # otherwise put their gift under it. One name filed another way is still one giver.
-        known = [_name_words(contributor, f) for f in firsts]
-        givers = {_name_words(e["naml"], e["namf"]) for e in late}
-        others = {w for w in givers if not any(_could_be(w, k) for k in known)}
-        people = len(firsts) + len(others)
-        if people > 1:
-            # Summing several people under one surname is how a nonexistent contributor
-            # appeared.
-            con.close()
-            return QueryResult(value=None, rows=gifts, found=False,
-                               detail=f"{gifts} itemized {label} gift(s) across {people} "
-                                      "DIFFERENT first names — this is not one contributor; "
-                                      "pass contributor_first")
+    if not first:
+        # Summing several people under one surname is how a nonexistent contributor appeared.
+        # Whatever the gates: the names it counts, and the late givers who could be the name
+        # asked for. Asked pairwise, never through `_groups`: a closure over-merges, which
+        # bounds a figure safely and counts people short. A bare 'Quillon' links Rue and Tom,
+        # and they are still two.
+        spans = {on_schedule[k]: _filed(k[1], k[2]) for k in counted}
+        spans.update({late_names[k]: f"{_filed(e['naml'], e['namf'])} (late)"
+                      for k, e in zip(late_names, late)
+                      if _could_be(late_names[k], asked[("asked",)])})
+        firsts = sorted({k[2] for k in counted})
+        if any(not _could_be(a, b) for a, b in itertools.combinations(spans, 2)):
+            return QueryResult(
+                value=None, rows=gifts, found=False,
+                detail=f"{gifts} itemized {label} gift(s) across DIFFERENT first names, which "
+                       "cannot all be one giver's ("
+                       + ", ".join(sorted(set(spans.values()), key=str.casefold))
+                       + ") — this is not one contributor; pass contributor_first")
+        if len(firsts) > 1:
+            # R and Rue could be one giver's, or two givers': either way, not a figure for one
+            # name as filed.
+            return QueryResult(
+                value=None, rows=gifts, found=False,
+                detail=f"{gifts} itemized {label} gift(s) across {len(firsts)} first names that "
+                       f"could be one giver's or {len(firsts)} givers' "
+                       f"({', '.join(repr(f) for f in firsts)}) — not one contributor as filed; "
+                       "pass contributor_first")
     left_out = _unread(gifts - n)
     omitted = _left_out_receipts(con, str(filer_id), who + schedule, args[1:])
+    rows, where = other_names() if others else ([], {})
     if n == 0:
         # The name matched, but no gift states an amount: unknown money, never "$0.00". A
         # left-out gift that states one would make it a figure, so the miss carries it.
-        con.close()
-        note = _late_note(late)
+        note = "; ".join(x for x in (_names_note(rows, where), _late_note(theirs)) if x)
         miss = _no_rows(f"0 itemized {label} gift(s) counted{left_out}"
                         + (f"; {note}" if note else ""))
         miss.omitted = omitted
         return miss
     total = float(row["amt"])
     detail = f"{n} itemized {label} gift(s){left_out}"
-    if late and gated:
-        # A schedule-A total that is known to be short. Green, it is a finding: "gave $5,000",
-        # a week after a $50,000 late gift. Not flagged for a left-out schedule: it counts gifts,
-        # so the flag's note would be false, and form_type=A carries both.
-        con.close()
-        return QueryResult(value=None, rows=n, found=False, suggestions=["form_type=A"],
-                           detail=f"${total:,.2f} across {detail}, but {_late_note(late)} — not "
-                                  "a complete total; form_type=A gives the schedule-A figure "
-                                  "alone, for a person to check against these late reports")
-    unrestated = _receipt_shares(con, inner, args, row["ids"])
-    con.close()
-    if note := _late_note(late, NOT_COMPLETE):
+    held_names = rows + (_givers(con, filer_id, form_type, linked) if linked and theirs else [])
+    # A figure known to be short, or that could be. Green, it is a finding: "gave $5,000", a
+    # week after a $50,000 late gift, or beside $5,000 more filed under the whole name. Not
+    # flagged for a left-out schedule: it counts gifts, so the flag's note would be false, and
+    # form_type=A or names=as_filed carries it.
+    causes, fixes = [], []
+    if gated and theirs:
+        causes.append(_late_note(theirs))
+        fixes.append("form_type=A gives the schedule-A figure alone, for a person to check "
+                     "against these late reports")
+    if names_gated and rows:
+        causes.append(_names_note(rows, where))
+        fixes.append("names=as_filed gives the figure under this name alone, for a person to "
+                     "check against these names")
+    if causes:
+        return QueryResult(value=None, rows=n, found=False,
+                           suggestions=[f.split(" ")[0] for f in fixes],
+                           detail=f"${total:,.2f} across {detail}, but {' and '.join(causes)} — "
+                                  f"not a complete total; {'; and '.join(fixes)}")
+    if note := _late_note(theirs, NOT_COMPLETE):
         detail += f"; {note}"
-    # Asked for by name, the schedule's figure as filed, held for a person while a late gift is
-    # pending: the note alone would render green.
-    return QueryResult(value=total, rows=n, detail=detail, unrestated=unrestated,
-                       omitted=omitted, late=_by_report(late))
+    if note := _names_note(rows, where, AS_FILED):
+        detail += f"; {note}"
+    # Asked for by a named schedule or as filed, the figure goes to a person while a late gift
+    # or another name could change it: the note alone would render green.
+    return QueryResult(value=total, rows=n, detail=detail,
+                       unrestated=_receipt_shares(con, inner, args, row["ids"]),
+                       omitted=omitted, late=_by_report(theirs),
+                       names=[_name_line(g, where.get((g["kl"], g["kf"]), ""))
+                              for g in held_names])
 
 
 def _filer_total(root: Path, *, filer_id: str, form_type: str | None = None) -> QueryResult:
@@ -924,8 +1399,8 @@ def _filer_total(root: Path, *, filer_id: str, form_type: str | None = None) -> 
                        omitted=omitted, late=_by_report(late))
 
 
-def _top_contributor(root: Path, *, filer_id: str,
-                     form_type: str | None = None) -> QueryResult:
+def _top_contributor(root: Path, *, filer_id: str, form_type: str | None = None,
+                     names: str = "") -> QueryResult:
     """The single largest contributor to a filer, by itemized total.
 
     Grouped by last AND first name: CTRIB_NAML is the surname for individuals, so grouping on
@@ -941,43 +1416,51 @@ def _top_contributor(root: Path, *, filer_id: str,
     many there are, by name as displayed (first name first) and ignoring case. A large tie is
     not refused: the whole set is a true answer that reproduces, and the detail says it is no
     single largest contributor. A cap would be an arbitrary number turning that answer into a
-    miss. The cost is a value as long as the tie, which a citation records whole.
+    miss. The cost is a value as long as the tie, which a citation records whole. Two tied
+    names that show alike are listed as filed (`_filed`), since one giver filed two ways shows
+    as "Rue Quillon | Rue Quillon", which reads as one donor.
 
-    Left unset, it is a miss when a late-reported gift no schedule A restates yet
-    (`_pending_late`) could change the answer: when adding a contributor's pending late gifts
-    to their schedule-A total could reach the top, or a late gift could break a tie. A late
-    gift that cannot is named in the detail, and the ranking stands. form_type=A ranks
-    schedule A alone, and does not verify while a late gift could change it
-    (`QueryResult.unsettled`).
+    Each name is ranked exactly as filed, and names are never added together. Filers don't
+    reliably split or spell out names, so one giver can be ranked under two, each short of what
+    they gave. So the answer stands only when (`_could_change_ranking`):
+    1. the leader's own total is at least every other group's upper bound (`_groups`), and
+    2. no other name is in the leader's group.
+    Otherwise it is a miss naming each group that could change the answer and its bound,
+    unless names=as_filed, which ranks each name apart and says whether that could.
+
+    Left unset, `form_type` holds pending late gifts no schedule A restates yet
+    (`_pending_late`) against the ranking the same way: a miss when adding them to what their
+    group could hold could reach the top or break a tie. A late gift that cannot is named in
+    the detail, and the ranking stands. form_type=A ranks schedule A alone, and does not verify
+    while a late gift could change it (`QueryResult.unsettled`); names=as_filed does not while
+    names that could be one giver's could.
     """
     from . import calaccess
 
     gated, form_type = _gate(form_type)
-    schedule, schedule_args, label = _schedule(form_type)
+    names_gated = _names_gate(names)
+    _schedule(form_type)   # refuses a padded form_type before anything is opened
     con = calaccess.connect_citable(root)
+    try:
+        return _ranking(con, filer_id, form_type, gated, names_gated)
+    finally:
+        con.close()
+
+
+def _ranking(con: Any, filer_id: str, form_type: str, gated: bool,
+             names_gated: bool) -> QueryResult:
+    """`_top_contributor`, on an open connection."""
     late = _late_reports(con, filer_id, form_type)
-    inner = DEDUPED_RECEIPTS.format(extra=schedule)
-    args: list[Any] = [str(filer_id)] + schedule_args
-    # Only gifts with an amount are ranked: read as 0.0, a contributor whose gifts all had blank
-    # amounts tied one whose stated total was $0. The rest are counted, by a window over every
-    # contributor, so the dedup runs once. A contributor with no readable gift sums to NULL,
-    # which sorts last and is never ranked.
-    # MIN, not a bare column: a group's rows can spell its name in another case or with padding,
-    # and a bare column is whichever row SQLite reads, so the value's spelling could change
-    # with the order the rows were loaded in.
-    group = f"""
-        SELECT MIN(d.CTRIB_NAML) nm, MIN(d.CTRIB_NAMF) nf, SUM(d.AMT) amt, COUNT(d.AMT) n,
-               SUM(COUNT(*) - COUNT(d.AMT)) OVER () unread, UPPER(TRIM(d.CTRIB_NAML)) kl,
-               UPPER(TRIM(COALESCE(d.CTRIB_NAMF,''))) kf
-        FROM ({inner}) d
-        GROUP BY UPPER(TRIM(d.CTRIB_NAML)), UPPER(TRIM(COALESCE(d.CTRIB_NAMF,'')))
-    """
+    schedule, schedule_args, label = _schedule(form_type)
     # Every contributor's total, not the first few: a tie is everyone at the top. Fetched with
     # LIMIT 4, five givers at the contribution limit came back as a four-way tie naming
     # whichever four SQLite picked, and that value reproduced. The names order equal totals, so
-    # the tie and the late-report check below read them in one order.
-    groups = con.execute(f"{group} ORDER BY amt DESC, kl, kf", args).fetchall()
-    unread = int(groups[0]["unread"] or 0) if groups else 0
+    # the tie and the checks below read them in one order.
+    groups = _givers(con, filer_id, form_type)
+    # Only gifts with an amount are ranked: read as 0.0, a contributor whose gifts all had blank
+    # amounts tied one whose stated total was $0. A contributor with no readable gift sums to
+    # NULL, which sorts last and is never ranked.
+    unread = sum(int(g["unread"] or 0) for g in groups)
     groups = [g for g in groups if g["amt"] is not None]
     row = groups[0] if groups else None
     if row is None:
@@ -986,7 +1469,6 @@ def _top_contributor(root: Path, *, filer_id: str,
         # Not asked while a gift has no amount: that is a miss whatever the left-out rows hold.
         omitted = [] if unread else _left_out_receipts(con, str(filer_id), schedule,
                                                        schedule_args)
-        con.close()
         late_note = _late_note(late)
         miss = _no_rows(f"no {label} contributions {'counted' if unread else 'found'} for "
                         f"filer {filer_id}{_unread(unread)}{note}"
@@ -995,131 +1477,282 @@ def _top_contributor(root: Path, *, filer_id: str,
         return miss
     top = float(row["amt"] or 0)
     tied = [r for r in groups if abs(float(r["amt"] or 0) - top) < TOLERANCE]
-    names = [_shown(r["nf"], r["nm"]) for r in tied]
+    shown = [_shown(r["nf"], r["nm"]) for r in tied]
+    if not all(shown):
+        # Its value would be "" (or a tie with an empty part), and "" matches "": a green
+        # citation naming nobody as the largest contributor. Whatever the gates: no name as
+        # filed can be the answer, and there is nobody to hold it for.
+        return _no_rows(f"{len(tied)} giver(s) at the top of {label} gifts at ${top:,.0f}, and "
+                        f"{len(shown) - len(list(filter(None, shown)))} filed with no name at "
+                        "all — no name to give as the largest contributor; open the filings")
+    alike = Counter(n.casefold() for n in shown)
+    shown = [n if alike[n.casefold()] == 1 else f"{n} (filed {_filed(r['nm'], r['nf'])})"
+             for n, r in zip(shown, tied)]
     # Sorted as displayed, ignoring case. A later export can add a row that spells a name in
     # another case, and a case-sensitive sort then moved "Rue ABBOT" from after "Rue Aaron" to
     # before it: `matches()` ignores case but not order.
-    listed = " | ".join(sorted(names, key=str.casefold))
+    listed = " | ".join(sorted(shown, key=str.casefold))
     if unread:
         # A total can say "the stated gifts come to X" and name what it left out. A rank
         # cannot: a gift of unknown size could make anyone largest, so while one exists no
         # contributor is established as the largest. The stated leader is named as a lead to
         # check by hand, not a finding.
-        con.close()
-        lead = names[0] if len(tied) == 1 else f"a {len(tied)}-way tie ({listed})"
+        lead = shown[0] if len(tied) == 1 else f"a {len(tied)}-way tie ({listed})"
         return _no_rows(f"{lead} leads the stated amounts at ${top:,.0f} in {label} gifts, but "
                         f"no largest contributor can be named{_unread(unread, ' to this filer')}")
     # Past the check above, every contributor has a readable total: none sums to NULL.
-    contenders, moving = [], []
-    if late:
-        contenders, moving = _could_change_ranking(groups, tied, top, late, label)
-    if contenders and gated:
-        con.close()
-        more = f"; and {len(contenders) - 3} more" if len(contenders) > 3 else ""
+
+    # Each check runs once: with no late entry, the late and the names-only checks are one.
+    # So does each grouping: the late check and the one with both group the same names.
+    checks: dict[tuple[bool, bool], list[_Contender]] = {}
+    grouped: dict[bool, dict[Any, int]] = {}
+
+    def check(use_late: bool, use_names: bool) -> list[_Contender]:
+        key = (use_late and bool(late), use_names)
+        if key not in checks:
+            if key[0] not in grouped and (key[0] or key[1]):
+                names = {("name", g["kl"], g["kf"]): _name(g["kl"], g["kf"]) for g in groups}
+                if key[0]:
+                    names.update({("late", i): _name(e["naml"], e["namf"])
+                                  for i, e in enumerate(late)})
+                grouped[key[0]] = _groups(names)
+            checks[key] = _could_change_ranking(groups, tied, top, late if key[0] else [],
+                                                use_names=key[1], grouped=grouped.get(key[0]))
+        return checks[key]
+
+    def blamed(use_late: bool, use_names: bool) -> tuple[bool, bool]:
+        # A cause is blamed when it could change the ranking alone, so a detail never blames a
+        # late gift too small to matter, or names that aren't on the ranking. When only the two
+        # together could, both are.
+        by_late = use_late and bool(check(True, False))
+        by_name = use_names and bool(check(False, True))
+        if not (by_late or by_name) and (use_late or use_names) and check(use_late, use_names):
+            return use_late and bool(late), use_names
+        return by_late, by_name
+
+    said: dict[int, list[str]] = {}
+
+    def lines(could: list[_Contender]) -> list[str]:
+        # Once per list: `_identity` is a query of its own.
+        if id(could) not in said:
+            where = _identity(con, filer_id, form_type, [
+                (g["kl"], g["kf"]) for c in could[:LATE_SHOWN] if c.kind == "group"
+                for g in c.ranked[:3]])
+            said[id(could)] = [_contender_line(c, label, where) for c in could]
+        return said[id(could)]
+
+    def listing(could: list[_Contender]) -> str:
+        return ("; ".join(lines(could)[:3])
+                + (f"; and {len(could) - 3} more" if len(could) > 3 else ""))
+
+    if check(gated, names_gated):
+        by_late, by_name = blamed(gated, names_gated)
+        causes = ([_late_note(late)] if by_late else []) + ([SPLIT] if by_name else [])
+        fixes = ((["form_type=A ranks schedule A alone, for a person to check against these "
+                   "late reports"] if by_late else [])
+                 + (["names=as_filed ranks each name as filed, for a person to check whether "
+                     "they are one giver"] if by_name else []))
+        # The contenders of the cause blamed: each lifts only its own.
+        could = check(by_late, by_name)
         return _no_rows(f"{listed} lead{'s' if len(tied) == 1 else ''} "
-                        f"schedule A at ${top:,.0f}, but {_late_note(late)} could change the "
-                        f"ranking: {'; '.join(contenders[:3])}{more} — not a settled ranking; "
-                        "form_type=A ranks schedule A alone, for a person to check against "
-                        "these late reports", ["form_type=A"])
+                        f"{'schedule ' + form_type if form_type else 'every schedule'} at "
+                        f"${top:,.0f}, but {' and '.join(causes)} could change the ranking: "
+                        f"{listing(could)} — not a settled ranking; {'; and '.join(fixes)}",
+                        [f.split(" ")[0] for f in fixes])
+    # It stands on the gates in force. What a lifted gate's cause could do, beside what the gate
+    # still in force weighs, goes in the detail and holds the value for a person
+    # (`QueryResult.unsettled`): a note alone renders green. Asked alone, a late gift that moves
+    # the ranking only together with names that could be one giver's was not held.
+    moved = check(True, names_gated) if late and not gated else []
+    split = check(gated, True) if not names_gated else []
+    if not (gated or names_gated or moved or split) and check(True, True):
+        moved = split = check(True, True)   # only the two together could: hold both
     # Every gift, not only the top contributor's: the ranking is made of all of them, and a
     # gift a later amendment dropped can put someone at the top, or keep someone off it. So can
     # a gift the ranking leaves out, on a schedule a later amendment did not restate. Neither is
-    # asked while a gift has no amount, or a late gift holds the ranking (above).
+    # asked while a gift has no amount, or a late gift or a name holds the ranking (above).
+    inner = DEDUPED_RECEIPTS.format(extra=schedule)
+    args: list[Any] = [str(filer_id)] + schedule_args
     ids = con.execute(f"""
         SELECT GROUP_CONCAT(DISTINCT d.FILING_IDS) ids FROM ({inner}) d
         WHERE d.AMT IS NOT NULL
     """, args).fetchone()["ids"]
     unrestated = _receipt_shares(con, inner, args, ids)
     omitted = _left_out_receipts(con, str(filer_id), schedule, schedule_args)
-    con.close()
     note = _late_note(late, ", not counted — they " + (
-        "could change the ranking" if contenders else "cannot change the ranking"))
+        "could change the ranking" if moved else "cannot change the ranking"))
     note = f"; {note}" if note else ""
-    # Held for a person only when one could change it, naming the ones that could: a ranking no
-    # late gift can move stands, and a report that cannot move it is not the one to open. If no
-    # contender holds a late entry of its own, the ranking is still unsettled, so every late
-    # report is held rather than none: holding none would let it verify.
-    held = _by_report(moving or late) if contenders else []
+    if split:
+        note += f"; {SPLIT}, not counted as one, could change the ranking: {listing(split)}"
+    # Held for a person only when one could change it, naming the late reports that could: a
+    # ranking no late gift can move stands, and a report that cannot move it is not the one to
+    # open. If no contender holds a late entry of its own, every late report is held, since
+    # holding none would let it verify.
+    moving = list({id(e): e for c in moved for e in c.late}.values())
+    # A late entry can move it by linking names on the schedule into one group: the person
+    # checking has to see those names, not only a late report too small to matter alone.
+    linked = [c for c in moved if c.kind == "group" and not any(c is d for d in split)]
+    held = {"late": _by_report(moving or late) if moved else [],
+            "names": lines(split) + (lines(linked) if linked else [])}
     if len(tied) > 1:
         # ORDER BY ... LIMIT 1 makes an arbitrary pick among equals, and a verifier rightly
         # rejected a "largest contributor" that was really a two-way tie. Return the tie.
-        return QueryResult(value=listed, rows=len(tied),
+        return QueryResult(value=listed, rows=len(tied), unrestated=unrestated, omitted=omitted,
+                           **held,
                            detail=f"{len(tied)}-WAY TIE at ${top:,.0f} in {label} gifts — not "
                                   "a single largest contributor; do not word this as one"
-                                  + note, unrestated=unrestated, omitted=omitted, late=held)
-    return QueryResult(value=names[0], rows=int(row["n"] or 0),
-                       detail=f"${top:,.0f} across {row['n']} {label} gift(s){note}",
-                       unrestated=unrestated, omitted=omitted, late=held)
+                                  + note)
+    return QueryResult(value=shown[0], rows=int(row["n"] or 0), unrestated=unrestated,
+                       omitted=omitted, **held,
+                       detail=f"${top:,.0f} across {row['n']} {label} gift(s){note}")
+
+
+class _Contender(NamedTuple):
+    """Someone who could be at the top instead, or a leader who could move."""
+    reach: float                    # the most they could reach
+    kind: str                       # "name", "late" (a late giver of their own) or "group"
+    ranked: tuple[Any, ...]         # the names on the ranking, rows of `_givers`
+    late: tuple[dict[str, Any], ...]   # the late entries that could be theirs
+    shown: str                      # the name a tie would show, for order
+
+
+_INF = float("inf")
+
+
+def _late_range(entries: Any) -> tuple[float, float]:
+    """(the most, the least) late entries could add to a giver's total: every positive amount,
+    or every negative one, as if no entry were a copy of another. An amount nobody stated could
+    be anything."""
+    up = down = 0.0
+    for e in entries:
+        a = e["amt"]
+        up = _INF if a is None else up + max(a, 0.0)
+        down = -_INF if a is None else down + min(a, 0.0)
+    return up, down
 
 
 def _could_change_ranking(groups: list[Any], tied: list[Any], top: float,
-                          late: list[dict[str, Any]],
-                          label: str) -> tuple[list[str], list[dict[str, Any]]]:
-    """(who the pending late entries could put at the top, described; the entries held against
-    them). Both empty if nobody.
+                          late: list[dict[str, Any]], *, use_names: bool,
+                          grouped: dict[Any, int] | None = None) -> list[_Contender]:
+    """Who could be at the top instead of the leaders, or a leader who could move: highest
+    reach first. Empty if the ranking stands.
 
-    Every contributor could end anywhere from their total plus every negative pending amount
-    to it plus every positive one, as if no entry were a copy of another, and an unreadable
-    amount could be anything. A late entry counts for every contributor it could be
-    (`_could_be`). A late name that could be nobody on the schedule is a giver of its own, and
-    every late entry that could be them counts for them too: names that could all be one giver
-    are each within the fullest of them, so that name's range holds all of their gifts. Each of
-    these only widens a range, which only makes the answer refuse more often. The answer stands
-    if nobody outside the leaders could come within a cent of the lowest a leader could fall
-    to, and no leader of a tie could move.
+    Names are grouped by `_groups`, over the names on the ranking and the pending late entries
+    in `late`. A group is never a figure, only a bound on one. What each could reach:
+    - `use_names`: a group. Its bound is every positive gift in it, since any of its names
+      could be one giver's and a name's gifts could be split between two givers, plus every
+      positive late amount in it. A gift nobody stated an amount for makes it unbounded: a blank
+      is not zero. (`_ranking` names no largest contributor while one exists, so this is the
+      check's own guard, not one it relies on its caller for.) A group holding one name ranks as that name, its own total plus its group's
+      late amounts, and its late entries under another name could be a giver of their own. A
+      leader's group has to hold no other name on the ranking; if it does, it is a contender
+      whatever its bound, since another giver in it could pass the leader.
+    - otherwise each name as filed, its own total plus every late amount in its group, and the
+      late entries filed under none of its names, as a giver of their own.
+    Each late entry counts once per giver, never once per name it could be, so a chain of names
+    cannot sum it twice.
+
+    The answer stands if nobody outside the leaders could come within a cent of the lowest a
+    leader could fall to, and no leader of a tie could move. Everything uncertain only widens a
+    range, which only makes the answer refuse more often. `grouped` is `_groups` of the same
+    names, when the caller has it already.
     """
-    scheduled = {(g["kl"], g["kf"]): float(g["amt"] or 0) for g in groups}
-    names = {(g["kl"], g["kf"]): _shown(g["nf"], g["nm"]) for g in groups}
-    words = {(g["kl"], g["kf"]): _name_words(g["nm"], g["nf"]) for g in groups}
-    # Givers only the late reports name. Found before any entry is counted, so each is held
-    # against every late entry, not only those after it: counted as they came, "Ada Quennell"
-    # joined an earlier "Ada C Quennell" and never "Ada B Quennell", and a $3,000 gift under
-    # each of her names fell short of a $5,000 leader she might pass.
-    on_schedule = list(words.values())
-    for e in late:
-        mine = _name_words(e["naml"], e["namf"])
-        if not any(_could_be(mine, w) for w in on_schedule):
-            words.setdefault(("", mine), mine)
-            names.setdefault(("", mine), _shown(e["namf"], e["naml"]))
-    lo = dict(scheduled)
-    hi = dict(scheduled)
-    owed: dict[Any, list[float | None]] = {}
-    entries: dict[Any, list[dict[str, Any]]] = {}
-    for e in late:
-        mine = _name_words(e["naml"], e["namf"])
-        a = e["amt"]
-        for k in [k for k, w in words.items() if _could_be(mine, w)]:
-            lo.setdefault(k, 0.0)
-            hi.setdefault(k, 0.0)
-            owed.setdefault(k, []).append(a)
-            entries.setdefault(k, []).append(e)
-            lo[k] = -float("inf") if a is None else lo[k] + min(a, 0.0)
-            hi[k] = float("inf") if a is None else hi[k] + max(a, 0.0)
-    # Not a set: a set iterates by hash, which changes from one process to the next, and the
-    # leaders' order is the last word on the order of two who reach as high under one name.
-    leaders = dict.fromkeys((r["kl"], r["kf"]) for r in tied)
+    if not (use_names or late):
+        return []   # every name as filed, and nothing to add to any: the ranking is the answer
+    ranked = {("name", g["kl"], g["kf"]): g for g in groups}
+    words = {k: _name(g["kl"], g["kf"]) for k, g in ranked.items()}
+    words.update({("late", i): _name(e["naml"], e["namf"]) for i, e in enumerate(late)})
+    of = grouped if grouped is not None else _groups(words)
+    members: dict[int, list[Any]] = {}
+    for k in words:
+        members.setdefault(of[k], []).append(k)
+    # A name with no words could be in any group, so it is counted in each.
+    anyone = members.pop(_ANYONE, [])
+    members = {gid: ks + anyone for gid, ks in members.items()}
+    leaders = dict.fromkeys(("name", r["kl"], r["kf"]) for r in tied)
+    lo: dict[Any, float] = {}
+    hi: dict[Any, float] = {}
+    owed_by: dict[int, tuple[dict[str, Any], ...]] = {}
+    units: list[_Contender] = []
+    forced: list[_Contender] = []
+    stuck: set[Any] = set()     # leaders in a group with another name
+    home = {k: gid for gid, ks in members.items() for k in ks if words[k].words}
+    for gid, ks in members.items():
+        names = [k for k in ks if k[0] == "name"]
+        owed = owed_by[gid] = tuple(late[k[1]] for k in ks if k[0] == "late")
+        up, down = _late_range(owed)
+        for k in names:
+            total = float(ranked[k]["amt"] or 0)
+            lo[k], hi[k] = total + down, total + up
+        if use_names and len(names) > 1:
+            rows = tuple(ranked[k] for k in names)
+            bound = (_INF if any(g["unread"] for g in rows)
+                     else sum(float(g["pos"] or 0) for g in rows)) + up
+            unit = _Contender(bound, "group", rows, owed, _shown(rows[0]["nf"], rows[0]["nm"]))
+            if lead := [k for k in names if k in leaders]:
+                forced.append(unit)
+                stuck.update(lead)
+            else:
+                units.append(unit)
+            continue
+        units += [_Contender(hi[k], "name", (ranked[k],), owed,
+                             _shown(ranked[k]["nf"], ranked[k]["nm"]))
+                  for k in names if k not in leaders]
+        filed = {words[k].words for k in names}
+        strangers = tuple(late[k[1]] for k in ks
+                          if k[0] == "late" and words[k].words not in filed)
+        if strangers:
+            units.append(_Contender(_late_range(strangers)[0], "late", (), strangers,
+                                    _shown(strangers[0]["namf"], strangers[0]["naml"])))
+    # A name with no words is in every group, so it made a unit in each: keep its highest.
+    best: dict[Any, _Contender] = {}
+    for u in units:
+        key = (u.kind, tuple((g["kl"], g["kf"]) for g in u.ranked),
+               tuple(id(e) for e in u.late) if u.kind == "late" else ())
+        if key not in best or u.reach > best[key].reach:
+            best[key] = u
+    units = list(best.values())
     floor = min(lo[k] for k in leaders)
-    could = [k for k in hi if k not in leaders and hi[k] > floor - TOLERANCE]
+    could = forced + [u for u in units if u.reach > floor - TOLERANCE]
+    free = [k for k in leaders if k not in stuck]
+
+    def leader(k: Any) -> _Contender:
+        g = ranked[k]
+        return _Contender(hi[k], "name", (g,), owed_by[home[k]], _shown(g["nf"], g["nm"]))
+
     if len(leaders) > 1:
-        could += [k for k in leaders if lo[k] <= top - TOLERANCE or hi[k] >= top + TOLERANCE]
+        could += [leader(k) for k in free if lo[k] <= top - TOLERANCE or hi[k] >= top + TOLERANCE]
     elif could:
-        could += [k for k in leaders if lo[k] <= top - TOLERANCE]
-
-    def described(k: Any) -> str:
-        amounts = owed.get(k) or []
-        late_part = ("no late gift" if not amounts else "a late amount nobody stated"
-                     if None in amounts else f"${sum(a or 0.0 for a in amounts):,.0f} late")
-        return (f"{names[k] or 'an unnamed giver'} (${scheduled.get(k, 0.0):,.0f} on {label}, "
-                f"{late_part})")
-
+        could += [leader(k) for k in free if lo[k] <= top - TOLERANCE]
     # Highest reach first, then by name as a tie is listed, so a refusal names the same three
     # on every run: in load order, two late givers filed the same day could swap. Reach to the
     # cent: summed as floats, $6,000.01 and $0.02 reach 6000.030000000001, which put that giver
     # ahead of one at $6,000.03 whose name comes first.
-    moving = {id(e): e for k in could for e in entries.get(k, [])}
-    return ([described(k) for k in sorted(could, key=lambda k: (-round(hi[k], 2),
-                                                                 names[k].casefold()))],
-            list(moving.values()))
+    return sorted(could, key=lambda c: (-round(c.reach, 2), c.shown.casefold(), c.kind,
+                                        [(g["kl"], g["kf"]) for g in c.ranked]))
+
+
+def _late_part(entries: Any) -> str:
+    """How a contender's late entries read. Display only."""
+    amounts = [e["amt"] for e in entries]
+    return ("no late gift" if not amounts else "a late amount nobody stated"
+            if None in amounts else f"${sum(a or 0.0 for a in amounts):,.0f} late")
+
+
+def _contender_line(c: _Contender, label: str, where: dict[tuple[str, str], str]) -> str:
+    """How a refusal names one contender: a name as the ranking shows it, with its total and
+    its group's late gifts; or a group, each name as filed and where its gifts came from, with
+    the group's bound. Display only."""
+    if c.kind != "group":
+        scheduled = float(c.ranked[0]["amt"] or 0) if c.ranked else 0.0
+        return (f"{c.shown or 'an unnamed giver'} (${scheduled:,.0f} on {label}, "
+                f"{_late_part(c.late)})")
+    lines = [_name_line(g, where.get((g["kl"], g["kf"]), "")) for g in c.ranked[:3]]
+    more = f" + {len(c.ranked) - 3} more names" if len(c.ranked) > 3 else ""
+    bound = (f"${c.reach:,.0f}" if c.reach != _INF
+             else "any amount, since a gift in it has no readable amount")
+    return (f"{' + '.join(lines)}{more}, which could be one giver's: up to {bound} on {label}"
+            + (f", with {_late_part(c.late)}" if c.late else ""))
 
 
 def _ie_total(root: Path, *, candidate_last: str, first: str = "", stance: str = "",
@@ -1306,18 +1939,33 @@ REGISTRY: dict[str, Query] = {
     # grouping it shares with these queries: it changes no value, and DEDUPED_RECEIPTS is the
     # same SQL. Nor for ie_total's `reattributed`, for rows it leaves out: verification acts on
     # it.
+    # v7 of contributor_total and v8 of top_contributor: names are grouped by the transitive
+    # closure of `_could_be` (`_groups`), which reads an initial as short for a word either way
+    # round, after accents are folded. A figure is a miss while its name's group holds another
+    # name on the schedule, and a ranking while the leader's does or another group's upper
+    # bound reaches the top (names=as_filed lifts that gate alone). Late entries are held
+    # against a figure by the same groups, not pairwise, and a Form 496 Part 3 row under another
+    # name is held as that name. Two tied names that show alike are listed as filed. A value
+    # names=as_filed gives is held for a person while another name could change it
+    # (`QueryResult.names`). v6 and v7 ranked each name apart, green, and matched late entries by
+    # whole words.
+    # v7 of filer_total, with those: the cross-form dedup keys names as the queries do, in
+    # Python (`_name_key`). v6 used SQLite's ASCII-only UPPER and TRIM, so a gift's two copies
+    # filed 'Élise' and 'élise' were both counted.
     "calaccess.contributor_total": Query(
         _contributor_total, ("filer_id", "contributor"),
         "contributions from one contributor (add contributor_first for an individual; "
-        "schedule A unless form_type says otherwise; a miss while a late gift is pending)", 6),
+        "schedule A unless form_type says otherwise; a miss while a late gift is pending, or "
+        "while another name could be the giver's, unless names=as_filed)", 7),
     "calaccess.filer_total": Query(
         _filer_total, ("filer_id",),
         "total itemized contributions received by a filer (schedule A unless form_type says "
-        "otherwise; a miss while a late gift is pending)", 6),
+        "otherwise; a miss while a late gift is pending)", 7),
     "calaccess.top_contributor": Query(
         _top_contributor, ("filer_id",),
         "the largest contributor to a filer, by itemized total (schedule A unless form_type "
-        "says otherwise; a miss while a pending late gift could change it)", 7),
+        "says otherwise; a miss while a pending late gift, or names that could be one giver's, "
+        "could change it, unless names=as_filed)", 8),
     "calaccess.ie_total": Query(
         _ie_total, ("candidate_last", "first"),
         "late independent expenditures naming a candidate; pass stance and since/until", 2),
