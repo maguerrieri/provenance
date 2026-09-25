@@ -234,7 +234,7 @@ def load_claims(claims_dir: Path, *, trust_machine_fields: bool = False,
     result would otherwise silently leave them out.
     """
     out: list[Claim] = []
-    origin: dict[str, str] = {}
+    origin: dict[str, tuple[str, str]] = {}   # casefolded id -> (id, file it came from)
     skipped = [] if skipped is None else skipped
     for p in sorted(claims_dir.glob("*.json")):
         try:
@@ -261,14 +261,38 @@ def load_claims(claims_dir: Path, *, trust_machine_fields: bool = False,
                           f"{escape(str(e))}")
                 skipped.append(qid)
                 continue
-            if claim.question_id in origin:
-                # save_claims() writes <qid>.json, so a claim first written under another
-                # filename leaves a duplicate behind. Silently loading both double-counts
-                # the question in every status total and renders it twice for review.
+            key = claim.question_id.casefold()
+            if key in origin:
+                first, where = origin[key]
+                if first == claim.question_id:
+                    # save_claims() writes <qid>.json, so a claim first written under another
+                    # filename leaves a duplicate behind. Silently loading both double-counts
+                    # the question in every status total and renders it twice for review.
+                    raise ValueError(
+                        f"duplicate question_id {first!r} in {where} and {p.name} — delete "
+                        "the stale file (claims are stored as <qid>.json)")
+                # An id is a filename too, here and in judgments/, so two ids are one id
+                # wherever the disk folds case. On macOS's default disk the verdicts for Q1 and
+                # q1 are one file: judging either writes it, and build applies it to both
+                # claims. Refused on every disk, not only where it folds case: a run travels
+                # through git, and a pair a case-sensitive checkout holds breaks on the first
+                # Mac that clones it. The fix is by hand, and a new id must be one no question
+                # has had: verdicts left under a reused id apply to the claim that takes it,
+                # wherever it cites the same source.
                 raise ValueError(
-                    f"duplicate question_id {claim.question_id!r} in {origin[claim.question_id]} "
-                    f"and {p.name} — delete the stale file (claims are stored as <qid>.json)")
-            origin[claim.question_id] = p.name
+                    f"question_ids {first!r} in {where} and {claim.question_id!r} in {p.name} "
+                    "differ only in case, and a case-insensitive disk stores both claims (and "
+                    "their verdicts) as one file. Keep one id and fix the other by hand. If "
+                    "its claim is a stale copy, take it out of claims/ (just its entry, where "
+                    "one file holds both). If it is a question of its own, give it a new id "
+                    "that no question has had: change its question_id, its question in "
+                    "questions.json and any derives_from naming it, and store it as "
+                    "<new id>.json, since claims are stored as <qid>.json. On a case-sensitive "
+                    "disk its verdicts stay filed under the old id, where nothing reads them: "
+                    "`vg judgments` names that shard, to move out of judgments/ or rename with "
+                    "its claim. Where the disk folds case, both ids' verdicts are already in "
+                    "one shard: split it by hand.")
+            origin[key] = (claim.question_id, p.name)
             out.append(claim)
     if skipped:
         con.print(f"[yellow]{len(skipped)} claim(s) skipped as unreadable: "
