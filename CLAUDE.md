@@ -1678,7 +1678,10 @@ answered from, so each bumped from the version it had: `contributor_total` and
 `top_contributor` to v4, `filer_total` to v3. The unsettled-amendment flag every query now
 carries bumped nothing: it changes no value, and verification acts on it, not the calculation.
 Neither did the receipt queries' flag for a left-out schedule, nor `ie_total`'s for the rows
-it leaves out, for the same reason.
+it leaves out, for the same reason. Refusing a cover table with no rows bumped all four
+(`contributor_total` and `filer_total` to v8, `top_contributor` to v9, `ie_total` to v3): each
+answered from one before, the receipt queries as if every filing were settled and `ie_total`
+with a miss. The flag for a filing with no cover record bumped nothing, like the others.
 
 A rule in a comment is one a session can skip, so it has a gate:
 `test_a_query_definition_cannot_change_unnoticed` pins each query's version to a fingerprint
