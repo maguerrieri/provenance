@@ -1559,7 +1559,9 @@ flagged too, as the mirror image of the one above:
   Form 496 copy repeats is in the figure either way and is not flagged. The reverse is: a gift
   whose schedule-A report was left out and whose Form 496 report is counted is in no
   schedule-A figure. A plain `HAVING` on the schedule over the combined rows would read that
-  gift as counted, leaving it neither counted nor flagged. Nor is a gift with no readable
+  gift as counted, leaving it neither counted nor flagged. And the flag names only the
+  left-out reports on the figure's schedule: naming them all put a schedule-C share on a
+  schedule-A figure. Nor is a gift with no readable
   amount flagged, which every figure leaves out anyway
   (`amount_sql()`), so it has no share, as in `_receipt_shares()`. `top_contributor` is
   flagged by any other left-out gift on the schedule it ranks.
