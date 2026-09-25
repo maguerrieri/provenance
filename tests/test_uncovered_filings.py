@@ -35,10 +35,10 @@ IE_UNCOVERED = "8886202"    # an expenditure with no cover, so it names nobody
 RECEIPTS = (
     "FILING_ID\tAMEND_ID\tTRAN_ID\tLINE_ITEM\tCTRIB_NAML\tCTRIB_NAMF\tCTRIB_EMP\tCTRIB_OCC"
     "\tRCPT_DATE\tAMOUNT\tFORM_TYPE\n"
-    f"{COVERED_460}\t0\tA-600001\t1\tBrambleton PAC\t\t\t\t1/6/2026 12:00:00 AM\t2500\tA\n"
+    f"{COVERED_460}\t0\tA-600001\t1\tBrambleworth PAC\t\t\t\t1/6/2026 12:00:00 AM\t2500\tA\n"
     f"{COVERED_460}\t0\tA-600002\t2\tTessaly\tOren\t\t\t1/9/2026 12:00:00 AM\t300\tA\n"
-    f"{UNCOVERED_460}\t0\tA-600003\t1\tBrambleton PAC\t\t\t\t2/4/2026 12:00:00 AM\t1200\tA\n"
-    f"{UNCOVERED_496}\t0\tF496P3-600001\t1\tBrambleton PAC\t\t\t\t1/6/2026 12:00:00 AM"
+    f"{UNCOVERED_460}\t0\tA-600003\t1\tBrambleworth PAC\t\t\t\t2/4/2026 12:00:00 AM\t1200\tA\n"
+    f"{UNCOVERED_496}\t0\tF496P3-600001\t1\tBrambleworth PAC\t\t\t\t1/6/2026 12:00:00 AM"
     "\t2500\tF496P3\n"
 )
 FILINGS = ("FILER_ID\tFILING_ID\tFORM_ID\tFILING_DATE\n"
@@ -54,15 +54,15 @@ COVER_HEAD = ("FILING_ID\tAMEND_ID\tFILER_ID\tFILER_NAML\tCAND_NAML\tCAND_NAMF\t
 COVERS = (COVER_HEAD
           + f"{COVERED_460}\t0\t{FILER}\tFriends of Example\t\t\t\tF460"
             "\t1/1/2026 12:00:00 AM\t1/31/2026 12:00:00 AM\n"
-          + f"{IE_COVERED}\t0\t8886900\tCommittee for Example\tFairmont\tLiesel\tS\tF496\t\t\n")
-IE_PARAMS = {"candidate_last": "Fairmont", "first": "Liesel", "stance": "support"}
-BRAMBLETON = {"filer_id": FILER, "contributor": "Brambleton PAC"}
+          + f"{IE_COVERED}\t0\t8886900\tCommittee for Example\tFairlowe\tLiesel\tS\tF496\t\t\n")
+IE_PARAMS = {"candidate_last": "Fairlowe", "first": "Liesel", "stance": "support"}
+BRAMBLEWORTH = {"filer_id": FILER, "contributor": "Brambleworth PAC"}
 # Every citable CAL-ACCESS query that can count a row from a filing with no cover, with
 # parameters that reach UNCOVERED_460. The rest join the covers, so a filing with none reaches
 # no figure of theirs. A new query fails
 # test_every_citable_query_flags_a_filing_with_no_cover until it is in one or the other.
 PLANTED = {
-    "calaccess.contributor_total": BRAMBLETON,
+    "calaccess.contributor_total": BRAMBLEWORTH,
     "calaccess.filer_total": {"filer_id": FILER},
     "calaccess.top_contributor": {"filer_id": FILER},
 }
@@ -120,21 +120,21 @@ def test_a_filing_with_rows_and_no_cover_is_unsettled_not_settled(root):
 
 def test_a_total_resting_on_a_filing_with_no_cover_goes_to_human_review_naming_it(root):
     """The acceptance case: the number reproduces, and used to render green."""
-    result = queries.run("calaccess.contributor_total", BRAMBLETON, root)
+    result = queries.run("calaccess.contributor_total", BRAMBLEWORTH, root)
     assert result.value == 3700.0, "the flag must never change the number"
     assert [(u.filing_id, u.amount, u.rows) for u in result.unrestated] == [
         (UNCOVERED_460, 1200.0, 1)]
 
-    v = verify_source(cited("calaccess.contributor_total", BRAMBLETON, "3700"),
+    v = verify_source(cited("calaccess.contributor_total", BRAMBLEWORTH, "3700"),
                       root).verification
     assert v.status == "human_review", "a figure resting on an unchecked filing is not green"
     assert PHRASE in v.reason, "the research skill tells an unsettled figure by this phrase"
     assert UNCOVERED_460 in v.reason and "$1,200.00" in v.reason
     assert calaccess.filing_url(UNCOVERED_460) in v.reason
-    assert "has no cover record to say whether a later amendment dropped them" in v.reason
+    assert "this export has no cover record for it" in v.reason
     assert COVERED_460 not in v.reason, "a settled filing is not one to open"
 
-    s = cited("calaccess.contributor_total", BRAMBLETON, "3700")
+    s = cited("calaccess.contributor_total", BRAMBLEWORTH, "3700")
     s.verification = Verification(status="verified", reason="verified earlier",
                                   context="contributor_total = 3700", support="supports")
     rebuilt = revalidate_from_cache(s, root).verification
@@ -152,7 +152,7 @@ def test_a_total_from_covered_filings_still_verifies(root):
 def test_a_gift_restated_across_filings_is_flagged_by_its_uncovered_filing(root):
     """Counted once, and still resting on a Form 496 with no cover: which report stands is the
     same open question."""
-    result = queries.run("calaccess.contributor_total", {**BRAMBLETON, "form_type": ""}, root)
+    result = queries.run("calaccess.contributor_total", {**BRAMBLEWORTH, "form_type": ""}, root)
     assert result.value == 3700.0
     assert [(u.filing_id, u.amount) for u in result.unrestated] == [
         (UNCOVERED_496, 2500.0), (UNCOVERED_460, 1200.0)]
@@ -192,15 +192,27 @@ def test_a_cover_table_with_no_rows_is_refused_by_every_citable_query(empty):
         assert v.status != "verified" and "vg calaccess build" in v.reason, name
 
 
-def test_the_listing_cannot_check_a_cover_table_with_no_rows(empty, monkeypatch):
+def test_the_listings_cannot_check_a_cover_table_with_no_rows(empty, monkeypatch):
     """As for a database with no cover amendment ids: the listing keeps working as a finding
-    aid, and a row nobody checked never reads as settled."""
+    aid, and a row nobody checked never reads as settled. The footer says which case it is,
+    since a rebuild from the same zip fixes only one of them."""
     assert all(c.unrestated is None for c in calaccess.contributions_to(empty, FILER))
     monkeypatch.setattr(cli.con, "_width", 250)
     res = CliRunner().invoke(cli.app, ["calaccess", "contributions", FILER,
                                        "--cache", str(empty)], env={"COLUMNS": "250"})
     assert res.exit_code == 0, res.output
-    assert "cannot tell whether a filing's latest amendment dropped" in plain(res.output)
+    out = plain(res.output)
+    assert "cannot tell whether a filing's latest amendment dropped" in out
+    assert "CVR_CAMPAIGN_DISCLOSURE_CD table has no rows" in out
+
+    # Finds each candidate on its cover, so it lists nothing: without the footer that reads as
+    # "no committee spent anything".
+    assert calaccess.independent_expenditures(empty, "Fairlowe", first="Liesel") == []
+    res = CliRunner().invoke(cli.app, ["calaccess", "independent-expenditures", "Fairlowe",
+                                       "--first", "Liesel", "--cache", str(empty)],
+                             env={"COLUMNS": "250"})
+    assert res.exit_code == 0, res.output
+    assert "CVR_CAMPAIGN_DISCLOSURE_CD table has no rows" in plain(res.output)
 
 
 def test_the_listing_marks_a_gift_from_a_filing_with_no_cover(root, monkeypatch):

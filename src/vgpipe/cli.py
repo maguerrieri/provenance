@@ -954,7 +954,8 @@ def calaccess_contributions(filer_id: str, data: Path = DATA, cache: Path = None
 
     try:
         # refuses a bad --since before it opens the database
-        rows = calaccess.contributions_to(_cache_root(data, cache), filer_id, top=top, since=since)
+        root = _cache_root(data, cache)
+        rows = calaccess.contributions_to(root, filer_id, top=top, since=since)
     except (FileNotFoundError, ValueError) as e:
         con.print(f"[red]{escape(_printable(str(e), lines=True))}[/]")
         raise typer.Exit(1) from None
@@ -979,7 +980,8 @@ def calaccess_contributions(filer_id: str, data: Path = DATA, cache: Path = None
         con.print(f"[yellow]The last {unread} have no readable amount, so no query total counts "
                   "them" + ("; there may be more: raise --top" if unread >= top else "")
                   + ".[/]")
-    _amendment_footer([c.unrestated for c in rows], [c.omitted for c in rows])
+    _amendment_footer([c.unrestated for c in rows], [c.omitted for c in rows],
+                      problem=calaccess.cover_problem_at(root))
 
 
 def _amendment_cell(unrestated, omitted=(), reattributed=None) -> Text:
@@ -999,17 +1001,20 @@ def _amendment_cell(unrestated, omitted=(), reattributed=None) -> Text:
     return Text(_printable("; ".join(cells)))
 
 
-def _amendment_footer(marks: list, omitted: list = (), reattributed: list | None = None) -> None:
-    """Say what a marked row means, or that this database cannot mark any. `omitted` is each
-    row's left-out schedules, for a listing that has them (receipts); `reattributed` is the
+def _amendment_footer(marks: list, omitted: list = (), reattributed: list | None = None,
+                      problem: str | None = None) -> None:
+    """Say what a marked row means, or that this database cannot mark any, and why: `problem`
+    is calaccess.cover_problem_at(), whose message names the case and its fix. Said even for
+    an empty listing, which would otherwise read as nothing to list. `omitted` is each row's
+    left-out schedules, for a listing that has them (receipts); `reattributed` is the
     independent-expenditure listing's, one per row."""
-    if any(m is None for m in marks):
+    if problem or any(m is None for m in marks):
         also = (", or list rows an earlier amendment's cover gave this candidate"
                 if reattributed is not None else "")
-        con.print(f"[yellow]This database cannot tell whether a filing's latest amendment "
-                  f"dropped any of these rows{also}: its covers carry no amendment ids, or it "
-                  f"has no covers at all. Rebuild it from a complete export: uv run vg calaccess "
-                  f"build[/]")
+        why = problem or ("its covers cannot say which amendment of a filing is its latest. "
+                          "Rebuild it from a complete export: uv run vg calaccess build")
+        con.print(Text("This database cannot tell whether a filing's latest amendment dropped "
+                       f"any of these rows{also}: {why}", style="yellow"), soft_wrap=True)
     else:
         # Counted by kind, so a row with one of each is in both lines: each says what to open.
         if flagged := sum(1 for m in marks if any(u.cover_amend is not None for u in m)):
@@ -1053,7 +1058,8 @@ def calaccess_ie(candidate_last: str, data: Path = DATA, cache: Path = None, fir
     from . import calaccess
 
     try:
-        rows = calaccess.independent_expenditures(_cache_root(data, cache), candidate_last,
+        root = _cache_root(data, cache)
+        rows = calaccess.independent_expenditures(root, candidate_last,
                                                   first=first, top=top, loose=loose)
     except FileNotFoundError as e:
         con.print(f"[red]{escape(_printable(str(e), lines=True))}[/]")
@@ -1078,7 +1084,8 @@ def calaccess_ie(candidate_last: str, data: Path = DATA, cache: Path = None, fir
                   _amendment_cell(r["unrestated"], reattributed=r["reattributed"]))
     con.print(t)
     _amendment_footer([r["unrestated"] for r in rows],
-                      reattributed=[r["reattributed"] for r in rows])
+                      reattributed=[r["reattributed"] for r in rows],
+                      problem=calaccess.cover_problem_at(root))
 
 
 def _unsettled_rest(result) -> None:

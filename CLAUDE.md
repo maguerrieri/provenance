@@ -1466,7 +1466,9 @@ per filing, through the `FILING_ID` indexes, and only for the filings a result t
   count one anyway, since it finds the candidate on the cover.
 - **A database whose covers can't say which amendment is latest** cannot check at all. Every
   citable query refuses it (`connect_citable()`, below), and the listings say they cannot
-  check. `calaccess.cover_problem()` is the one test, with a message for each case, since a
+  check and which case it is, even when they list nothing: over an empty cover table the
+  expenditure listing finds no rows, which would read as "no expenditures".
+  `calaccess.cover_problem()` is the one test, with a message for each case, since a
   rebuild from the same zip fixes only the first: no cover amendment ids (an old build), no
   cover table, and a cover table with no rows. The last used to pass: every filing had no
   cover, and every receipt figure verified green.

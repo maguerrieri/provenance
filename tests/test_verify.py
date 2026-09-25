@@ -6485,13 +6485,13 @@ _NOT_A_DEFINITION = {
                        "describe_export", "export_date", "human_command", "late_text",
                        "left_out_text", "matches", "share_text"},
     "vgpipe.calaccess": {"COVER_FALLBACK", "Contribution", "DegradedDatabaseWarning",
-                         "EXPORT_META", "EXPORT_URL", "LATE_FALLBACK", "NO_COVERS",
-                         "Reattributed", "SCHEDULE_FALLBACK", "_UNUSABLE", "_export_date",
-                         "_read_export_info", "citable_snapshot", "committee_url",
-                         "contributions_to", "cover_names", "db_path", "export_info",
-                         "filing_url", "find_filers", "independent_expenditures", "latest_cover",
-                         "shown_date", "Unrestated", "UnrestatedSchedule", "unusable",
-                         "zip_path"},
+                         "EMPTY_COVERS", "EXPORT_META", "EXPORT_URL", "LATE_FALLBACK",
+                         "NO_COVERS", "Reattributed", "SCHEDULE_FALLBACK", "_UNUSABLE",
+                         "_export_date", "_read_export_info", "citable_snapshot",
+                         "committee_url", "contributions_to", "cover_names", "cover_problem_at",
+                         "db_path", "export_info", "filing_url", "find_filers",
+                         "independent_expenditures", "latest_cover", "shown_date", "Unrestated",
+                         "UnrestatedSchedule", "unusable", "zip_path"},
 }
 
 
@@ -6499,9 +6499,9 @@ _NOT_A_DEFINITION = {
 QUERY_DEFINITIONS = {
     # bumped from #129's versions: an empty cover table is refused where these answered from
     # it (#141)
-    "calaccess.contributor_total": (8, "e4e64acf1d44"),
-    "calaccess.filer_total": (8, "b63642abddd0"),
-    "calaccess.top_contributor": (9, "44707cb1310b"),
+    "calaccess.contributor_total": (8, "e0f3f854bd45"),
+    "calaccess.filer_total": (8, "4e9d7e2128f4"),
+    "calaccess.top_contributor": (9, "f069867a228a"),
     # moved without a bump: amount_sql() is ie_total's own amount expression, extracted
     # unchanged, and DEDUPED_RECEIPTS, which it does not read, changed beside it; then the
     # unsettled-amendment flag and its shared helpers, which change no value it returns; then
@@ -6513,7 +6513,7 @@ QUERY_DEFINITIONS = {
     # no value, on a total and on a miss; then the name grouping and the name key the receipt
     # queries match and dedup by, which it does not use: it matches a candidate with
     # name_match_sql(). Bumped: an empty cover table is refused where it found nothing (#141)
-    "calaccess.ie_total": (3, "a1d21de8564f"),
+    "calaccess.ie_total": (3, "6d40837b7923"),
 }
 
 
