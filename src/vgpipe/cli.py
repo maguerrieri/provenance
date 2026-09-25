@@ -357,14 +357,7 @@ def fetch(url: str, data: Path = DATA, cache: Path = None, refresh: bool = False
     # As Text, like a query value: a plain string wraps at 80 columns in an agent's shell,
     # putting line breaks in a snippet. Line by line, as a researcher copies from it.
     if p.text:
-        shown = _printable(text := p.text[:1200], lines=True)
-        con.print(Text(shown), soft_wrap=True)
-        if shown != text.replace("\r\n", "\n"):
-            # A soft hyphen, a zero-width space or a directional mark is common in page text,
-            # and a snippet copied with its escape (`co\xadoperate`) is on no page.
-            con.print("[yellow]Characters above that act on a terminal or are invisible are "
-                      "shown as escapes (\\x.., \\u....). The page holds the character, not the "
-                      "escape: quote around it, never with it.[/]")
+        _print_copied(p.text, 1200)
     else:
         con.print("[dim](no text)[/]")
 
@@ -1138,8 +1131,10 @@ def run_query(name: str = typer.Argument(""), param: list[str] = None, data: Pat
     # Printed as Text, never as a markup string: researchers copy this value into `expected`
     # verbatim, and a str would lose "[b]" to markup and wrap at 80 columns when stdout is not
     # a terminal (an agent's shell). Through _printable(): a value or note can be export text.
-    con.print(Text(_printable(str(result.value)), style="bold"),
+    value = str(result.value)
+    con.print(Text(shown := _printable(value), style="bold"),
               Text(_printable(f"({result.note})"), style="dim"), sep="  ", soft_wrap=True)
+    _say_if_escaped(value, shown)
     if why := result.unsettled:
         # Before a researcher records it: this value goes to human_review however it is cited.
         # The reason names the largest few; the rest are listed here, where there is room.
@@ -1347,6 +1342,27 @@ def _cut(text: str, n: int) -> str:
             break
         out.append(shown)
     return "".join(out)
+
+
+def _say_if_escaped(text: str, shown: str) -> None:
+    """Under data a reader copies from, say so if `_printable()` showed any of it as an escape.
+    An escape is text the pipeline inserted: a snippet or an `expected` copied with one in it
+    (`co\\xadoperate` for a soft hyphen, which page text often holds) matches nothing."""
+    if shown != text:
+        con.print("[yellow]Characters above that act on a terminal, and format characters such "
+                  "as a soft hyphen, are shown as escapes (\\x.., \\u....). The source holds the "
+                  "character, not the escape, so a copy with one in it matches nothing: quote "
+                  "around it.[/]")
+
+
+def _print_copied(text: str, limit: int | None = None) -> None:
+    """Multi-line data a reader copies from (page text, a response body, a YAML entry): as Text
+    and unwrapped, so no line break is the terminal's; line by line through `_printable()`; and
+    `_say_if_escaped()` under it. A CRLF is joined before the cut, so the cut cannot leave a CR
+    without its LF, to show as `\\x0d` and set off the note over nothing."""
+    text = text.replace("\r\n", "\n")[:limit]
+    con.print(Text(shown := _printable(text, lines=True)), soft_wrap=True)
+    _say_if_escaped(text, shown)
 
 
 @app.command()
@@ -1884,9 +1900,7 @@ def source_access(host: str = typer.Argument(""), run_recipe: str = "",
             con.print(f"[red]{escape(_printable(f'{type(e).__name__}: {e}', lines=True))}[/]")
             raise typer.Exit(1) from None
         con.print(f"\n[bold]HTTP {resp.status_code}[/] {len(resp.text)} chars")
-        # Fetched, and copied from: line by line, so its line breaks stay and nothing else in
-        # it reaches the terminal.
-        con.print(Text(_printable(resp.text[:1500], lines=True)), soft_wrap=True)
+        _print_copied(resp.text, 1500)   # fetched, and copied from
 
 
 @app.command(name="source-note")
@@ -1948,17 +1962,15 @@ def source_import_curl(path: Path, name: str = "", write: bool = True):
 
     dest = access.REGISTRY / f"{entry['host']}.yaml"
     text = yaml.safe_dump(entry, sort_keys=False, allow_unicode=True, width=100)
-    # The entry is the pasted request, so it is printed as Text, never as markup, and unwrapped:
-    # it is YAML to be copied into a file. Line by line: allow_unicode leaves a bidi override or
-    # NEL in it as it was pasted.
-    shown = Text(_printable(text, lines=True))
+    # The entry is the pasted request, and YAML to be copied into a file: allow_unicode leaves a
+    # bidi override or NEL in it as it was pasted.
     if not write:
-        con.print(shown, soft_wrap=True)
+        _print_copied(text)
         return
     if dest.exists():
         con.print(f"[yellow]{escape(_printable(str(dest)))} exists — printing instead of "
                   f"overwriting[/]\n")
-        con.print(shown, soft_wrap=True)
+        _print_copied(text)
         return
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(text)
