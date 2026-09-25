@@ -167,7 +167,9 @@ reports that a person checks your wording against. The query is fine and the num
 data gives, so don't change the parameters or switch to a mirror to get a clean result. Cite it
 anyway. `vg check-claim` then fails it as `human_review`, and like a kept scan that one failure
 is the exception: hand the claim on with `notes` naming the filings the warning lists, for a
-person to open.
+person to open. The warning can name a filing that is not on the schedule you counted, most
+often a Form 496 on a schedule-A figure. A large late gift is reported on both forms, the figure
+counts it once, and either report may be the one a later amendment withdrew.
 
 If it says **"nothing counted"** and **"Not a finding"**, every row matching your parameters
 that states an amount is on such a left-out schedule, or (`ie_total`) in a filing whose latest
