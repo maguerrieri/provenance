@@ -617,6 +617,12 @@ def _pending_late(con: Any, filer_id: str) -> list[dict[str, Any]]:
         e = entries.setdefault(key, {**r, "forms": set(), "copies": {},
                                      "filing_id": int(r["filing_id"])})
         e["forms"].add(r["form"])
+        # One gift filed under one key in two spellings ("Quennell"/"Ada" and "QUENNELL"/"ADA",
+        # on two filings) is shown under the least of them, as the ranking's MIN() does: the
+        # first row read is load order, and a refusal named the giver one way or the other.
+        spelled = (str(r["naml"] or ""), str(r["namf"] or ""))
+        if spelled < (str(e["naml"] or ""), str(e["namf"] or "")):
+            e["naml"], e["namf"] = spelled
         # which filing and amendment says it, for the reviewer to open
         e["copies"][int(r["filing_id"])] = (r["form"], str(r["amend"] or "0").strip())
         e["filing_id"] = min(e["filing_id"], int(r["filing_id"]))
@@ -649,8 +655,7 @@ def _transaction(r: Any) -> tuple[Any, ...]:
     `amount_sql()` reads it (`amt`), as the dedup and every sum do. A blank or unreadable amount
     keys as its text, so it never pairs with a stated 0 ("1,000" is not 1)."""
     amount = r["amt"]
-    return (str(r["tbase"]), str(r["naml"] or "").strip().upper(),
-            str(r["namf"] or "").strip().upper(), r["d"],
+    return (str(r["tbase"]), _name_key(r["naml"]), _name_key(r["namf"]), r["d"],
             amount if amount is not None else f"text:{str(r['amount'] or '').strip()}")
 
 
@@ -912,20 +917,24 @@ def _groups(names: dict[Any, _Name]) -> dict[Any, int]:
 _ANYONE = -1
 
 
-# A name's key, as `_givers` groups it: last and first name, trimmed, ignoring case.
+# A name's key, as `_givers` groups it: last and first name, each through `_name_key`.
 _KL = "vg_name_key({t}.CTRIB_NAML)"
 _KF = "vg_name_key({t}.CTRIB_NAMF)"
 
 
 def _name_key(part: Any) -> str:
-    """One part of a name's key (`_KL`, `_KF`, and the cross-form dedup's): trimmed and
-    upper-cased as Python does it, the way `_shown` trims what a result displays. SQLite's TRIM
-    and UPPER know only ASCII spaces and letters, so a surname filed with a trailing tab or
-    non-breaking space was a name of its own that displayed like the plain one: a tie could
-    read "Rue Abbot | Rue Abbot". `calaccess.connect` registers it as vg_name_key. The dedup
-    has to use the same key as the names: with ASCII rules there and these here, a gift's two
-    copies filed 'Élise' and 'élise' stayed apart and were summed under one name."""
-    return str(part or "").strip().upper()
+    """One part of a name's key (`_KL`, `_KF`, the cross-form dedup's and the late-report
+    restatement's), and how a result orders and compares the names it shows: Unicode-normalized
+    (NFKC), trimmed and case-folded, in Python. SQLite's TRIM and UPPER know only ASCII spaces
+    and letters, so a surname filed with a trailing tab or non-breaking space was a name of its
+    own that displayed like the plain one ("Rue Abbot | Rue Abbot"), and 'José' and 'JOSÉ' were
+    two givers, each short. Upper-casing without normalizing still split 'José' written with a
+    combining accent from the one written with 'é'. `calaccess.connect` registers it as
+    vg_name_key. The dedup has to use the same key as the names: with ASCII rules there and
+    these here, a gift's two copies filed 'Élise' and 'élise' stayed apart and were summed under
+    one name. Normalized again after folding, since folding can leave a string unnormalized."""
+    text = unicodedata.normalize("NFKC", str(part or "")).strip()
+    return unicodedata.normalize("NFKC", text.casefold())
 
 
 def _named(keys: list[tuple[str, str]]) -> Any:
@@ -1049,8 +1058,10 @@ def _late_order(e: dict[str, Any]) -> tuple[Any, ...]:
     """The order `_pending_late` gives late entries: by date and filing, then by what they
     hold, never by load order within a filing and a day, since which name a late giver is
     shown under, and where it falls among equals, come from the first entry read."""
-    return (e["d"] or "", e["filing_id"], str(e["tbase"]), str(e["naml"] or "").strip().upper(),
-            str(e["namf"] or "").strip().upper(), str(e["amount"] or "").strip())
+    # The amount as read, not as filed: one gift merged from "100" and "100.00" keeps
+    # whichever text it read first.
+    return (e["d"] or "", e["filing_id"], str(e["tbase"]), _name_key(e["naml"]),
+            _name_key(e["namf"]), e["amt"] is None, e["amt"] or 0.0)
 
 
 def _late_reports(con: Any, filer_id: str, form_type: str) -> list[dict[str, Any]]:
@@ -1215,12 +1226,15 @@ def _contributor_figure(con: Any, filer_id: str, contributor: str, contributor_f
     # counts it. Listed before anything is summed: summing every name first took ten times as
     # long as the figure itself, on a synthetic committee of 60,000 gifts.
     listed = con.execute(f"""
-        SELECT {_KL.format(t='r')} kl, {_KF.format(t='r')} kf, MAX({_name_sql('r', first)}) mine
+        SELECT {_KL.format(t='r')} kl, {_KF.format(t='r')} kf, MAX({_name_sql('r', first)}) mine,
+               MIN(r.CTRIB_NAML) nm, MIN(r.CTRIB_NAMF) nf
         FROM RCPT_LATEST r JOIN FILER_FILING f ON f.FILING_ID = r.FILING_ID
         WHERE f.FILER_ID = ?{schedule}
         GROUP BY kl, kf
     """, [*who_args, str(filer_id), *schedule_args]).fetchall()
     counted = {("name", r["kl"], r["kf"]) for r in listed if r["mine"]}
+    # A key is for comparing; a name is shown as filed, its least spelling as the ranking's is.
+    filed_as = {("name", r["kl"], r["kf"]): (r["nm"], r["nf"]) for r in listed}
     on_schedule = {("name", r["kl"], r["kf"]): _name(r["kl"], r["kf"]) for r in listed}
     late_names = {("late", i): _name(e["naml"], e["namf"]) for i, e in enumerate(late)}
     asked = {("asked",): _name(contributor, contributor_first)}
@@ -1280,17 +1294,18 @@ def _contributor_figure(con: Any, filer_id: str, contributor: str, contributor_f
         # asked for. Asked pairwise, never through `_groups`: a closure over-merges, which
         # bounds a figure safely and counts people short. A bare 'Quillon' links Rue and Tom,
         # and they are still two.
-        spans = {on_schedule[k]: _filed(k[1], k[2]) for k in counted}
+        spans = {on_schedule[k]: _filed(*filed_as[k]) for k in counted}
         spans.update({late_names[k]: f"{_filed(e['naml'], e['namf'])} (late)"
                       for k, e in zip(late_names, late)
                       if _could_be(late_names[k], asked[("asked",)])})
-        firsts = sorted({k[2] for k in counted})
+        firsts = sorted({k[2]: str(filed_as[k][1] or "").strip() for k in counted}.values(),
+                        key=lambda f: (_name_key(f), f))
         if any(not _could_be(a, b) for a, b in itertools.combinations(spans, 2)):
             return QueryResult(
                 value=None, rows=gifts, found=False,
                 detail=f"{gifts} itemized {label} gift(s) across DIFFERENT first names, which "
                        "cannot all be one giver's ("
-                       + ", ".join(sorted(set(spans.values()), key=str.casefold))
+                       + ", ".join(sorted(set(spans.values()), key=lambda v: (_name_key(v), v)))
                        + ") — this is not one contributor; pass contributor_first")
         if len(firsts) > 1:
             # R and Rue could be one giver's, or two givers': either way, not a figure for one
@@ -1485,13 +1500,14 @@ def _ranking(con: Any, filer_id: str, form_type: str, gated: bool,
         return _no_rows(f"{len(tied)} giver(s) at the top of {label} gifts at ${top:,.0f}, and "
                         f"{len(shown) - len(list(filter(None, shown)))} filed with no name at "
                         "all — no name to give as the largest contributor; open the filings")
-    alike = Counter(n.casefold() for n in shown)
-    shown = [n if alike[n.casefold()] == 1 else f"{n} (filed {_filed(r['nm'], r['nf'])})"
+    alike = Counter(_name_key(n) for n in shown)
+    shown = [n if alike[_name_key(n)] == 1 else f"{n} (filed {_filed(r['nm'], r['nf'])})"
              for n, r in zip(shown, tied)]
-    # Sorted as displayed, ignoring case. A later export can add a row that spells a name in
-    # another case, and a case-sensitive sort then moved "Rue ABBOT" from after "Rue Aaron" to
-    # before it: `matches()` ignores case but not order.
-    listed = " | ".join(sorted(shown, key=str.casefold))
+    # Sorted as displayed, ignoring case and Unicode form (`_name_key`), then as spelled. A later
+    # export can add a row that spells a name in another case, and a case-sensitive sort then
+    # moved "Rue ABBOT" from after "Rue Aaron" to before it: `matches()` ignores case but not
+    # order.
+    listed = " | ".join(sorted(shown, key=lambda n: (_name_key(n), n)))
     if unread:
         # A total can say "the stated gifts come to X" and name what it left out. A rank
         # cannot: a gift of unknown size could make anyone largest, so while one exists no
@@ -1703,7 +1719,7 @@ def _could_change_ranking(groups: list[Any], tied: list[Any], top: float,
                           if k[0] == "late" and words[k].words not in filed)
         if strangers:
             units.append(_Contender(_late_range(strangers)[0], "late", (), strangers,
-                                    _shown(strangers[0]["namf"], strangers[0]["naml"])))
+                                    _late_names(strangers)))
     # A name with no words is in every group, so it made a unit in each: keep its highest.
     best: dict[Any, _Contender] = {}
     for u in units:
@@ -1728,8 +1744,22 @@ def _could_change_ranking(groups: list[Any], tied: list[Any], top: float,
     # on every run: in load order, two late givers filed the same day could swap. Reach to the
     # cent: summed as floats, $6,000.01 and $0.02 reach 6000.030000000001, which put that giver
     # ahead of one at $6,000.03 whose name comes first.
-    return sorted(could, key=lambda c: (-round(c.reach, 2), c.shown.casefold(), c.kind,
-                                        [(g["kl"], g["kf"]) for g in c.ranked]))
+    return sorted(could, key=lambda c: (-round(c.reach, 2), _name_key(c.shown), c.shown,
+                                        c.kind, [(g["kl"], g["kf"]) for g in c.ranked]))
+
+
+def _late_names(entries: Any) -> str:
+    """How a refusal names a late giver: every name its entries are filed under, each once and
+    in its least spelling, ordered by name ("Ada B Quennell, Ada C Quennell or Ada Quennell").
+    Not the first entry's name: which entry comes first is not the giver's name, and the order
+    of entries within a day and a filing was once the order rows were loaded in."""
+    spelled: dict[tuple[str, str], str] = {}
+    for e in entries:
+        key = (_name_key(e["naml"]), _name_key(e["namf"]))
+        name = _shown(e["namf"], e["naml"])
+        spelled[key] = min(spelled.get(key, name), name)
+    names = [spelled[k] for k in sorted(spelled)]
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} or {names[-1]}"
 
 
 def _late_part(entries: Any) -> str:
@@ -1949,9 +1979,10 @@ REGISTRY: dict[str, Query] = {
     # names=as_filed gives is held for a person while another name could change it
     # (`QueryResult.names`). v6 and v7 ranked each name apart, green, and matched late entries by
     # whole words.
-    # v7 of filer_total, with those: the cross-form dedup keys names as the queries do, in
-    # Python (`_name_key`). v6 used SQLite's ASCII-only UPPER and TRIM, so a gift's two copies
-    # filed 'Élise' and 'élise' were both counted.
+    # v7 of filer_total, with those: the cross-form dedup and the late-report restatement key
+    # names as the queries do, in Python, normalized and case-folded (`_name_key`). v6 used
+    # SQLite's ASCII-only UPPER and TRIM, so a gift's two copies filed 'Élise' and 'élise' were
+    # both counted, and a late gift restated as 'JOSÉ' was still pending as 'José'.
     "calaccess.contributor_total": Query(
         _contributor_total, ("filer_id", "contributor"),
         "contributions from one contributor (add contributor_first for an individual; "

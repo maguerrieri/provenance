@@ -593,6 +593,76 @@ def test_a_refusal_reads_the_same_whatever_order_the_rows_come_in(tmp_path):
     assert note.index("'Bo Ennis'/''") < note.index("'Rue Quillon'/''"), note
 
 
+def test_a_name_key_folds_case_and_unicode_form():
+    """'José' in any case, and with its accent composed or combining, is one name. Upper-cased
+    alone, a combining accent still split it; with SQLite's UPPER, so did a lower-case 'é'."""
+    composed, combining = "Jos\u00e9", "Jose\u0301"
+    keys = {queries._name_key(n) for n in (composed, combining, "JOS\u00c9", " jos\u00e9\u00a0",
+                                           "JOSE\u0301")}
+    assert len(keys) == 1, keys
+    assert queries._name_key("Rue") != queries._name_key("Roe")
+
+
+def test_one_name_in_two_cases_past_ascii_is_one_giver(tmp_path):
+    """'José' and 'JOSÉ' were two contributors under SQLite's ASCII-only UPPER, each $3,000
+    short of the $5,000 leader they pass together."""
+    jose = [(("Quillon", "Jos\u00e9"), "3000"), (("QUILLON", "JOS\u00c9"), "3000")]
+    root = build(tmp_path, [(VARDLE, "5000"), *jose])
+
+    got = run(root, "top_contributor")
+    assert queries._name_key(got.value) == queries._name_key("Jos\u00e9 Quillon"), got.note
+    assert got.detail.startswith("$6,000 across 2 schedule-A gift(s)"), got.detail
+    total = run(root, "contributor_total", contributor="quillon", contributor_first="jos\u00e9")
+    assert total.value == 6000.0, total.note
+
+
+def test_a_late_gift_restated_under_another_case_is_not_pending(tmp_path):
+    """The restatement key reads names as the dedup does: schedule A's 'QUILLON'/'JOSÉ' restates
+    the late report's 'Quillon'/'José', so the late gift is not held against anything."""
+    rows = (f"{F460}\t0\tA-7\t1\tQUILLON\tJOS\u00c9\t\t\t\t\t10/2/2026{DAY}\t700\tA\n")
+    late = (f"{F497}\t0\t1\tS497\tF497P1\tL-7\tIND\tQuillon\tJos\u00e9\t\t\t\t\t11/3/2026{DAY}"
+            f"\t10/2/2026{DAY}\t\t700\t\n")
+    (tmp_path / "cache" / "calaccess").mkdir(parents=True)
+    with zipfile.ZipFile(calaccess.zip_path(tmp_path), "w") as zf:
+        zf.writestr("CalAccess/DATA/RCPT_CD.TSV", (RCPT_HEAD + rows).encode("latin-1"))
+        zf.writestr("CalAccess/DATA/FILER_FILINGS_CD.TSV", FILINGS)
+        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", COVERS)
+        zf.writestr("CalAccess/DATA/S497_CD.TSV", (S497_HEAD + late).encode("latin-1"))
+    calaccess.build(tmp_path)
+
+    got = run(tmp_path, "filer_total")
+    assert got.value == 700.0 and not got.late, got.note
+
+
+def test_a_late_givers_name_does_not_depend_on_the_order_rows_come_in(tmp_path):
+    """One late gift filed on two reports under one key in two spellings is one entry, and it
+    was shown under whichever row was read first. A late giver filed under several names is
+    named by all of them, not by whichever entry came first."""
+    second = "9991293"
+    filings = FILINGS + f"{FILER}\t{second}\tF497\t10/6/2026{DAY}\n"
+
+    def late(filing, last, first, tran="L-7", amount="6000", date="10/2/2026"):
+        return (f"{filing}\t0\t1\tS497\tF497P1\t{tran}\tIND\t{last}\t{first}\t\t\t\t"
+                f"\t11/3/2026{DAY}\t{date}{DAY}\t\t{amount}\t\n")
+
+    rows = [late(F497, "Quennell", "Ada"), late(second, "QUENNELL", "ADA"),
+            late(F497, "Quennell", "Ada B", tran="L-8", amount="100")]
+    notes = set()
+    for n, order in enumerate((rows, rows[::-1], rows[1:] + rows[:1])):
+        root = tmp_path / str(n)
+        (root / "cache" / "calaccess").mkdir(parents=True)
+        with zipfile.ZipFile(calaccess.zip_path(root), "w") as zf:
+            zf.writestr("CalAccess/DATA/RCPT_CD.TSV", RCPT_HEAD + gift(1, VARDLE, "5000"))
+            zf.writestr("CalAccess/DATA/FILER_FILINGS_CD.TSV", filings)
+            zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", COVERS)
+            zf.writestr("CalAccess/DATA/S497_CD.TSV", S497_HEAD + "".join(order))
+        calaccess.build(root)
+        notes.add(run(root, "top_contributor").note)
+    assert len(notes) == 1, notes
+    note = notes.pop()
+    assert "ADA QUENNELL or Ada B Quennell ($0 on schedule-A, $6,100 late)" in note, note
+
+
 def test_a_refusal_says_where_each_name_in_a_group_gave_from(tmp_path):
     """So a person can tell one giver from two without running another query."""
     root = build(tmp_path, [(VARDLE, "5000"),
@@ -748,13 +818,13 @@ def test_a_surname_with_first_names_that_could_be_one_says_so(tmp_path):
     root = build(tmp_path, [(RUE, "2500"), (R, "300")])
     got = run(root, "contributor_total", contributor="Quillon")
     assert not got.found and "DIFFERENT" not in got.note, got.note
-    assert ("across 2 first names that could be one giver's or 2 givers' ('R', 'RUE') — not one "
+    assert ("across 2 first names that could be one giver's or 2 givers' ('R', 'Rue') — not one "
             "contributor as filed; pass contributor_first") in got.note, got.note
 
     root = build(tmp_path / "two", [(RUE, "2500"), (ADA, "300")])
     got = run(root, "contributor_total", contributor="Quillon")
     assert not got.found and ("across DIFFERENT first names, which cannot all be one giver's "
-                              "('QUILLON'/'ADA', 'QUILLON'/'RUE')") in got.note, got.note
+                              "('Quillon'/'Ada', 'Quillon'/'Rue')") in got.note, got.note
 
 
 def test_a_bare_surname_does_not_make_two_people_one(tmp_path):
