@@ -1244,10 +1244,9 @@ doesn't parse raises `ValueError`, and so, on purpose, does a value holding a UR
 parsed. `_body_param_names()` put the parse and the reading of the parsed body in one `except
 ValueError`, meant for a body that isn't JSON. So the refusal read as "not JSON" and took the
 keys already read with it. The form reading then found no `=` in a JSON object, and a body
-holding `api_key` beside such a URL imported, and ran (#155). Every parse now goes through
-`_parsed_json()`, whose `try` holds `json.loads()` alone, and `_value_names()` holds only the
-split of a URL in its `try`, so a refusal raised deeper keeps its own message. When a refusal
-is an exception, check every `except` it passes through.
+holding `api_key` beside such a URL imported, and ran (#155). The `try` holds `json.loads()`
+alone now, as `_json_container()`'s always did, and the reading is in its `else`. When a
+refusal is an exception, check every `except` it passes through.
 
 **Parameter names need their own rule, and a word counts only if it has no ordinary
 public-records meaning.** The header pattern matches parts of words. In a parameter name those
