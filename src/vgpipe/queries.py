@@ -433,8 +433,8 @@ def _pending_late(con: Any, filer_id: str) -> list[dict[str, Any]]:
     parts = [f"""
         SELECT r.FILING_ID AS filing_id, {tran_base_sql("r.TRAN_ID")} AS tbase,
                r.CTRIB_NAML AS naml, r.CTRIB_NAMF AS namf, r.AMOUNT AS amount,
-               UPPER(TRIM(r.FORM_TYPE)) AS form, {iso_date_sql("r.RCPT_DATE")} AS d, '' AS until,
-               r.AMEND_ID AS amend
+               {amount_sql("r.AMOUNT")} AS amt, UPPER(TRIM(r.FORM_TYPE)) AS form,
+               {iso_date_sql("r.RCPT_DATE")} AS d, '' AS until, r.AMEND_ID AS amend
         FROM RCPT_LATEST r JOIN FILER_FILING f ON f.FILING_ID = r.FILING_ID
         WHERE f.FILER_ID = ? AND UPPER(TRIM(r.FORM_TYPE)) = 'F496P3'"""]
     args: list[Any] = [str(filer_id)]
@@ -445,7 +445,8 @@ def _pending_late(con: Any, filer_id: str) -> list[dict[str, Any]]:
         until = iso_date_sql("s.DATE_THRU") if "DATE_THRU" in s497_cols else "''"
         parts.append(f"""
         SELECT s.FILING_ID, {tran_base_sql("s.TRAN_ID")}, s.ENTY_NAML, s.ENTY_NAMF, s.AMOUNT,
-               UPPER(TRIM(s.FORM_TYPE)), {iso_date_sql("s.CTRIB_DATE")}, {until}, s.AMEND_ID
+               {amount_sql("s.AMOUNT")}, UPPER(TRIM(s.FORM_TYPE)), {iso_date_sql("s.CTRIB_DATE")},
+               {until}, s.AMEND_ID
         FROM S497_LATEST s JOIN FILER_FILING f ON f.FILING_ID = s.FILING_ID
         WHERE f.FILER_ID = ? AND UPPER(TRIM(s.FORM_TYPE)) = 'F497P1'""")
         args.append(str(filer_id))
@@ -462,7 +463,7 @@ def _pending_late(con: Any, filer_id: str) -> list[dict[str, Any]]:
             SELECT * FROM (
                 SELECT {tran_base_sql("r.TRAN_ID")} AS tbase, r.CTRIB_NAML AS naml,
                        r.CTRIB_NAMF AS namf, r.AMOUNT AS amount,
-                       {iso_date_sql("r.RCPT_DATE")} AS d
+                       {amount_sql("r.AMOUNT")} AS amt, {iso_date_sql("r.RCPT_DATE")} AS d
                 FROM RCPT_LATEST r JOIN FILER_FILING f ON f.FILING_ID = r.FILING_ID
                 WHERE f.FILER_ID = ? AND UPPER(TRIM(r.FORM_TYPE)) = 'A')
             WHERE tbase IN ({", ".join("?" * len(chunk))})
@@ -505,9 +506,10 @@ def _pending_late(con: Any, filer_id: str) -> list[dict[str, Any]]:
 
 
 def _transaction(r: Any) -> tuple[Any, ...]:
-    """The cross-form key of a receipt row: TRAN_ID base, name, date and amount. A blank or
-    unreadable amount keys as its text, so it never pairs with a stated 0 ("1,000" is not 1)."""
-    amount = _plain_amount(r["amount"])
+    """The cross-form key of a receipt row: TRAN_ID base, name, date and amount, the amount as
+    `amount_sql()` reads it (`amt`), as the dedup and every sum do. A blank or unreadable amount
+    keys as its text, so it never pairs with a stated 0 ("1,000" is not 1)."""
+    amount = r["amt"]
     return (str(r["tbase"]), str(r["naml"] or "").strip().upper(),
             str(r["namf"] or "").strip().upper(), r["d"],
             amount if amount is not None else f"text:{str(r['amount'] or '').strip()}")
@@ -522,16 +524,6 @@ def _real_day(iso: Any) -> bool:
             datetime.date.fromisoformat(iso))
     except ValueError:
         return False
-
-
-_PLAIN_AMOUNT = re.compile(r"-?(?=[0-9.]*[0-9])[0-9]*\.?[0-9]*")
-
-
-def _plain_amount(value: Any) -> float | None:
-    """An amount as a number, or None when it states none a reader could add up. A blank is
-    money nobody stated, not $0, and CAST reads "1,000" as 1.0 and "$5,000" as 0.0."""
-    text = str(value or "").strip()
-    return float(text) if _PLAIN_AMOUNT.fullmatch(text) else None
 
 
 def _name_words(last: Any, first: Any = "") -> frozenset[str]:
@@ -568,7 +560,7 @@ def _late_reports(con: Any, filer_id: str, form_type: str, last: str = "",
         con.close()
         raise calaccess.DegradedDatabase(calaccess.LATE_FALLBACK)
     # A stated $0 changes no total and moves no one in a ranking, so it holds nothing.
-    late = [e for e in _pending_late(con, filer_id) if _plain_amount(e["amount"]) != 0]
+    late = [e for e in _pending_late(con, filer_id) if e["amt"] != 0]
     if last:
         who = _name_words(last, first)
         late = [e for e in late if _could_be(_name_words(e["naml"], e["namf"]), who)]
@@ -591,7 +583,7 @@ def _by_report(entries: list[dict[str, Any]]) -> list[LateReport]:
         r = reports.setdefault(e["filing_id"], LateReport(
             filing_id=e["filing_id"], amend_id=amend, forms=frozenset(), also=frozenset(),
             amount=0.0, gross=0.0, entries=0, unread=0))
-        a = _plain_amount(e["amount"])
+        a = e["amt"]
         r.forms |= {form}
         r.also |= set(e["copies"]) - {e["filing_id"]}
         r.amount += a or 0.0
@@ -916,7 +908,7 @@ def _could_change_ranking(groups: list[Any], tied: list[Any], top: float,
     for e in late:
         mine = _name_words(e["naml"], e["namf"])
         matched = [k for k, w in words.items() if _could_be(mine, w)] or [("", mine)]
-        a = _plain_amount(e["amount"])
+        a = e["amt"]
         for k in matched:
             names.setdefault(k, " ".join(x for x in (e["namf"], e["naml"]) if x).strip())
             lo.setdefault(k, 0.0)
