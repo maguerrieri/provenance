@@ -284,9 +284,13 @@ def _warn_kept(page: PageCache) -> None:
     if f is None or (page.url, f.attempted_at) in _warned:
         return
     _warned.add((page.url, f.attempted_at))
+    # Withheld, the line still says how to retry: from where the URL is held as it is, since
+    # the operator cannot copy or type it from here.
     retry = (f"Retry: vg fetch --refresh {shlex.quote(page.url)}" if not unprintable(page.url)
-             else "Retry with vg fetch --refresh on the URL itself; no command is printed, as "
-                  "the URL holds a control or invisible character a pasted command would not carry")
+             else "No retry command: the URL holds a control or invisible character a pasted "
+                  "command would not carry. Retry with vg verify --refresh, which reads it from "
+                  "the claim citing it, or vg fetch --refresh with the URL copied from its "
+                  "source, not from this line")
     log.warning(f"{printable(page.url)}: {printable(kept_copy_note(page))}. {retry}")
 
 
