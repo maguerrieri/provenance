@@ -76,7 +76,7 @@ def _load_or_exit(claims_dir: Path, **kw) -> list[Claim]:
     try:
         return load_claims(claims_dir, **kw)
     except ValueError as e:
-        con.print(f"[red]{escape(_printable(str(e)))}[/]")
+        con.print(f"[red]{escape(_printable(str(e), lines=True))}[/]")
         raise typer.Exit(1) from None
 
 
@@ -92,7 +92,7 @@ def _judgments_or_exit():
     except UnreadableJudgments as e:
         # Escaped: the message quotes the file's own text, and rich reads "[/]" in a verdict as
         # markup — crashing the refusal into a traceback, or silently eating "[supports]".
-        con.print(f"[red]{escape(_printable(str(e)))}[/]")
+        con.print(f"[red]{escape(_printable(str(e), lines=True))}[/]")
         raise typer.Exit(1) from None
 
 DATA = Path("data")
@@ -158,7 +158,7 @@ def _archive_records(data: Path) -> dict[str, dict]:
     try:
         return arch.load_records(data)
     except ValueError as e:
-        con.print(f"[red]{escape(_printable(str(e)))}[/]")
+        con.print(f"[red]{escape(_printable(str(e), lines=True))}[/]")
         raise typer.Exit(1) from None
 
 
@@ -342,7 +342,7 @@ def fetch(url: str, data: Path = DATA, cache: Path = None, refresh: bool = False
     con.print(f"title: {escape(_printable(str(p.title)))}  pdf: {p.is_pdf}  "
               f"paywall: {p.paywall_suspected}  chars: {len(p.text)}")
     if p.error:
-        con.print(f"[red]error:[/] {escape(_printable(p.error))}")
+        con.print(f"[red]error:[/] {escape(_printable(p.error, lines=True))}")
     # A kept page carries its OLD status and text, so without this line a failed
     # `vg fetch --refresh` prints exactly like a successful one.
     if kept := kept_copy_note(p):
@@ -357,7 +357,14 @@ def fetch(url: str, data: Path = DATA, cache: Path = None, refresh: bool = False
     # As Text, like a query value: a plain string wraps at 80 columns in an agent's shell,
     # putting line breaks in a snippet. Line by line, as a researcher copies from it.
     if p.text:
-        con.print(Text(_printable(p.text[:1200], lines=True)), soft_wrap=True)
+        shown = _printable(text := p.text[:1200], lines=True)
+        con.print(Text(shown), soft_wrap=True)
+        if shown != text.replace("\r\n", "\n"):
+            # A soft hyphen, a zero-width space or a directional mark is common in page text,
+            # and a snippet copied with its escape (`co\xadoperate`) is on no page.
+            con.print("[yellow]Characters above that act on a terminal or are invisible are "
+                      "shown as escapes (\\x.., \\u....). The page holds the character, not the "
+                      "escape: quote around it, never with it.[/]")
     else:
         con.print("[dim](no text)[/]")
 
@@ -453,7 +460,7 @@ def verify(data: Path = DATA, cache: Path = None, refresh: bool = False, qid: st
             else:
                 color = "red"
             t.add_row(c.question_id, f"[{color}]{st}[/]", escape(_printable(s.publisher)),
-                      escape(_printable((s.verification.reason or "")[:70])))
+                      escape(_cut(s.verification.reason or "", 70)))
         # Checked after this run's fetches, not before: a --refresh or an extractor re-fetch
         # is exactly what makes a verdict stale, and a list from before it would omit those.
         stale_verdicts += [f"{c.question_id}/{s.sid}: {why}" for s, _j, why in
@@ -462,7 +469,7 @@ def verify(data: Path = DATA, cache: Path = None, refresh: bool = False, qid: st
         check_corroboration(c)
         if c.corroboration_ok is False:
             t.add_row(c.question_id, "[red]corroboration[/]", "-",
-                      escape(_printable(c.corroboration_note[:70])))
+                      escape(_cut(c.corroboration_note, 70)))
     save_claims(claims, claims_dir)
     con.print(t)
     # The re-check a changed query definition calls for: the figure was just re-run under the
@@ -523,7 +530,7 @@ def archive(data: Path = DATA, cache: Path = None, delay: float = 3.0):
         # This command is what rebuilds the records, so a damaged file must not stop it.
         aside = data / f"{arch.RECORDS}.damaged-{datetime.now(UTC):%Y%m%dT%H%M%SZ}"
         (data / arch.RECORDS).rename(aside)
-        con.print("[yellow]" + escape(f"{_printable(str(e))}\n  moved it to "
+        con.print("[yellow]" + escape(f"{_printable(str(e), lines=True)}\n  moved it to "
                                       f"{_printable(str(aside))}") + "; starting fresh[/]")
         records = {}
     # Every cited URL, even one already carrying a snapshot, with one source citing it.
@@ -635,7 +642,7 @@ def _report_rearchived_verdicts(claims: list[Claim], data: Path, cache_root: Pat
     except judgments.UnreadableJudgments as e:
         # The archive itself is done and written; an unreadable shard is every reader's to stop on.
         con.print(f"[yellow]could not check verdicts against the new snapshots: "
-                  f"{escape(_printable(str(e)))}[/]")
+                  f"{escape(_printable(str(e), lines=True))}[/]")
         return
     if stale:
         con.print(f"[yellow]{len(stale)} verdict(s) on archive-verified sources were about a "
@@ -714,7 +721,8 @@ def _question_ids(data: Path, claims: list[Claim]) -> set[str] | None:
     try:
         found = questions.check(claims, questions.load(path))
     except questions.UnreadableQuestions as e:
-        con.print(f"[red]{escape(_printable(str(e)))}[/]")   # escaped: it quotes the file's own ids
+        # Escaped: it quotes the file's own ids.
+        con.print(f"[red]{escape(_printable(str(e), lines=True))}[/]")
         return None
     where = escape(_printable(str(path)))
     if found.pending:
@@ -781,7 +789,7 @@ def build(data: Path = DATA, cache: Path = None, race: str = "", candidate: str 
         clear_render(data / "out")
     except OSError as e:
         con.print("[red]" + escape(_printable(f"could not clear the previous render from "
-                                              f"{data / 'out'}: {e}"))
+                                              f"{data / 'out'}: {e}", lines=True))
                   + ". Remove it by hand: `vg serve` must not show a render this build did not "
                   "produce.[/]")
         raise typer.Exit(1) from None
@@ -872,7 +880,7 @@ def calaccess_build(data: Path = DATA, cache: Path = None):
         dbp = calaccess.build(root, progress=lambda t, n, note: con.print(
             f"  {t:32} {n:>9,} rows {note}"))
     except FileNotFoundError as e:
-        con.print(f"[red]{escape(_printable(str(e)))}[/]")
+        con.print(f"[red]{escape(_printable(str(e), lines=True))}[/]")
         raise typer.Exit(1) from None
     con.print("[green]built[/] " + escape(_printable(f"{dbp} ({_export_line(root)})")))
 
@@ -894,7 +902,7 @@ def calaccess_filer(name: str, data: Path = DATA, cache: Path = None, limit: int
     try:
         rows = calaccess.find_filers(_cache_root(data, cache), name, limit)
     except FileNotFoundError as e:
-        con.print(f"[red]{escape(_printable(str(e)))}[/]")
+        con.print(f"[red]{escape(_printable(str(e), lines=True))}[/]")
         raise typer.Exit(1) from None
     if not rows:
         con.print(f"No filer matching {escape(repr(name))}.")
@@ -955,7 +963,7 @@ def calaccess_contributions(filer_id: str, data: Path = DATA, cache: Path = None
         # refuses a bad --since before it opens the database
         rows = calaccess.contributions_to(_cache_root(data, cache), filer_id, top=top, since=since)
     except (FileNotFoundError, ValueError) as e:
-        con.print(f"[red]{escape(_printable(str(e)))}[/]")
+        con.print(f"[red]{escape(_printable(str(e), lines=True))}[/]")
         raise typer.Exit(1) from None
     t = Table("amount", "contributor", "employer", "date", "restated", "cite this URL",
               "latest amendment", box=None)
@@ -963,11 +971,11 @@ def calaccess_contributions(filer_id: str, data: Path = DATA, cache: Path = None
         # An amount that did not read is not "$0". A blank says so, and anything else is shown
         # as filed, cut to fit. Every cell is export text: as Text, since rich would read "[/]"
         # as markup, and through _printable(), since a control character acts on the terminal
-        # before anything is shown. Cut before it, so no escape is cut in half.
+        # before anything is shown (`_cut()` where it is cut to fit).
         amt = (f"${c.amount:,.0f}" if c.amount is not None
-               else (_printable(c.amount_filed[:14]) or "blank"))
-        t.add_row(Text(amt), Text(_printable(c.contributor[:30])),
-                  Text(_printable(c.occupation[:18] or c.employer[:18])),
+               else (_cut(c.amount_filed, 14) or "blank"))
+        t.add_row(Text(amt), Text(_cut(c.contributor, 30)),
+                  Text(_cut(c.occupation or c.employer, 18)),
                   Text(_printable(c.date)), (f"{c.filings}x" if c.filings > 1 else ""),
                   Text(_printable(c.cite_url)), _amendment_cell(c.unrestated, c.omitted))
     con.print(t)
@@ -1045,24 +1053,24 @@ def calaccess_ie(candidate_last: str, data: Path = DATA, cache: Path = None, fir
         rows = calaccess.independent_expenditures(_cache_root(data, cache), candidate_last,
                                                   first=first, top=top, loose=loose)
     except FileNotFoundError as e:
-        con.print(f"[red]{escape(_printable(str(e)))}[/]")
+        con.print(f"[red]{escape(_printable(str(e), lines=True))}[/]")
         raise typer.Exit(1) from None
     t = Table("amount", "stance", "spender", "candidate", "date", "cite this URL",
               "latest amendment", box=None)
     for r in rows:
         # A blank amount is money nobody stated: printed "$0" it read as a stated zero, which
-        # ie_total refuses to report. Anything else that is not a number is shown as filed.
-        # Every cell is filer text, as in the contributions listing: as Text, since rich would
-        # read "[/]" as markup, and through _printable().
+        # ie_total refuses to report. Anything else that is not a number is shown as filed, cut
+        # to fit. Every cell is filer text, as in the contributions listing: as Text, since rich
+        # would read "[/]" as markup, and through _printable() (`_cut()` where it is cut).
         raw = (r.get("AMOUNT") or "").strip()
         try:
             amt = f"${float(raw):,.0f}" if raw else "blank"
         except ValueError:
-            amt = _printable(raw)
+            amt = _cut(raw, 14)
         t.add_row(Text(amt), Text(_printable(r["stance"])),
-                  Text(_printable((r.get("FILER_NAML") or "")[:28])),
-                  Text(_printable(" ".join(x for x in (r.get("CAND_NAMF"), r.get("CAND_NAML"))
-                                           if x)[:22])),
+                  Text(_cut(r.get("FILER_NAML") or "", 28)),
+                  Text(_cut(" ".join(x for x in (r.get("CAND_NAMF"), r.get("CAND_NAML")) if x),
+                            22)),
                   Text(_printable(r.get("EXP_DATE") or "")), Text(_printable(r["cite_url"])),
                   _amendment_cell(r["unrestated"], reattributed=r["reattributed"]))
     con.print(t)
@@ -1111,10 +1119,11 @@ def run_query(name: str = typer.Argument(""), param: list[str] = None, data: Pat
         result = queries.run(name, params, root)
     except TypeError as e:
         required = q.required if (q := queries.REGISTRY.get(name)) else ()
-        con.print(f"[red]{escape(_printable(str(e)))}[/]\n  required: {', '.join(required)}")
+        con.print(f"[red]{escape(_printable(str(e), lines=True))}[/]\n"
+                  f"  required: {', '.join(required)}")
         raise typer.Exit(1) from None
     except Exception as e:  # noqa: BLE001
-        con.print(f"[red]{escape(_printable(str(e)))}[/]")   # it may quote the params
+        con.print(f"[red]{escape(_printable(str(e), lines=True))}[/]")   # it may quote the params
         raise typer.Exit(1) from None
     if not result.found:
         # Escaped: the note lists near-matches, which are filer names from the export.
@@ -1325,6 +1334,19 @@ def _printable(text: str, *, lines: bool = False) -> str:
                    else (f"\\x{ord(ch):02x}" if ord(ch) < 0x100 else
                          f"\\u{ord(ch):04x}" if ord(ch) < 0x10000 else f"\\U{ord(ch):08x}")
                    for ch in text)
+
+
+def _cut(text: str, n: int) -> str:
+    """`text` through `_printable()`, cut to at most `n` characters as shown: a cell's width.
+    Cut after the escaping, or a cell of control bytes shows four times as wide and folds the
+    table; and between escapes, never inside one, so none reads as another character."""
+    out, used = [], 0
+    for ch in text:
+        used += len(shown := _printable(ch))
+        if used > n:
+            break
+        out.append(shown)
+    return "".join(out)
 
 
 @app.command()
@@ -1633,7 +1655,7 @@ def show_judgments(data: Path = DATA, question_id: str = "",
                 # note can be about another answer, or another claim's.
                 note = why or (j.note if j else "")
             t.add_row(c.question_id, escape(_printable(f"{s.publisher} {s.sid}")), v,
-                      escape(_printable((note or "")[:60])))
+                      escape(_cut(note or "", 60)))
     con.print(t)
 
     if orphans:
@@ -1723,7 +1745,7 @@ def clear_contradiction(question_id: str, sid: str, data: Path = DATA):
     try:
         judgments.path_for(data, question_id)
     except ValueError as e:
-        refuse(escape(_printable(str(e))))
+        refuse(escape(_printable(str(e), lines=True)))
     # The id was just checked; the source id is the argument as given.
     qid, s = escape(question_id), escape(_printable(sid))
 
@@ -1788,7 +1810,7 @@ def clear_contradiction(question_id: str, sid: str, data: Path = DATA):
         with _judgments_or_exit():
             dest = judgments.clear(data, question_id, sid, reason, shown=held)
     except (ValueError, OSError) as e:
-        refuse(escape(_printable(str(e))))
+        refuse(escape(_printable(str(e), lines=True)))
     con.print(f"[green]cleared[/] the contradicts verdict on {qid}/{s}: kept, with the reason, in "
               f"{escape(_printable(str(dest)))}")
 
@@ -1859,7 +1881,7 @@ def source_access(host: str = typer.Argument(""), run_recipe: str = "",
             resp = access.run(recipe, params)
         except Exception as e:  # noqa: BLE001
             # Escaped: a refusal names parameters like `auth[token]`.
-            con.print(f"[red]{escape(_printable(f'{type(e).__name__}: {e}'))}[/]")
+            con.print(f"[red]{escape(_printable(f'{type(e).__name__}: {e}', lines=True))}[/]")
             raise typer.Exit(1) from None
         con.print(f"\n[bold]HTTP {resp.status_code}[/] {len(resp.text)} chars")
         # Fetched, and copied from: line by line, so its line breaks stay and nothing else in
@@ -1909,7 +1931,7 @@ def source_import_curl(path: Path, name: str = "", write: bool = True):
     try:
         parsed = access.parse_curl(path.read_text())
     except (OSError, ValueError) as e:
-        con.print(f"[red]{escape(_printable(str(e)))}[/]")
+        con.print(f"[red]{escape(_printable(str(e), lines=True))}[/]")
         raise typer.Exit(1) from None
 
     entry = parsed["entry"]
@@ -1958,7 +1980,7 @@ def form700(first: str, last: str):
         filings = fppc.search(first, last)
     except Exception as e:  # noqa: BLE001
         con.print(f"[red]FPPC search failed: {type(e).__name__}: "
-                  f"{escape(_printable(str(e)))}[/]\n"
+                  f"{escape(_printable(str(e), lines=True))}[/]\n"
                   f"Do not substitute a copy silently — say the index was unreachable.")
         raise typer.Exit(1) from None
     # The names as given: an undecodable byte in argv is a lone surrogate.
@@ -2000,7 +2022,7 @@ def check_claim(path: Path, data: Path = DATA, cache: Path = None, race: str = "
     try:
         raw = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as e:
-        con.print(f"[red]cannot read {escape(_printable(f'{path}: {e}'))}[/]")
+        con.print(f"[red]cannot read {escape(_printable(f'{path}: {e}', lines=True))}[/]")
         raise typer.Exit(1) from None
 
     ok = True
@@ -2019,7 +2041,8 @@ def check_claim(path: Path, data: Path = DATA, cache: Path = None, race: str = "
             asked = questions.load(asked_in)
         except questions.UnreadableQuestions as e:
             ok = False
-            con.print(f"[red]cannot check the question:[/] {escape(_printable(str(e)))}")
+            con.print(f"[red]cannot check the question:[/] "
+                      f"{escape(_printable(str(e), lines=True))}")
     for item in (raw if isinstance(raw, list) else [raw]):
         try:
             claim = Claim.model_validate(strip_machine_fields(item))
@@ -2179,8 +2202,8 @@ def status(data: Path = DATA, cache: Path = None, race: str = ""):
     try:
         rules = load_rules(tuple(load_race(race or None).sources))
     except (FileNotFoundError, ValueError) as e:
-        con.print(f"[yellow]{escape(_printable(str(e)))} — checking against the `us` source list "
-                  f"only, which can pass rows `vg build --race` rejects[/]")
+        con.print(f"[yellow]{escape(_printable(str(e), lines=True))} — checking against the "
+                  f"`us` source list only, which can pass rows `vg build --race` rejects[/]")
         rules = load_rules(("us",))
     cache_root = _verdict_cache_root(data, cache)
     _settle(claims, data, cache_root, rules, _archive_records(data))
