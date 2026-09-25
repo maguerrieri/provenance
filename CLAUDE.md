@@ -1201,7 +1201,13 @@ listing more names:
   name of the registry file. `parse_curl()` now knows the arity of every option it accepts and
   refuses any other option. It also refuses `--user` and curl's other credential options, a
   login in the URL, and a second URL, which is the shape a misread value takes. No refusal
-  repeats the value, and that includes a `-H` with no colon: it is all value.
+  repeats the value, and that includes a `-H` with no colon: it is all value. **Nor does a
+  library's error.** `urlsplit()` refuses a host holding a character that NFKC reads as `@`,
+  `:` or `/` (a fullwidth `@` in a password), and its message quotes the whole netloc, login
+  included. Passed on as the refusal, it printed the login it was refusing (#158). So every URL
+  from a paste or a recipe is split through `_split()`, which names the URL ("the referer
+  header's URL") instead. A test fails on a split anywhere else in `access.py` but
+  `_norm_host()`, which reads a host a person typed or a URL `parse_curl()` has already split.
 - **A deny-list of names can't anticipate what a site calls its session.** Only `Cookie`,
   `Authorization` and a few more were dropped, so `x-csrf-token` and `x-xsrf-token` reached
   disk. Credential headers now match by pattern (`credential_header()`), and `run()` uses the
