@@ -1782,25 +1782,27 @@ sums and the dedup do. It first had its own Python copy of that rule, which drif
 edges (it stripped tabs and non-breaking spaces that `TRIM` keeps): two readings of one value,
 the trap in "A dedup reads a value the way the sum does".
 
-A late entry is held against every contributor it could be. That is `_could_be()`: one name's
-words all appear in the other's, whatever the case, punctuation or field. So "LAST, FIRST" in
-one field, a bare surname, a middle initial and a short form of an organization's name all
-count. This matching is wide on purpose, the reverse of the exact matching the totals use: a
-false match here only makes a query refuse, and a missed one lets a short figure through.
-The first version matched exact spellings only, and a "DOE, JANE" late gift became a new giver
-holding just its own amount, so the ranking stood. What it still can't catch is a name spelled
-*differently* (a typo). That one fails toward green.
+A late entry is held against every contributor in its group, the grouping every name goes
+through (`_groups()`, in "One giver filed two ways is flagged, never merged" below). So "LAST,
+FIRST" in one field, a bare surname, a middle or first initial and a short form of an
+organization's name all count. This matching is wide on purpose, the reverse of the exact
+matching the totals use: a false match here only makes a query refuse, and a missed one lets a
+short figure through. The first version matched exact spellings only, and a "DOE, JANE" late
+gift became a new giver holding just its own amount, so the ranking stood. What it still can't
+catch is a name spelled *differently* (a typo). That one fails toward green.
 
-Two more places the width has to reach, both found late:
-- **Late givers among themselves.** A late name on nobody's schedule is a giver of its own, and
-  every late entry that could be them counts for them too. All such names are found before any
-  entry is counted: counted as they came, an earlier "Ada C" took "Ada" and never met "Ada B",
-  so two $3,000 gifts that could be one giver's $6,000 never passed a $5,000 leader.
-- **What a sum already holds.** Every schedule (`""`) sums the Form 496 Part 3 rows, so the
-  check left those out as counted. But one contributor's total sums only the rows its exact
-  name filter takes, and a row filed another way is a gift it leaves out. So `_late_reports`
-  asks the sum's own filter (contributor_total passes its `WHERE` clause). An exclusion that
-  says "the figure already has this" has to ask the figure's own query, never assume it.
+Two more places the width has to reach, both found late, and both now the same grouping:
+- **Late givers among themselves.** Late names on nobody's schedule that could be one giver are
+  one group, held as one giver with every late entry in it, each once. Held one name at a time,
+  as they came, an earlier "Ada C" took "Ada" and never met "Ada B", so two $3,000 gifts that
+  could be one giver's $6,000 never passed a $5,000 leader.
+- **What a sum already holds.** Every schedule (`""`) sums the Form 496 Part 3 rows, but one
+  contributor's total sums only the rows filed under its exact name. A row filed another way
+  ("DOE JANE" whole in the last-name field) is another name on that schedule, in the giver's
+  group, so the name check holds it like any other name, and the late check leaves every Form
+  496 row to it. It was first a second check, asking the sum's own filter which late rows it
+  took. That was right, and it was also a second rule for "could be one giver", with its own
+  matching beside the grouping's. Keep that rule in one place: a copy drifts.
 
 The options that were rejected, and why:
 - **Count `F496P3` in the default and let the cross-form dedup collapse it with its schedule-A
@@ -1849,6 +1851,113 @@ not, since their whole name sits in `CTRIB_NAML`.
 was another candidate with the same surname, in a different county and year. It now **requires**
 a first name rather than accepting one optionally — an optional guard on a candidate query is
 not a guard, because the wrong answer is well-formed and there is no snippet for anyone to check.
+
+## One giver filed two ways is flagged, never merged
+
+The reverse question is what a query returns for the right person filed two ways. Filers don't
+reliably split or spell out a donor's name: `'Rue Quillon'/''` (whole, in the last-name field)
+on one row, `'Quillon'/'Rue'` on the next, `'Quillon'/'R'` or `'Quillon'/'R M'` on a third.
+`top_contributor` grouped by (last, first), so each was a contributor of its own, short of what
+the giver gave. A smaller giver could be named "the largest contributor", and a tie could list
+`Rue Quillon | Rue Quillon`. `contributor_total` asked for Quillon, Rue left the other rows out.
+Each value reproduced, so each citation verified green.
+
+**Contributors are never combined.** Two names that could be one giver's can be two people (a
+bare surname, a middle initial that marks a parent and a child), and one gift filed on two
+forms under two spellings would count twice. So every figure a query reports is for a name
+exactly as filed. Other names are held against the result, the way a pending late gift is, and
+listed for a person to resolve: each as filed, with its figure and the city, ZIP and employer
+its gifts were filed with (`_identity()`). Resolving them with evidence is a claim of its own
+(#130), not something a query does.
+
+**One grouping, not a patch per pair.** Three fixes in a row each taught the pairwise test one
+more shape (a whole name split, a first initial, initials either way round), and each left the
+next shape open. Pairwise can't close: once an initial fits a word either way the relation stops
+being transitive (Rue could be R, R could be Roe, Rue could not be Roe), and finding the best
+set of names every two of which could be one giver's is a max-weight clique. So the rule is one
+relation and its closure:
+- **Link** (`_could_be()`): two names share a surname, a word spelled out in both that is the
+  surname of one of them, and each word of the shorter is a different word of the other, or an
+  initial of one, either way round.
+- **Group** (`_groups()`): the transitive closure, by union-find. It over-merges by
+  construction (a bare surname joins every giver who has it), so every giver's names are in one
+  group, and a group's total bounds any real giver in it. A name with no words (a blank, or a
+  `-`) could be anyone's, so it is counted in every group, but it links none (`_ANYONE`).
+  Bridged through it, every giver on a committee was one group, and a total listed an unrelated
+  giver as a name that could be the giver's.
+- **`top_contributor`** stands only when (1) the leader's own total is at least every other
+  group's bound, and (2) no other name is in the leader's group. Otherwise it is a miss naming
+  each group that could change the order, and its bound. A bound is every positive gift in the
+  group (a name's gifts could be split between two givers) plus every positive late amount in
+  it, each late entry once, never once per name it could be. No largest contributor is named at
+  all while a gift it ranks has no readable amount (see "A blank amount is not zero"), and the
+  check reads a group holding one as unbounded all the same: it does not lean on its caller.
+- **`contributor_total`** is a miss while its name's group holds another name. Its group is that
+  of the names it counts, not of the name asked for: asked for a bare surname, that would join
+  every giver who has it.
+
+`names=as_filed` lifts this gate alone, and `form_type=A` still lifts only the late-report one.
+One switch for both meant getting past a name nobody could place also let a pending late gift
+through. Neither makes a value green: as a named schedule does with a pending late report, a
+value for names as filed goes to `human_review` while another name could change it, listing
+each (`QueryResult.names`, `unsettled`). A note alone rendered green, and "gave $2,500" is a
+split giver's figure that reads as the whole one. A late entry can move a figure by linking two
+names on the schedule into one group, so a held value lists those names beside the late
+report: a $1 report alone looks like nothing to check. A refusal blames each cause that could
+change the answer alone, and both only when neither can alone, so it never names a $10 late
+gift beside names that do the work. A value stands only when the check with every cause, as the
+gates in force weigh them, finds nothing: asked one cause at a time, a late gift that moves the
+ranking only together with a name merge went green.
+
+**A closure bounds a figure; it cannot count people.** Over-merging is safe for a bound and
+wrong for "is this one person?": a surname-only total asks whether its first names and late
+givers could all be one giver, and a bare-surname late entry linked Rue and Tom into one group,
+which let their surname-only total through. That question is asked pairwise.
+
+**Initials are where most of the bugs were.** Each of these read as a link or a miss it wasn't:
+- an initial is a letter only where a given name can be: the first-name field, or the last-name
+  field holding a whole name. A one-letter surname (`'O'/'Hanu'`) is a word;
+- a letter split off inside a word (`QX&T`, `Orrin's`) is a word, never an initial;
+- accents fold first (NFKD, marks dropped), or `E` misses `Élise`, which fails toward green;
+- a letter with no case (a CJK character) is a name, not an abbreviation;
+- one word fits one word, found by matching, not greedily: `R` has to leave `Rue` for `Rue`;
+- a digit is never an initial: `Local 3` is not a short `Local 39`;
+- a filing slip is not a new name: a first name filed as `-` is no first name, an initial run
+  into the next word by its point (`R.Quillon`) is split off, and `Ø`, `Æ`, `Ð` and `Þ`, which
+  NFKD leaves whole, are spelled out. Each of those split one giver into two ranked names.
+
+**A name's key is trimmed as its display is.** The ranking grouped on SQLite's `TRIM` and
+`UPPER`, which know only ASCII spaces and letters, and displayed with Python's `strip()`. A
+surname filed with a non-breaking space was a name of its own that read exactly like the plain
+one. The key is now one Python function `calaccess.connect` registers (`_name_key`), so the SQL
+that groups and the Python that displays agree. The cross-form dedup keys names with it too:
+left on the ASCII rules while the queries moved, a gift's two copies filed `Élise` and `élise`
+stayed apart and were summed under one name. **A giver filed with no name is never the
+answer:** its value was `""`, which matches `""` and verified, so a leader or tie holding one is
+a miss whatever the gates.
+
+**The index is part of the rule.** Linking is tested only for pairs an index offers, so a pair
+the index misses is a giver ranked as two. It keys each name by a word it spells out beside
+each of its other words, and beside the first letter of each; a name is tested only against
+names holding one of its words (as a surname, where the word isn't its own) beside its rarest
+other word, that word's initial, or for an initial its letter. The first version indexed each
+word by its initial, which made every initial a candidate for every name with that letter: 4
+million tests on 30,000 synthetic names, and a bare surname linked to any name with a matching
+middle initial. Keyed by (surname, first letter), a ranking still took 6 seconds on 60,000
+synthetic gifts whose given names all began with one letter. Tests check, on random names, that the index finds the groups testing
+every pair would, that the ranking refuses exactly when the rule stated plainly says, and that
+the index does not test every pair.
+
+The cost is that the queries refuse more often: a bare surname joins groups nobody could split
+without a person looking, and an unnamed row is in every group, so it gates every total and
+ranking for its filer (#127 is to measure how often). What still slips:
+a name spelled differently (a typo, `Bob` for `Robert`), one sharing no spelled-out surname with
+the other (`R Q` for Rue Quillon), and one name held by two people, which no grouping by name
+can see.
+
+A test fixture with an accent has to be written in latin-1, the encoding the build reads the
+export in (`calaccess._rows`). Written as UTF-8, `Élise` loaded as mojibake, and the accent test
+exercised a name with no `É` left in it.
 
 ## The database can fabricate a finding out of real rows
 
