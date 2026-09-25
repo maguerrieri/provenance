@@ -210,10 +210,11 @@ def test_run_refuses_a_login_that_a_param_puts_in_the_url():
 UNREADABLE_LOGIN = "user:fake\uff20canary@portal.example"
 
 
-def _refused_unrepeated(call, where: str) -> None:
+def _refused_unrepeated(call, where: str) -> str:
     with pytest.raises(ValueError, match=f"{re.escape(where)} can't be parsed") as e:
         call()
     assert not re.search("fake|canary|\uff20|portal", str(e.value)), str(e.value)
+    return str(e.value)
 
 
 @pytest.mark.parametrize("curl, where", [
@@ -227,7 +228,7 @@ def _refused_unrepeated(call, where: str) -> None:
     (f"curl -H 'Origin: https://{UNREADABLE_LOGIN}' https://x.example/", "the origin header's URL"),
 ])
 def test_a_url_whose_host_cant_be_parsed_is_refused_without_repeating_it(curl, where):
-    _refused_unrepeated(lambda: parse_curl(curl), where)
+    assert "Record the endpoint by hand" in _refused_unrepeated(lambda: parse_curl(curl), where)
 
 
 @pytest.mark.parametrize("recipe, params, where", [

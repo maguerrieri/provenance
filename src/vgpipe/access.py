@@ -334,9 +334,10 @@ def find(host_or_url: str, registry: Path | None = None) -> SourceAccess | None:
 def run(recipe: Recipe, params: dict[str, str], *, timeout: float = 45.0) -> httpx.Response:
     """Execute a recipe. Credential headers and parameters are refused, not stripped: a
     recipe that needs one is describing a manual retrieval and should be recorded as such."""
-    def has_login(url: str, where: str) -> bool:
+    def checked(check, *args):
+        """A check whose own refusal (a value it can't read) names the recipe."""
         try:
-            return _has_login(url, where)
+            return check(*args)
         except ValueError as e:
             raise ValueError(f"recipe {recipe.id!r}: {e}") from None
 
@@ -344,7 +345,7 @@ def run(recipe: Recipe, params: dict[str, str], *, timeout: float = 45.0) -> htt
     if bad:
         raise ValueError(f"recipe {recipe.id!r} carries credential headers ({', '.join(bad)}); "
                          "record it as access: manual instead")
-    if any(has_login(v, f"its {k.lower()} header's URL")
+    if any(checked(_has_login, v, f"its {k.lower()} header's URL")
            for k, v in recipe.headers.items() if k.lower() in _URL_HEADERS):
         raise ValueError(f"recipe {recipe.id!r} puts a username or password in a header's URL; "
                          "record it as access: manual instead")
@@ -360,15 +361,12 @@ def run(recipe: Recipe, params: dict[str, str], *, timeout: float = 45.0) -> htt
 
     url = fill(recipe.url)
     # Checked after filling: a param can land in the host part too.
-    if has_login(url, "its URL"):
+    if checked(_has_login, url, "its URL"):
         raise ValueError(f"recipe {recipe.id!r} puts a username or password in its URL; "
                          "record it as access: manual instead")
     body = fill(recipe.body) if recipe.body else None
     # Also checked after filling, since a param can hold a whole `name=value` pair.
-    try:
-        found = _credential_params(url, recipe.headers, body)
-    except ValueError as e:
-        raise ValueError(f"recipe {recipe.id!r}: {e}") from None
+    found = checked(_credential_params, url, recipe.headers, body)
     if found:
         raise ValueError(f"recipe {recipe.id!r} carries what look like credentials in "
                          f"{'; '.join(found)}; record it as access: manual instead")
@@ -469,6 +467,14 @@ def parse_curl(text: str) -> dict:
     dropped: list[str] = []
     unknown: list[str] = []
 
+    def checked(check, *args):
+        """A check whose own refusal (a value it can't read) says what to do instead."""
+        try:
+            return check(*args)
+        except ValueError as e:
+            raise ValueError(f"{e}. Record the endpoint by hand with "
+                             "`vg source-note <host> <finding>`") from None
+
     def header(name: str, value: str) -> None:
         name = name.strip().lower()
         if not _HEADER_NAME.fullmatch(name):
@@ -479,7 +485,7 @@ def parse_curl(text: str) -> dict:
             dropped.append(name)
         elif name not in SAFE_HEADERS:
             unknown.append(name)
-        elif name in _URL_HEADERS and _has_login(value, f"the {name} header's URL"):
+        elif name in _URL_HEADERS and checked(_has_login, value, f"the {name} header's URL"):
             raise ValueError(f"the {name} header carries a username or password. {_MANUAL}")
         elif name == "referer":
             # The URL of the page the request came from, and a session id can ride in that
@@ -523,16 +529,12 @@ def parse_curl(text: str) -> dict:
     if len(urls) > 1:
         raise ValueError(f"{len(urls)} URLs in the curl command; import one request at a time")
     url = urls[0]
-    parts = _split(url, "the curl command's URL")
+    parts = checked(_split, url, "the curl command's URL")
     if parts.scheme not in ("http", "https") or not parts.hostname:
         raise ValueError("the curl command's URL is not an absolute http(s) URL")
     if _has_login(url, "the curl command's URL"):
         raise ValueError(f"the URL carries a username or password. {_MANUAL}")
-    try:
-        found = _credential_params(url, headers, body)
-    except ValueError as e:
-        raise ValueError(f"{e}. Record the endpoint by hand with "
-                         "`vg source-note <host> <finding>`") from None
+    found = checked(_credential_params, url, headers, body)
     if found:
         raise ValueError(f"the request carries what look like credentials in "
                          f"{'; '.join(found)}. Remove them from the paste if the request works "
