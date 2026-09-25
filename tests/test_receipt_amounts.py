@@ -200,17 +200,27 @@ def test_a_readable_gift_is_never_merged_into_an_unreadable_restatement(tmp_path
          " CTRIB_NAMF, RCPT_DATE, AMOUNT, FORM_TYPE) VALUES ('8100001', '0', 'F496P3-T3', '4',"
          " 'Marlow', 'Tess', '1/7/2026 12:00:00 AM', '300,000', 'F496P3')")
 
-    # Only every schedule reaches the dedup: the schedule-A default leaves the Form 496 Part 3
-    # row out before it (#66), and counts the $300 alone.
+    # Only every schedule reaches the dedup: schedule A leaves the Form 496 Part 3 row out before
+    # it (#47), and counts the $300 alone.
     tess = queries.run("calaccess.contributor_total",
                        {"filer_id": MIXED, "contributor": "Marlow", "contributor_first": "Tess",
                         "form_type": ""}, root)
     assert tess.found and tess.value == 300.0 and tess.rows == 1, tess
     assert "1 more gift(s) with no readable amount" in tess.note
+    # Left out of schedule A, that row is also a late gift no schedule A restates (#66): its
+    # amount is not the $300's, so it is not that gift, and it could be any amount. Schedule A by
+    # name still counts the $300 alone and names it; the default refuses.
+    tess = queries.run("calaccess.contributor_total",
+                       {"filer_id": MIXED, "contributor": "Marlow", "contributor_first": "Tess",
+                        "form_type": "A"}, root)
+    assert tess.found and tess.value == 300.0, tess
+    assert tess.note.startswith("1 itemized schedule-A gift(s); 1 late-report entry ($0.00; 1 "
+                                "with no readable amount; filing 8100001)"), tess.note
+    assert [(r.filing_id, r.unread) for r in tess.late] == [(8100001, 1)] and tess.unsettled
     tess = queries.run("calaccess.contributor_total",
                        {"filer_id": MIXED, "contributor": "Marlow", "contributor_first": "Tess"},
                        root)
-    assert tess.found and tess.value == 300.0 and tess.note == "1 itemized schedule-A gift(s)"
+    assert not tess.found and tess.value is None, tess
 
     listed = [c for c in calaccess.contributions_to(root, MIXED) if c.contributor == "Tess Marlow"]
     assert sorted((c.amount is None, c.amount_filed) for c in listed) == [

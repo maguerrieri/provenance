@@ -123,8 +123,10 @@ def verify_query_source(src: Source, root: Path) -> Source:
         src.verification = v
         return src
     if why := result.unsettled:
-        # The number reproduces, but it counts rows a later amendment may have withdrawn.
-        # Only the filing says which, so a person opens it; stamped as for a mismatch.
+        # The number reproduces, but the record it comes from is not settled: it counts rows a
+        # later amendment may have withdrawn, or leaves out a late report no schedule A restates
+        # yet. Only the filings it names say which, so a person opens them; stamped as for a
+        # mismatch.
         v.query_run = run
         v.status = "human_review"
         v.reason = (f"the query reproduces {result.value!r}, but {why} Re-run: "
@@ -799,7 +801,8 @@ def revalidate_from_cache(src: Source, root: Path, *,
             return src
         if why := result.unsettled:
             # verify_query_source()'s rule, applied here too: a row verified before a filing's
-            # later amendment reached the export, or by a version that did not ask, is not green
+            # later amendment or a late report reached the export, or by a version that did not
+            # ask, is not green
             _discard(f"claimed {claimed!r}; re-running the query gives {result.value!r}, but "
                      f"{why}")
             v.query_run = run
