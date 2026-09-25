@@ -1011,6 +1011,10 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", data: Path =
     is read by nothing — `q07` for `q7`, or a sid another claim cites — while the command
     reported success and the judgment pass looked done; one stamped from another copy describes
     text the verifier never read.
+
+    The verdict also records the claim's fingerprint (its question and answer as the claim file
+    reads now), so a retry that rewrites the claim after this can be told apart from one that
+    did not.
     """
     from . import judgments
 
@@ -1081,9 +1085,12 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", data: Path =
             refuse(f"not recorded: {escape(why)}")
         query_ver, export = judgments.query_stamp(cache_root, source.query)
     try:
+        # And stamp the claim it judged, so a retry that rewrites the claim later can be seen to
+        # have left the verdict about words it no longer says.
         j = judgments.record(data, question_id, sid, verdict, note,
                              page_fetched_at=page_at, extractor_version=ver,
-                             query_version=query_ver, export_date=export, page_url=page_url)
+                             query_version=query_ver, export_date=export, page_url=page_url,
+                             claim_fingerprint=claim.fingerprint)
     except ValueError as e:
         con.print(f"[red]{escape(str(e))}[/]")   # it may quote the verdict file's own text
         raise typer.Exit(1) from None
@@ -1350,9 +1357,10 @@ def clear_contradiction(question_id: str, sid: str, data: Path = DATA):
                    + (f" ({held.judged_at})" if held.judged_at else "")
                    + (f": {held.note}" if held.note else ""), style="yellow"), soft_wrap=True)
     if citing:
-        # A verdict records only its source (#30), so the shard it sits in is all that says
-        # which claim it judged. Clearing touches this claim's shard alone: a claim citing the
-        # source keeps the verdict in its own shard, or waits for a verifier's.
+        # A verdict names its source and a hash of the claim's words, never the claim's id (#30),
+        # so the shard it sits in is all that says which claim it judged. Clearing touches this
+        # claim's shard alone: a claim citing the source keeps the verdict in its own shard, or
+        # waits for a verifier's.
         con.print(Text(f"{', '.join(citing)} also cite{'s' if len(citing) == 1 else ''} this "
                        f"source, each judged by the verdicts in its own shard: clearing this one "
                        f"leaves those as they are.", style="yellow"), soft_wrap=True)
