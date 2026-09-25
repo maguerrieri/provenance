@@ -158,3 +158,47 @@ def test_every_schedule_still_counts_what_it_did(root):
                         root)
     assert trust.value == 4500.0
     assert [u.filing_id for u in trust.unrestated] == [DROPPED_496]
+
+
+def test_the_gift_test_counts_exactly_what_the_row_filter_did(tmp_path):
+    """Moving the schedule after the grouping is only safe if it counts the same gifts. Over
+    seeded random receipts (two filings, shared and unshared transaction bases, names differing
+    in case and padding, blank and unreadable amounts), the new placement must give the old
+    one's sum, count and gifts for every schedule. The old placement is the same view with the
+    schedule as a row filter and every gift kept."""
+    import random
+
+    rng = random.Random(131)
+    rows = []
+    for i in range(400):
+        base = rng.randrange(60)
+        form = rng.choice(["A", "A", "F496P3", "C", "I", ""])
+        prefix = {"A": "A-", "F496P3": "F496P3-", "C": "C-", "I": "I-", "": ""}[form]
+        rows.append("\t".join([
+            rng.choice([SETTLED_460, DROPPED_496]), "0", f"{prefix}{base}", str(i),
+            rng.choice(["Pellworth Orchards", "PELLWORTH ORCHARDS ", "Harrowgate"]),
+            rng.choice(["", "Selma"]), "", "",
+            f"1/{base % 28 + 1}/2026 12:00:00 AM",
+            rng.choice(["2000", "250", "1500", "", "N/A", "1,000", str(base * 10)]), form]))
+    (tmp_path / "cache" / "calaccess").mkdir(parents=True)
+    with zipfile.ZipFile(tmp_path / "cache" / "calaccess" / "dbwebexport.zip", "w") as zf:
+        zf.writestr("CalAccess/DATA/RCPT_CD.TSV",
+                    RECEIPTS.splitlines(keepends=True)[0] + "\n".join(rows) + "\n")
+        zf.writestr("CalAccess/DATA/FILER_FILINGS_CD.TSV", FILINGS)
+        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", COVERS)
+    calaccess.build(tmp_path)
+
+    con = calaccess.connect(tmp_path)
+    total = "SELECT SUM(d.AMT), COUNT(d.AMT), COUNT(*) FROM ({}) d"
+    try:
+        for form_type in ("A", "F496P3", "C", "I", ""):
+            counted, args, _ = queries._schedule(form_type)
+            new = con.execute(total.format(queries.DEDUPED_RECEIPTS.format(
+                extra="", counted=counted)), [FILER, *args]).fetchone()
+            old = con.execute(total.format(queries.DEDUPED_RECEIPTS.format(
+                extra=f" AND {counted.replace('x.', 'r.')}", counted="1")),
+                [FILER, *args]).fetchone()
+            assert tuple(new) == tuple(old), form_type
+            assert new[2] > 0, f"no gifts on {form_type!r}: the test proves nothing there"
+    finally:
+        con.close()
