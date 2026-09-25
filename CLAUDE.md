@@ -1468,6 +1468,22 @@ per filing, through the `FILING_ID` indexes, and only for the filings a result t
   stands is the same open question. The filing named is the unrestated one, not the earliest
   filing the listing cites. `top_contributor` is flagged by *any* such gift to the filer. The
   ranking is made of all of them, and an update can raise a figure as well as withdraw one.
+- **"Any filing it came from" means every report of the gift, whatever schedule the figure
+  counts.** The receipt queries count schedule A by default, and filtered *rows* by schedule
+  before the cross-form dedup grouped them. So a gift's Form 496 Part 3 report never reached
+  the group, and a gift whose only unrestated report was that one verified green under the
+  default and under `form_type=A`, while `""` sent the same figure to human review (#131).
+  Now `_schedule()` is a test on the *gift*, `DEDUPED_RECEIPTS`' `{counted}`, applied as a
+  `HAVING` after the grouping. A gift counts when any of its reports is on the schedule, which
+  counts exactly the gifts the row filter did, and `FILING_IDS` holds every filing it was
+  reported on. `{extra}` still filters rows before the grouping, but only on a group key (the
+  contributor's name), which removes whole gifts.
+  Two lessons. **A filter placed before a dedup decides what the dedup can see**, so it
+  narrows every check that reads the group, not only the sum. Ask which side of the grouping
+  a filter belongs on. And **a test adapted to pass during integration can hide the
+  interaction it hit**. #31's tests met #47's default by switching to `""`, the one spelling
+  that never dropped the 496 report. Before changing a test's parameters to fit a new
+  default, check whether the default is what broke it.
 - **The listings** mark the row (`unrestated`, the "latest amendment" column) and keep
   listing it: a finding aid that hid the row would hide the filing to open.
 - **A filing with rows and no cover at all** is flagged too (`cover_amend` None, "no cover" in
@@ -1532,10 +1548,15 @@ flagged too, as the mirror image of the one above:
   period covers its date, since `_pending_late()` looks for the copy among counted rows. The
   gate then refuses: toward a person, never toward green.
 - **What counts as left out** is decided by the figure's own grouping. The left-out rows are
-  staged in a TEMP table and grouped with the counted ones under the figure's own filter
-  (`queries.left_out_gifts()`, which the listing uses too). A gift a counted row also reports,
-  such as the Form 496 copy of a Schedule A gift, is in the figure either way and is not
-  flagged. Nor is a gift with no readable amount, which every figure leaves out anyway
+  staged in a TEMP table and grouped with the counted ones under the figure's own filters
+  (`queries.left_out_gifts()`, which the listing uses too). The schedule is tested per report,
+  after the grouping (#131): a gift is left out when a left-out report of it is on the
+  figure's schedule and no counted report is. So a gift whose counted Schedule A report the
+  Form 496 copy repeats is in the figure either way and is not flagged. The reverse is: a gift
+  whose schedule-A report was left out and whose Form 496 report is counted is in no
+  schedule-A figure. A plain `HAVING` on the schedule over the combined rows would read that
+  gift as counted, leaving it neither counted nor flagged. Nor is a gift with no readable
+  amount flagged, which every figure leaves out anyway
   (`amount_sql()`), so it has no share, as in `_receipt_shares()`. `top_contributor` is
   flagged by any other left-out gift on the schedule it ranks.
 - **The contributions listing now shows a left-out gift**, marked "not counted" in the "latest
@@ -1696,6 +1717,10 @@ it leaves out, for the same reason. Refusing a cover table with no rows bumped a
 (`contributor_total` and `filer_total` to v8, `top_contributor` to v9, `ie_total` to v3): each
 answered from one before, the receipt queries as if every filing were settled and `ie_total`
 with a miss. The flag for a filing with no cover record bumped nothing, like the others.
+Moving the schedule filter after the cross-form dedup (#131) did bump all three receipt queries
+(`contributor_total` and `filer_total` to v9, `top_contributor` to v10), although every value is
+unchanged. It changed the dedup itself: which reports make up the gift a figure rests on, and
+so which figures verify.
 
 A rule in a comment is one a session can skip, so it has a gate:
 `test_a_query_definition_cannot_change_unnoticed` pins each query's version to a fingerprint
@@ -1803,7 +1828,9 @@ which (#67).
 
 The schedule handling is shared helpers, not a copy in each query. `queries._schedule()` holds
 the filter, its args, and the refusal of a padded `form_type` (`" "` is truthy, so it filtered to
-the receipts with no schedule), and returns the label from `_schedule_label()`. `_elsewhere()`
+the receipts with no schedule), and returns the label from `_schedule_label()`. The filter is
+a test on a gift, applied after the cross-form dedup, never a filter on the rows it groups
+(#131, under the unsettled-amendment flag above). `_elsewhere()`
 holds the miss's note and suggestion. The label and the miss are display only, so they sit in
 the fingerprint test's `_NOT_A_DEFINITION`, and rewording them moves no pin. They were copies,
 and the same miss happened one level down: the refusal went into two queries, and `filer_total`
