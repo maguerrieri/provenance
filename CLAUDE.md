@@ -467,7 +467,7 @@ literals go in bare.
   move the cursor and overwrite what the command printed. A bidi override reorders what follows
   it. And a lone surrogate made the print raise `UnicodeEncodeError`: `json.loads` keeps one, and
   an undecodable byte in argv arrives as one, so a refusal quoting its argument died with a
-  traceback and the wrong exit code. `cli._printable()` shows each of these as an escape
+  traceback and the wrong exit code. `_printable()` shows each of these as an escape
   (`\x1b`, `\ud800`). A URL needs it too: `_http_only()` refuses C0 controls and whitespace,
   not a C1 control or a bidi override. `repr()` already escapes the same characters, so
   `escape(repr(x))` needs no `_printable()`. It still needs `escape()`: `repr()` leaves `[/]`
@@ -513,6 +513,18 @@ literals go in bare.
   Otherwise `:ok:` in a note or a filer name printed as an emoji.
 
 Every print site in `cli.py` follows this, and a new one has to.
+
+So does any log line or warning outside `cli.py` that carries such text. `fetch._warn_kept()`
+logged a cited URL and a fetch's exception text, and Python's last-resort handler wrote them to
+stderr as they were, so an ESC or C1 sequence in either reached the terminal with no rich in the
+way at all. That is why `_printable()` lives in `terminal.py` (`terminal.printable()`): `fetch.py`
+cannot import `cli.py`, which imports it. The same warning's retry command quoted the URL by
+hand, and a `'` in it broke the command. A command printed for a value is `shlex.quote`d, and
+printed only when a pasted copy carries the value as it is (`queries.unprintable()`, the rule
+`human_command()` uses); otherwise the line says what to run instead. That is a different
+question from what `printable()` escapes, and asking the display rule got it wrong: a tab and a
+character that renders as nothing print as they are, and a command holding one still pastes as
+another value.
 
 Test with both kinds of text. Whether a stray tag raises or silently vanishes depends on the tags
 around it. In `[yellow]{x}[/]`, an `x` of `[/] [sic]` closes yellow, opens `[sic]`, and the
@@ -683,7 +695,7 @@ context the verifier read, was on no disk. So the verifier says it:
 - Everything it prints is agent- or page-authored, so it cannot be allowed to start a line.
   Every context line prints behind `| `, split with `splitlines()` (a `\r`, `\x85` or U+2028
   is a line break to some reader). Every control, format, surrogate or separator character
-  prints as an escape (`cli._printable()`). Split on `\n` alone, an ANSI erase-line or a U+2028
+  prints as an escape (`_printable()`). Split on `\n` alone, an ANSI erase-line or a U+2028
   in page text faked a source header, and a lone surrogate in a claim made the print raise, so
   no verdict could be recorded on it at all.
 - What the pipeline itself prints there is facts, never a step to take. The verifier has Bash
