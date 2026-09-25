@@ -16,16 +16,19 @@ with an escape in it names another URL.
 
 from __future__ import annotations
 
+import ast
 import json
 import shlex
 import subprocess
 import sys
 import unicodedata
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import httpx
 import pytest
 
+import vgpipe
 from vgpipe import fetch as fetch_mod
 from vgpipe.models import EXTRACTOR_VERSION, PageCache, RefetchFailure
 
@@ -144,3 +147,58 @@ def test_a_url_a_pasted_command_cannot_carry_gets_no_command(caplog, monkeypatch
     assert msg.startswith(f"{shown}: re-fetch failed (ConnectError: reset\\u202e\\udcff, "), msg
     assert RETRY not in msg and WITHHELD in msg, msg
 
+
+# Every call outside `cli.py` that writes to the terminal, by module and enclosing function.
+# `cli.py`'s own prints are `tests/test_cli_control_chars.py`'s.
+CHECKED = {
+    "calaccess.install_views",   # DegradedDatabaseWarning: a constant, nothing interpolated
+    "fetch._warn_kept",          # this module's tests
+}
+# (receiver, method) pairs that write to the terminal, besides a bare print().
+_WRITES = ({(r, m) for r in ("log", "logger", "logging")
+            for m in ("debug", "info", "warning", "error", "exception", "critical", "log")}
+           | {("warnings", "warn"), ("stderr", "write"), ("stdout", "write"),
+              ("con", "print"), ("console", "print")})
+
+
+def _terminal_writes(tree: ast.AST) -> set[str]:
+    """The functions in `tree` that log, warn or print, by their top-level name."""
+    found, stack = set(), []
+
+    class Visit(ast.NodeVisitor):
+        def visit_FunctionDef(self, node):
+            stack.append(node.name)
+            self.generic_visit(node)
+            stack.pop()
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_Call(self, node):
+            f = node.func
+            if isinstance(f, ast.Name):
+                writes = f.id == "print"
+            else:   # log.warning(...), sys.stderr.write(...): the receiver's last name
+                on = getattr(f, "value", None)
+                writes = (getattr(on, "id", None) or getattr(on, "attr", None),
+                          getattr(f, "attr", None)) in _WRITES
+            if writes:
+                found.add(stack[0] if stack else "<module>")
+            self.generic_visit(node)
+
+    Visit().visit(tree)
+    return found
+
+
+def test_every_log_or_warning_outside_cli_has_been_checked():
+    """A log line or warning outside `cli.py` reaches stderr with nothing between it and the
+    terminal, so any data it carries goes through `terminal.printable()` (CLAUDE.md, "Rich reads
+    brackets as markup"). A rule in prose is one a session can skip, so this names every such
+    call in the package: a new one fails here until someone has checked what it prints and added
+    it to `CHECKED`."""
+    found = set()
+    for path in sorted(Path(vgpipe.__file__).parent.glob("*.py")):
+        if path.name != "cli.py":
+            found |= {f"{path.stem}.{fn}" for fn in _terminal_writes(ast.parse(path.read_text()))}
+    assert found == CHECKED, (
+        f"new: {sorted(found - CHECKED)}; gone: {sorted(CHECKED - found)}. Pass what a new one "
+        "prints through terminal.printable() if the pipeline does not control it, then add it")

@@ -518,7 +518,9 @@ So does any log line or warning outside `cli.py` that carries such text. `fetch.
 logged a cited URL and a fetch's exception text, and Python's last-resort handler wrote them to
 stderr as they were, so an ESC or C1 sequence in either reached the terminal with no rich in the
 way at all. That is why `_printable()` lives in `terminal.py` (`terminal.printable()`): `fetch.py`
-cannot import `cli.py`, which imports it. The same warning's retry command quoted the URL by
+cannot import `cli.py`, which imports it. `tests/test_fetch_kept_warning.py` names every call
+outside `cli.py` that logs, warns or prints, so a new one fails there until someone has checked
+what it carries and added it. The same warning's retry command quoted the URL by
 hand, and a `'` in it broke the command. A command printed for a value is `shlex.quote`d, and
 printed only when a pasted copy carries the value as it is (`queries.unprintable()`, the rule
 `human_command()` uses); otherwise the line says what to run instead. That is a different
