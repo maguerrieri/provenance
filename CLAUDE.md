@@ -1519,7 +1519,10 @@ a left-out schedule does (above): its note says the rows were not counted, never
 "nobody spent on this candidate". The listing shows such a row
 under the candidate its own cover named. A row whose later cover only flipped the stance stays
 under the latest cover, since the other stance's total counts it, and is marked all the same:
-the mark names both covers, so the listing and the flag agree about which filings are open.
+the mark names both covers, so the listing and the flag agree about which filings are open. So
+it is marked only when the earlier stance is one code, which a total can ask for: a blank one
+is none, every total that could count the row does, and a mark would hold open a filing no flag
+does.
 
 Two things made that check cost 0.6s rather than 5s on a synthetic export of 1.5 million
 covers, and both apply to any second pass over these views:

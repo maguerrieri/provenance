@@ -1219,7 +1219,8 @@ def _ie_total(root: Path, *, candidate_last: str, first: str = "", stance: str =
             # the miss read as "nobody spent on this candidate" when a filing's own amendment
             # says someone did.
             left_out += (f"; {sum(u.rows for u in reattributed)} more whose filing's latest "
-                         f"cover names another candidate, the other stance or none, not counted")
+                         f"cover names another candidate, the other stance or none, not counted "
+                         f"(${sum(u.amount for u in reattributed):,.2f} between them)")
         # The failure this guard exists for: a committee filed the candidate's whole name in
         # the last-name field, so a (last, first) filter found nothing and SUM() returned 0.0:
         # a confident "nobody spent against them", wrong by the largest expenditure in the race.

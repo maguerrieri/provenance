@@ -479,7 +479,7 @@ def left_out_sql(asked) -> str:
     EXISTS, not a join, so a second cover record of one amendment could never count the row
     twice. And through the FILING_ID index, not a join to CVR_LATEST, which rebuilt that view
     on every call: on a synthetic export of 1.5 million covers that took 5s, twice the total
-    itself, where this takes 0.4s.
+    itself, where the check built on this takes 0.6s.
 
     These are exactly the rows the total leaves out while their own cover matched, because an
     amendment has one cover record, so CVR_LATEST's cover is the latest amendment's only one.
@@ -1043,10 +1043,15 @@ def independent_expenditures(root: Path, candidate_last: str, *, first: str = ""
             WHERE o.FILING_ID = ? AND CAST(o.AMEND_ID AS INTEGER) = ? AND {named("o")}
             ORDER BY o.rowid LIMIT 1""", [r["FILING_ID"], r["OWN_AMEND"]] + name_arglist
         ).fetchone()
-        same = own is not None and ((own["SUP_OPP_CD"] or "").upper()
-                                    == (r["SUP_OPP_CD"] or "").upper())
-        if not r["LEFT_OUT"] and (own is None or same):
-            continue   # its own cover named someone else, or the same stance: counted as listed
+        # A flip only where a total could ask for the own cover's stance: ie_total asks for
+        # one code, case aside (UPPER(SUP_OPP_CD) = UPPER(?)), or for none. A blank or longer
+        # code is no stance a total asks for, so none leaves the row out on its account, and a
+        # mark would name a filing no flag holds open.
+        code = (own["SUP_OPP_CD"] or "").upper() if own is not None else ""
+        counted = (own is None or len(code) != 1 or code.isspace()
+                   or code == (r["SUP_OPP_CD"] or "").upper())
+        if not r["LEFT_OUT"] and counted:
+            continue   # its own cover named someone else, or no other stance: counted as listed
         if r["LEFT_OUT"]:
             # listed as its own cover has it; a stance flip stays under the latest, which a
             # total of that stance counts
