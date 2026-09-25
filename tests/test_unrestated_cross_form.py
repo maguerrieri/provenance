@@ -193,26 +193,31 @@ def test_a_gift_counted_from_form_496_is_flagged_by_its_schedule_a_report(tmp_pa
 
 def test_the_gift_test_counts_exactly_what_the_row_filter_did(tmp_path):
     """Moving the schedule after the grouping is only safe if it counts the same gifts. Over
-    seeded random receipts (two filings, shared and unshared transaction bases, names differing
-    in case and padding, blank and unreadable amounts), the new placement must give the old
-    one's sum, count, gifts and first names for every schedule, filer-wide and narrowed to a
-    contributor as contributor_total narrows it. The old placement is the same view with the
-    schedule as a row filter, written out as v4 had it, and every gift kept."""
+    seeded random receipts (three filings across two amendments, one of them another filer's;
+    shared and unshared transaction bases; names differing in case and padding; blank and
+    unreadable amounts), the new placement must give the old one's sum, count, gifts and first
+    names for every schedule, filer-wide and narrowed to a contributor as contributor_total
+    narrows it, and the same per-contributor totals top_contributor ranks. The old placement is
+    the same view with the schedule as a row filter, written out as v4 had it, and every gift
+    kept."""
     import random
 
+    other_filer, other_filing = "7770199", "7770105"
     rng = random.Random(131)
     rows = []
-    for i in range(400):
+    for i in range(600):
         base = rng.randrange(60)
         form = rng.choice(["A", "A", "F496P3", "C", "I", ""])
         prefix = {"A": "A-", "F496P3": "F496P3-", "C": "C-", "I": "I-", "": ""}[form]
         rows.append("\t".join([
-            rng.choice([SETTLED_460, DROPPED_496]), "0", f"{prefix}{base}", str(i),
+            rng.choice([SETTLED_460, DROPPED_496, other_filing]), rng.choice(["0", "1"]),
+            f"{prefix}{base}", str(i),
             rng.choice(["Pellworth Orchards", "PELLWORTH ORCHARDS ", "Harrowgate"]),
             rng.choice(["", "Selma", "selma "]), "", "",
             f"1/{base % 28 + 1}/2026 12:00:00 AM",
             rng.choice(["2000", "250", "1500", "", "N/A", "1,000", str(base * 10)]), form]))
-    _build(tmp_path, RECEIPTS.splitlines(keepends=True)[0] + "\n".join(rows) + "\n")
+    _build(tmp_path, RECEIPTS.splitlines(keepends=True)[0] + "\n".join(rows) + "\n",
+           FILINGS + f"{other_filer}\t{other_filing}\tF460\t1/31/2026 12:00:00 AM\n")
 
     whose = {"everyone": ("", []),
              "Pellworth": (" AND UPPER(TRIM(r.CTRIB_NAML)) = UPPER(TRIM(?))",
@@ -222,6 +227,8 @@ def test_the_gift_test_counts_exactly_what_the_row_filter_did(tmp_path):
                                   ["Harrowgate", "Selma"])}
     stats = ("SELECT SUM(d.AMT), COUNT(d.AMT), COUNT(*),"
              " COUNT(DISTINCT UPPER(TRIM(COALESCE(d.CTRIB_NAMF,'')))) FROM ({}) d")
+    ranked = ("SELECT UPPER(TRIM(d.CTRIB_NAML)) nm, UPPER(TRIM(COALESCE(d.CTRIB_NAMF,''))) nf,"
+              " SUM(d.AMT), COUNT(d.AMT), COUNT(*) FROM ({}) d GROUP BY nm, nf ORDER BY nm, nf")
     con = calaccess.connect(tmp_path)
     try:
         for form_type in ("A", "F496P3", "C", "I", ""):
@@ -229,11 +236,13 @@ def test_the_gift_test_counts_exactly_what_the_row_filter_did(tmp_path):
             row_filter = " AND UPPER(TRIM(r.FORM_TYPE)) = UPPER(TRIM(?))" if form_type else ""
             for who, (who_sql, who_args) in whose.items():
                 args = [FILER, *who_args, *sched_args]
-                new = con.execute(stats.format(queries.DEDUPED_RECEIPTS.format(
-                    extra=who_sql, counted=counted)), args).fetchone()
-                old = con.execute(stats.format(queries.DEDUPED_RECEIPTS.format(
-                    extra=who_sql + row_filter, counted="1")), args).fetchone()
-                assert tuple(new) == tuple(old), (form_type, who)
-                assert new[2] > 0, f"no {who} gifts on {form_type!r}: nothing proved there"
+                new = queries.DEDUPED_RECEIPTS.format(extra=who_sql, counted=counted)
+                old = queries.DEDUPED_RECEIPTS.format(extra=who_sql + row_filter, counted="1")
+                for sql in (stats, ranked):
+                    assert (list(map(tuple, con.execute(sql.format(new), args)))
+                            == list(map(tuple, con.execute(sql.format(old), args)))), (
+                        form_type, who, sql)
+                gifts = con.execute(stats.format(new), args).fetchone()[2]
+                assert gifts > 0, f"no {who} gifts on {form_type!r}: nothing proved there"
     finally:
         con.close()
