@@ -89,7 +89,7 @@ def detect(claims: list[Claim]) -> list[Claim]:
     1. sources within one claim disagreeing with each other;
     2. the answer's figures/dates vs. those in its own snippets;
     3. two claims asserting near-miss amounts;
-    4. a source a verifier judged to contradict its claim.
+    4. a source a verifier judged to contradict its claim, still cited or since dropped.
 
     (1) is the case a voter guide most needs surfaced — two outlets reporting different
     numbers for the same settlement is a finding, not noise to average away — and it is
@@ -112,6 +112,17 @@ def detect(claims: list[Claim]) -> list[Claim]:
                 note = s.verification.support_note
                 c.conflicts.append(f"a verifier judged {who} contradicts the claim"
                                    + (f": {note}" if note else ""))
+        # A verdict records no URL, so a source no longer cited is named by its id: the URL or
+        # the quote changed, and which one is not recorded. What clears it goes beside it: the
+        # reviewer is who decides.
+        for d in c.dropped_contradictions:
+            when = f", judged {d.judged_at}" if d.judged_at else ""
+            c.conflicts.append(
+                f"a verifier judged a source this claim no longer cites as it did (source id "
+                f"{d.sid}{when}) contradicts the claim" + (f": {d.note}" if d.note else "")
+                + f". Changing the citation did not resolve that: the claim stays in review "
+                f"until the source is cited again, or a human clears it at a terminal with `vg "
+                f"clear-contradiction {c.question_id} {d.sid}`")
         snip = " ".join(s.snippet for s in c.sources)
         if not snip:
             continue

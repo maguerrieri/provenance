@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,7 +20,7 @@ from rich.text import Text
 from . import archive as arch
 from .fetch import fetch as fetch_url
 from .fetch import kept_copy_note, no_text_layer, pages_without_text
-from .models import Claim, check_archive_url, strip_machine_fields
+from .models import Claim, DroppedContradiction, check_archive_url, strip_machine_fields
 from .races import available as available_races
 from .races import load as load_race
 from .report import clear_render, render
@@ -608,7 +609,8 @@ def _settle(claims: list[Claim], data: Path, cache_root: Path,
 
     Each step reads what the one before it produced: the run's snapshots go on first, since an
     archive row's verdict is checked against its snapshot and so is its context; then
-    the recorded verdicts, each checked against the page it judged; revalidation checks every
+    the recorded verdicts, each checked against the page it judged, and any `contradicts` on a
+    source the claim has since dropped; revalidation checks every
     row against the cache, a verified_via_archive one against that snapshot; corroboration
     counts the sources revalidation left standing; conflicts come after the verdicts, since a
     `contradicts` verdict is one; and check_inputs() reads every input's finished status. The
@@ -627,6 +629,9 @@ def _settle(claims: list[Claim], data: Path, cache_root: Path,
     for c in claims:   # apply_to(), on verdicts read once and reused for the export report
         stale += [f"{c.question_id}/{x}" for x in judgments.merge(
             judgments.verdicts_for(c, data, recorded[c.question_id], cache_root=cache_root))]
+        # Before check_inputs(), which reads the status this sets. Reset from the shard every
+        # time, never read from the claim file.
+        c.dropped_contradictions = judgments.dropped(c, recorded[c.question_id])
     for c in claims:
         for s in c.sources:
             revalidate_from_cache(s, cache_root, rules=rules)   # a status the pipeline didn't produce won't render green
@@ -1159,12 +1164,16 @@ def show_judgments(data: Path = DATA, question_id: str = "",
                if v and q not in current and q not in aliased.values()}
     t = Table("qid", "source", "verdict", "note", box=None)
     total = waiting = stale_waiting = stale = blocked = orphans = 0
+    holding: list[str] = []
     for c in selected:
         recorded = by_question[c.question_id]
         # A judgment whose sid no longer matches any cited source is dead weight: it was about
-        # a citation that has since changed. Harmless, but invisible without saying so.
+        # a citation that has since changed. Harmless, but invisible without saying so. Except
+        # a `contradicts`, which holds its claim in review (`judgments.dropped()`).
         live = {s.sid for s in c.sources}
-        orphans += sum(1 for sid in recorded if sid not in live)
+        dropped = judgments.dropped(c, recorded)
+        holding += [f"{c.question_id}/{d.sid}" for d in dropped]
+        orphans += sum(1 for sid in recorded if sid not in live) - len(dropped)
         # Run what `vg build` runs on each source, read-only as `vg status` does, so the count
         # is what the review app will show rather than a re-derivation of it — each of three
         # re-derivations disagreed with build somewhere.
@@ -1213,6 +1222,13 @@ def show_judgments(data: Path = DATA, question_id: str = "",
     if orphans:
         con.print(f"[dim]{orphans} recorded verdict(s) no longer match any cited source — "
                   f"their citation changed, so the judgment correctly lapsed.[/]")
+    if holding:
+        # Not in the count below: no verifier can close it, since `vg judge` refuses a source
+        # nothing cites. It is the human's, so every one is named: this line is the only list.
+        con.print(f"[yellow]{len(holding)} contradicts verdict(s) are on a source their claim no "
+                  f"longer cites ({escape(', '.join(holding))}). A contradiction does not "
+                  f"lapse: each holds its claim in review until the source is cited again, or a "
+                  f"person clears it at a terminal with `vg clear-contradiction QID SID`.[/]")
     if aliased:
         # Which claim they belong to is not inferred from a source id but is what this disk
         # already does (judgments.opened_as()).
@@ -1261,6 +1277,97 @@ def show_judgments(data: Path = DATA, question_id: str = "",
         # And a gate that fails, not only one that prints: exit 0 means the judgment pass is
         # done, for anyone checking `&&` rather than reading the number.
         raise typer.Exit(1)
+
+
+def _at_a_terminal() -> bool:
+    """Whether a person can be asked something: stdin is a terminal. An agent's shell tool runs
+    commands with stdin from a pipe or nothing, so this is the one step it cannot take."""
+    return sys.stdin.isatty()
+
+
+@app.command(name="clear-contradiction")
+def clear_contradiction(question_id: str, sid: str, data: Path = DATA):
+    """Clear, on the record, a contradicts verdict on a source its claim no longer cites.
+
+    Such a verdict holds its claim in human_review, and `vg build` lists it with the conflicts:
+    a retry that drops the source takes the disagreement off the review page without resolving
+    it. Sometimes dropping it was right: the verifier was wrong, or the claim was re-scoped.
+    This is for the person who has looked and decided so. It runs only at a terminal and asks
+    why, and the verdict moves to judgments-archive/ with that reason beside it.
+    """
+    from . import judgments
+
+    def refuse(msg: str) -> NoReturn:
+        con.print(f"[red]{msg.rstrip('.')}. Nothing was cleared.[/]")
+        raise typer.Exit(1)
+
+    try:
+        judgments.path_for(data, question_id)
+    except ValueError as e:
+        refuse(escape(str(e)))
+    qid, s = escape(question_id), escape(sid)
+
+    def held_here() -> tuple[DroppedContradiction, list[str]]:
+        """The dropped contradiction to clear, read from the claim files and the shard as they
+        are now, and the other claims that cite its source; or refuse."""
+        skipped: list[str] = []
+        # Stripped: it reads only which sources each claim cites, none of which is machine-owned.
+        claims = _load_or_exit(data / "claims", skipped=skipped)
+        claim = next((c for c in claims if c.question_id == question_id), None)
+        if claim is None:
+            if question_id in skipped:
+                refuse(f"claim {qid} could not be read, so whether it still cites {s} cannot be "
+                       f"checked — fix it first.")
+            # q07 for q7, Q7 for q7, as `vg judge` says.
+            near = [c.question_id for c in claims
+                    if qid_sort_key(c.question_id.lower()) == qid_sort_key(question_id.lower())]
+            refuse(f"no claim has question id {qid} in {escape(str(data / 'claims'))}"
+                   + (f" — did you mean {escape(', '.join(near))}?" if near else
+                      ", so no claim is held by that verdict. `vg judgments` names a shard no "
+                      "claim has."))
+        if any(x.sid == sid for x in claim.sources):
+            refuse(f"claim {qid} still cites {s}, so its verdict is the claim's own evidence "
+                   f"disagreeing, and it stays live. This clears only a source the claim has "
+                   f"dropped.")
+        with _judgments_or_exit():
+            held = next((d for d in judgments.dropped(claim, judgments.load(data, question_id))
+                         if d.sid == sid), None)
+        if held is None:
+            refuse(f"{qid} has no contradicts verdict on {s} to clear: `vg judgments "
+                   f"--question-id {qid}` lists the ones holding it.")
+        return held, sorted((c.question_id for c in claims
+                             if any(x.sid == sid for x in c.sources)), key=qid_sort_key)
+
+    held, citing = held_here()
+    if not _at_a_terminal():
+        # The rule that it is a person's call has to be a step that fails, not a sentence: the
+        # command is named wherever the contradiction is, and agents run commands.
+        refuse("clearing a contradiction is a person's decision, so this asks for the reason at "
+               "a terminal, and there is none here. An agent that reached this should leave the "
+               "claim in review and report it to the operator.")
+    con.print(Text(f"{question_id}/{sid}: a verifier judged it contradicts the claim"
+                   + (f" ({held.judged_at})" if held.judged_at else "")
+                   + (f": {held.note}" if held.note else ""), style="yellow"), soft_wrap=True)
+    if citing:
+        # A verdict records only its source (#30), so the shard it sits in is all that says
+        # which claim it judged. Clearing touches this claim's shard alone: a claim citing the
+        # source keeps the verdict in its own shard, or waits for a verifier's.
+        con.print(Text(f"{', '.join(citing)} also cite{'s' if len(citing) == 1 else ''} this "
+                       f"source, each judged by the verdicts in its own shard: clearing this one "
+                       f"leaves those as they are.", style="yellow"), soft_wrap=True)
+    reason = typer.prompt("Why does it no longer apply? (kept with the verdict in the archive)",
+                          default="", show_default=False)
+    if not reason.strip():
+        refuse("a reason is required: it is what the record keeps in place of the verdict.")
+    # Again, now: a retry can cite the source again while the prompt waits for a person.
+    held_here()
+    try:
+        with _judgments_or_exit():
+            dest = judgments.clear(data, question_id, sid, reason, shown=held)
+    except (ValueError, OSError) as e:
+        refuse(escape(str(e)))
+    con.print(f"[green]cleared[/] the contradicts verdict on {qid}/{s}: kept, with the reason, in "
+              f"{escape(str(dest))}")
 
 
 @app.command(name="source-access")
