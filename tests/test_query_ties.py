@@ -43,8 +43,8 @@ def gift(i, last, amount, first="Rue"):
             f"\t{amount}\tA\n")
 
 
-def late_gift(last, amount, first="Rue"):
-    return (f"{F497}\t0\t1\tS497\tF497P1\tL-1\tIND\t{last}\t{first}\tExampleville\t\t"
+def late_gift(last, amount, first="Rue", tran="L-1"):
+    return (f"{F497}\t0\t1\tS497\tF497P1\t{tran}\tIND\t{last}\t{first}\tExampleville\t\t"
             f"\t11/3/2026{DAY}\t10/2/2026{DAY}\t\t{amount}\t\n")
 
 
@@ -162,11 +162,42 @@ def test_a_tie_is_in_name_order_whatever_case_a_name_is_filed_in(tmp_path):
         assert got.value == f"Rue Aaron | Rue {abbot}", got.value
 
 
-def test_a_refusal_lists_the_leaders_who_could_move_in_the_ties_order(tmp_path):
-    """A late gift under the first name alone could be any of the five. They were a set, so
-    which three the refusal named, and in what order, changed with the hash seed."""
-    got = top(five_way(tmp_path, late=late_gift("", "100")))
+def test_a_tie_reads_the_same_whatever_padding_a_name_is_filed_with(tmp_path):
+    """The ranking groups on trimmed names, but a group's name was shown from whichever of its
+    rows SQLite read: "Rue  Abbot" (a padded first name) on one load, "Rue Abbot" on another."""
+    padded = gift(1, "Abbot", "2000", first="Rue ")
+    rows = [padded, gift(2, "Abbot", "2750"), gift(3, "Aaron", LIMIT)]
+    for n, order in enumerate((rows, rows[::-1])):
+        got = top(build(tmp_path / str(n), order))
+        assert got.value == "Rue Aaron | Rue Abbot", got.value
+
+
+# First names in the opposite order to the surnames, so name order as shown is not the SQL's.
+CROSSED = [("Zollern", "Ansel"), ("Mortlake", "Birch"), ("Kestle", "Cato"),
+           ("Dunmore", "Delphine"), ("Abernay", "Edda")]
+
+
+def test_a_refusal_names_the_leaders_who_could_move_in_name_order(tmp_path):
+    """A late gift with no name could be any of the five. They were a set, so which three the
+    refusal named, and in what order, changed with the hash seed; and the SQL's order is by
+    surname, not by the name as the tie shows it."""
+    root = build(tmp_path, [gift(i, last, LIMIT, first=first)
+                            for i, (last, first) in enumerate(CROSSED, 1)],
+                 late=late_gift("", "100", first=""))
+
+    got = top(root)
     assert not got.found, got.value
-    names = sorted(f"Rue {last}" for last in AT_LIMIT)
-    listed = "; ".join(f"{n} ($4,750 on schedule-A, $100 late)" for n in names[:3])
-    assert f"ranking: {listed}; and 2 more — not a settled ranking" in got.note, got.note
+    shown = [f"{first} {last} ($4,750 on schedule-A, $100 late)" for last, first in CROSSED[:3]]
+    assert f"ranking: {'; '.join(shown)}; and 2 more — not a settled ranking" in got.note, (
+        got.note)
+
+
+def test_a_refusal_names_late_givers_in_name_order_whatever_order_they_were_filed_in(tmp_path):
+    """Two late givers on one report, the same day, each able to pass the top: filed in load
+    order, they swapped places in the refusal from one export to the next."""
+    for n, order in enumerate((("Wexley", "Brume"), ("Brume", "Wexley"))):
+        late = "".join(late_gift(last, "6000", tran=f"L-{i}") for i, last in enumerate(order))
+        got = top(five_way(tmp_path / str(n), late=late))
+        assert not got.found, got.value
+        assert ("ranking: Rue Brume ($0 on schedule-A, $6,000 late); Rue Wexley ($0 on "
+                "schedule-A, $6,000 late)") in got.note, got.note
