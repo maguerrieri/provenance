@@ -114,12 +114,23 @@ def credential_param(name: str) -> bool:
             or any(_CREDENTIAL_PARAM_PAIR.fullmatch(f"{a} {b}") for a, b in pairwise(words)))
 
 
-def _json_container(text: str) -> dict | list | None:
-    # RecursionError is not caught: JSON nested too deeply to read is refused, not skipped.
+_NOT_JSON = object()
+
+
+def _parsed_json(text: str):
+    """`text` parsed as JSON, or `_NOT_JSON`. The `try` holds the parse and nothing else:
+    reading a parsed value raises refusals of its own, as `ValueError` too, and caught with a
+    parse failure each one read as "not JSON" and dropped the names already read (#155).
+
+    RecursionError is not caught: JSON nested too deeply to read is refused, not skipped."""
     try:
-        value = json.loads(text)
+        return json.loads(text)
     except ValueError:
-        return None
+        return _NOT_JSON
+
+
+def _json_container(text: str) -> dict | list | None:
+    value = _parsed_json(text)
     return value if isinstance(value, dict | list) else None
 
 
@@ -144,13 +155,14 @@ def _value_names(value: str) -> tuple[str, ...]:
     its names listed twice, and a 130-character paste ran for minutes."""
     if (fields := _json_container(value)) is not None:
         return tuple(_json_names(fields))
+    # Only the split is in the `try`: reading the URL's parameters raises refusals of its own.
     try:
-        if ("?" in value or "#" in value or value.startswith("/")
-                or urlsplit(value).scheme in ("http", "https")):
-            return tuple(_url_param_names(value))
+        scheme = urlsplit(value).scheme
     except ValueError:
         raise ValueError("a parameter holds a URL that can't be parsed, so it can't be "
                          "checked for a credential") from None
+    if "?" in value or "#" in value or value.startswith("/") or scheme in ("http", "https"):
+        return tuple(_url_param_names(value))
     # Pairs only with an `&`: a lone `name=value` is too often base64 with its padding.
     if "&" in value and "=" in value:
         return tuple(_pair_names(value))
@@ -186,11 +198,8 @@ def _body_param_names(body: str, content_type: str) -> list[str]:
     as a form unless a content type says otherwise (curl sends `-d` as a form by default).
     A body that is neither can't be checked, so it is refused: a multipart form carries its
     CSRF token in a part this can't read."""
-    names = None
-    try:
-        names = _json_names(json.loads(body))
-    except ValueError:
-        pass
+    parsed = _parsed_json(body)
+    names = None if parsed is _NOT_JSON else _json_names(parsed)
     if content_type.partition(";")[0].strip().lower() in ("", "application/x-www-form-urlencoded"):
         names = (names or []) + _pair_names(body)
     if names is None:
