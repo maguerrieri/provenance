@@ -6473,32 +6473,35 @@ def _definition_fingerprint(name):
 # citations), the export metadata, and the comparison and command a result is checked with.
 _NOT_A_DEFINITION = {
     "vgpipe.queries": {"LATE_SHOWN", "LateReport", "NOT_COMPLETE", "Query", "QueryResult",
-                       "REGISTRY", "UNSETTLED_SHOWN", "_elsewhere", "_late_note",
+                       "REGISTRY", "UNSETTLED_SHOWN", "_elsewhere", "_late_note", "_listed",
                        "_other_schedules", "_schedule_label", "_unread", "dataset",
                        "describe_export", "export_date", "human_command", "late_text", "matches",
                        "share_text"},
     "vgpipe.calaccess": {"COVER_FALLBACK", "Contribution", "DegradedDatabaseWarning",
-                         "EXPORT_META", "EXPORT_URL", "LATE_FALLBACK", "NO_COVERS", "_UNUSABLE",
-                         "_export_date", "_read_export_info", "citable_snapshot", "committee_url",
-                         "contributions_to", "db_path", "export_info", "filing_url",
-                         "find_filers", "independent_expenditures", "shown_date", "Unrestated",
-                         "unusable", "zip_path"},
+                         "EXPORT_META", "EXPORT_URL", "LATE_FALLBACK", "NO_COVERS",
+                         "SCHEDULE_FALLBACK", "_UNUSABLE", "_export_date", "_read_export_info",
+                         "citable_snapshot", "committee_url", "contributions_to", "db_path",
+                         "export_info", "filing_url", "find_filers", "independent_expenditures",
+                         "shown_date", "Unrestated", "UnrestatedSchedule", "unusable",
+                         "zip_path"},
 }
 
 
 # name -> (version, fingerprint). See test_a_query_definition_cannot_change_unnoticed.
 QUERY_DEFINITIONS = {
-    "calaccess.contributor_total": (6, "d4d5beb27d38"),
-    "calaccess.filer_total": (6, "0e9ca9ab890d"),
-    "calaccess.top_contributor": (7, "f0d12721d95c"),
+    # moved without a bump: the flag for a schedule a later amendment left out, and the
+    # grouping it shares, change no value (DEDUPED_RECEIPTS is the same SQL)
+    "calaccess.contributor_total": (6, "9552441e5003"),
+    "calaccess.filer_total": (6, "d92f4fd6f126"),
+    "calaccess.top_contributor": (7, "75d60e904cfd"),
     # moved without a bump: amount_sql() is ie_total's own amount expression, extracted
     # unchanged, and DEDUPED_RECEIPTS, which it does not read, changed beside it; then the
     # unsettled-amendment flag and its shared helpers, which change no value it returns; then
     # _schedule(), the receipt queries' schedule filter, which it does not call; then the
     # late-report helpers and the Form 497 load, which it does not run; then how
     # top_contributor shows and orders a ranking's names (_shown, the late-report check), which
-    # it does not run
-    "calaccess.ie_total": (2, "adac7603f6da"),
+    # it does not run; then the left-out-schedule flag beside them
+    "calaccess.ie_total": (2, "37f7884b70d9"),
 }
 
 

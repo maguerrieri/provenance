@@ -150,7 +150,9 @@ def tran_base_sql(col: str) -> str:
 # 300.0, so a row filed that way collapsed into a $300 gift under the same base, MAX() over
 # the text kept "300,000", and the stated $300 was lost with it. A dedup has to read a value
 # the way the sum does.
-DEDUPED_RECEIPTS = f"""
+# One grouping for every receipts figure and listing: DEDUPED_RECEIPTS fills {rows} with
+# RCPT_LATEST, and left_out_gifts() adds the rows of a schedule a later amendment left out.
+_RECEIPT_GIFTS = f"""
     SELECT MAX(x.AMOUNT) AS AMOUNT, x.AMT, x.CTRIB_NAML, x.CTRIB_NAMF, x.RCPT_DATE,
            -- The group's provenance. A collapsed row still has to name a filing a human can
            -- open, or the listing loses its exit to a citation and every figure taken from it
@@ -160,14 +162,44 @@ DEDUPED_RECEIPTS = f"""
            -- every filing the gift came from, so one whose latest amendment dropped it is found
            GROUP_CONCAT(DISTINCT x.FILING_ID) AS FILING_IDS,
            MAX(x.CTRIB_EMP) AS CTRIB_EMP, MAX(x.CTRIB_OCC) AS CTRIB_OCC,
-           MAX(x.FORM_TYPE) AS FORM_TYPE
+           MAX(x.FORM_TYPE) AS FORM_TYPE{{columns}}
     FROM (SELECT r.*, {tran_base_sql("r.TRAN_ID")} AS tbase,
                  {amount_sql("r.AMOUNT")} AS AMT
-          FROM RCPT_LATEST r JOIN FILER_FILING f ON f.FILING_ID = r.FILING_ID
+          FROM {{rows}} r JOIN FILER_FILING f ON f.FILING_ID = r.FILING_ID
           WHERE f.FILER_ID = ?{{extra}}) x
     GROUP BY x.tbase, UPPER(TRIM(x.CTRIB_NAML)), UPPER(TRIM(COALESCE(x.CTRIB_NAMF,''))),
              x.RCPT_DATE, x.AMT
 """
+DEDUPED_RECEIPTS = _RECEIPT_GIFTS.replace("{rows}", "RCPT_LATEST").replace("{columns}", "")
+
+
+def left_out_gifts(con, filer_id: str, *, extra: str) -> tuple[list, str]:
+    """A filer's schedules a later amendment of their filing left out
+    (`calaccess.unrestated_schedules()`), and its gifts as DEDUPED_RECEIPTS groups them under
+    `extra`, over its RCPT_LATEST rows and those schedules' rows; ([], "") when it has none.
+    The one route from a filer to what its figures leave out, so the figures and the listing
+    agree about it.
+
+    Grouped together, so a left-out row reporting a gift a counted row also reports (the same
+    gift on a Form 496 and a Schedule A) joins that gift, which a figure counts either way.
+    Adds OMITTED, 1 for a gift made only of left-out rows, which no figure counts, and GAPS,
+    the indexes in the schedules of those it came from. The SQL takes the filer id twice,
+    then `extra`'s arguments.
+    """
+    from . import calaccess
+
+    schedules = calaccess.unrestated_schedules(con, "RCPT_CD", [r[0] for r in con.execute(
+        "SELECT FILING_ID FROM FILER_FILING WHERE FILER_ID = ?", (filer_id,))])
+    if not schedules:
+        return [], ""
+    staged = calaccess.stage_unrestated(con, "RCPT_CD", schedules)
+    rows = ("(SELECT l.*, NULL AS gap FROM RCPT_LATEST l JOIN FILER_FILING g"
+            " ON g.FILING_ID = l.FILING_ID WHERE g.FILER_ID = ?"
+            f' UNION ALL SELECT * FROM temp."{staged}")')
+    return schedules, (_RECEIPT_GIFTS.replace("{rows}", rows)
+                       .replace("{columns}", ", MIN(x.gap IS NOT NULL) AS OMITTED,"
+                                             " GROUP_CONCAT(DISTINCT x.gap) AS GAPS")
+                       .format(extra=extra))
 
 
 def _unread(n: int, whose: str = "") -> str:
@@ -209,6 +241,32 @@ def _receipt_shares(con, inner: str, args: list, filing_ids: str | None) -> list
             FROM ({inner}) d WHERE d.AMT IS NOT NULL GROUP BY d.FILING_IDS""", args)], gaps)
 
 
+def _left_out_receipts(con, filer_id: str, extra: str, extra_args: list) -> list:
+    """The schedules a receipts figure leaves out because a later amendment of their filing
+    has rows on other schedules and none on them (`calaccess.UnrestatedSchedule`), with what
+    the figure leaves out from each. `extra` and `extra_args` are the figure's own filter, so
+    only rows it would have counted are named.
+
+    A gift a counted row also reports is not left out: it is in the figure either way. Nor is
+    one with no readable amount (`amount_sql()`), which the figure would leave out anyway, as
+    `_receipt_shares()` gives it no share. The usual filer has no such schedule, and costs a
+    lookup of its filings and their amendments. Asked of a miss too: a name whose every
+    readable gift was left out is not a name with no gifts.
+    """
+    from . import calaccess
+
+    schedules, gifts = left_out_gifts(con, filer_id, extra=extra)
+    if not schedules:
+        return []
+    return calaccess.unrestated_shares(con, "RCPT_CD", [
+        ([int(g) for g in r["gaps"].split(",")], float(r["amt"]), int(r["n"]))
+        for r in con.execute(f"""
+            SELECT d.GAPS gaps, SUM(d.AMT) amt, COUNT(*) n
+            FROM ({gifts}) d WHERE d.OMITTED AND d.AMT IS NOT NULL GROUP BY d.GAPS""",
+                             [filer_id, filer_id] + list(extra_args))],
+        dict(enumerate(schedules)))
+
+
 @dataclass
 class QueryResult:
     value: Any
@@ -223,6 +281,10 @@ class QueryResult:
     # Filings the value counts rows from although their latest amendment has none
     # (`calaccess.Unrestated`), with what each accounts for. A value with any is not verified.
     unrestated: list = field(default_factory=list)
+    # Schedules a filing's later amendment has no rows on, whose earlier rows the value leaves
+    # out (`calaccess.UnrestatedSchedule`), with what it leaves out. A value with any is not
+    # verified either.
+    omitted: list = field(default_factory=list)
     # Late reports the value leaves out although they could change it (`LateReport`): any with
     # an amount nobody stated first, then the most money either way. A value with any is not
     # verified.
@@ -231,7 +293,16 @@ class QueryResult:
     @property
     def note(self) -> str:
         n = self.detail
-        if not self.found and self.suggestions:
+        if not self.found and self.omitted:
+            # Not "no match": what matches is on schedules no figure counts (`unsettled`). "With
+            # a readable amount": a counted match without one is a miss either way (`_unread`).
+            n += (" — every match with a readable amount is on a schedule a later amendment "
+                  "left out")
+            if self.suggestions:
+                # Still shown: another schedule that does count the gift is a different figure,
+                # and the claim decides whether it is the one to cite.
+                n += ". Not counted here: " + "; ".join(self.suggestions[:4])
+        elif not self.found and self.suggestions:
             n += " — NO MATCH. Did you mean: " + "; ".join(self.suggestions[:4])
         elif not self.found:
             n += " — NO MATCH for that name"
@@ -239,36 +310,43 @@ class QueryResult:
 
     @property
     def unsettled(self) -> str:
-        """Why this value cannot verify as it stands, or "". Two reasons, each with the filings
+        """Why this value cannot verify as it stands, or "". Three reasons, each with the filings
         a person opens, since a note alone would still render green:
 
         - `unrestated`: a filing's latest amendment can carry a cover and no rows in a table,
           and the rows the value counts are then an earlier amendment's. That amendment either
           withdrew them or did not restate that schedule, and the export cannot say which.
+        - `omitted`: the same one level down, the other way round. A later amendment has rows
+          on some schedules and none on another, and the value leaves out the earlier rows on
+          that one.
         - `late`: a figure for a schedule asked for by name (form_type=A, or "" for every
           schedule) is that schedule's as filed, and a late-reported gift no 460 restates yet
           is not in it: "gave $3,000" reads as the whole story a week after a $4,000 late gift.
           Only the claim's wording settles whether it holds: as a schedule-A figure as filed,
           it stands; as the whole total or the largest giver, it may not.
 
-        Each names its UNSETTLED_SHOWN or LATE_SHOWN largest: this becomes a claim file's
-        reason, and a committee's whole history can name dozens. `vg query` prints the rest.
+        The first two say "rows a later amendment may have withdrawn", which the research skill
+        matches to leave the row for a person rather than retry it. Each names its
+        UNSETTLED_SHOWN or LATE_SHOWN largest (`_listed`): this becomes a claim file's reason,
+        and a committee's whole history can name dozens. `vg query` prints the rest.
         """
         why = []
         if self.unrestated:
-            each = "; ".join(share_text(u) for u in self.unrestated[:UNSETTLED_SHOWN])
-            if (rest := len(self.unrestated) - UNSETTLED_SHOWN) > 0:
-                each += f"; and {rest} more filing(s) with smaller shares, which `vg query` lists"
+            each = _listed(self.unrestated, share_text, UNSETTLED_SHOWN,
+                           "filing(s) with smaller shares")
             why.append(f"counts rows a later amendment may have withdrawn, and the export cannot "
                        f"say whether it did. {each}. If a latest amendment removed its rows, this "
                        f"value is wrong; if it only left that schedule unchanged, the value "
                        f"stands.")
+        if self.omitted:
+            each = _listed(self.omitted, share_text, UNSETTLED_SHOWN,
+                           "schedule(s) with smaller shares")
+            why.append(f"leaves out rows a later amendment may have withdrawn, and the export "
+                       f"cannot say whether it did. {each}. If that amendment withdrew them, "
+                       f"leaving them out is right; if it only left that schedule unchanged, "
+                       f"they belong in this figure.")
         if self.late:
-            each = "; ".join(late_text(r) for r in self.late[:LATE_SHOWN])
-            # > 0, not truthiness: with fewer reports than shown the difference is negative, and
-            # truthy, and the reason ended "and -4 more late report(s)"
-            if (rest := len(self.late) - LATE_SHOWN) > 0:
-                each += f"; and {rest} more late report(s), which `vg query` lists"
+            each = _listed(self.late, late_text, LATE_SHOWN, "late report(s)")
             why.append("leaves out late-reported contributions that no Form 460 schedule A "
                        f"restates yet, and they could change it. {each}. Worded as this "
                        "schedule's figure or ranking as filed, the value stands; worded as the "
@@ -279,11 +357,23 @@ class QueryResult:
 UNSETTLED_SHOWN = 5
 
 
+def _listed(items: list, line, shown: int, more: str) -> str:
+    """The first `shown` of `items`, each as `line` gives it, for `QueryResult.unsettled`, and
+    how many `more` there are. The one copy of the count: each reason used to keep its own."""
+    each = "; ".join(line(u) for u in items[:shown])
+    # > 0, not truthiness: with fewer items than shown the difference is negative, and truthy,
+    # and every short reason ended "and -4 more filing(s)"
+    if (rest := len(items) - shown) > 0:
+        each += f"; and {rest} more {more}, which `vg query` lists"
+    return each
+
+
 def share_text(u) -> str:
-    """One unrestated filing's line in `QueryResult.unsettled`: what it is, what the result
-    rests on from it, and where to open it. "Rests on", not "adds up to": for top_contributor
-    the rows are anyone's gifts in the ranking, not the named contributor's total."""
-    return (f"{u.describe()}: ${u.amount:,.2f} in {u.rows} row(s) this result rests on "
+    """One unrestated filing's or schedule's line in `QueryResult.unsettled`: what it is, what
+    the result rests on from it or leaves out, and where to open it. "Rests on", not "adds up
+    to": for top_contributor the rows are anyone's gifts in the ranking, not the named
+    contributor's total."""
+    return (f"{u.describe()}: ${u.amount:,.2f} in {u.rows} row(s) this result {u.does} "
             f"(open {u.cite_url})")
 
 
@@ -693,9 +783,10 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
         note, hint = _elsewhere(con, filer_id, form_type, who, who_args)
         if late_note := _late_note(late):
             note += f"; {late_note}"
+        omitted = _left_out_receipts(con, str(filer_id), who + schedule, args[1:])
         con.close()
         return QueryResult(value=None, rows=0, found=False, suggestions=hint + near,
-                           detail=f"0 itemized {label} gift(s){note}")
+                           detail=f"0 itemized {label} gift(s){note}", omitted=omitted)
 
     if not contributor_first:
         firsts = json.loads(row["firsts"])
@@ -715,17 +806,22 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
                                       "DIFFERENT first names — this is not one contributor; "
                                       "pass contributor_first")
     left_out = _unread(gifts - n)
+    omitted = _left_out_receipts(con, str(filer_id), who + schedule, args[1:])
     if n == 0:
-        # The name matched, but no gift states an amount: unknown money, never "$0.00".
+        # The name matched, but no gift states an amount: unknown money, never "$0.00". A
+        # left-out gift that states one would make it a figure, so the miss carries it.
         con.close()
         note = _late_note(late)
-        return _no_rows(f"0 itemized {label} gift(s) counted{left_out}"
+        miss = _no_rows(f"0 itemized {label} gift(s) counted{left_out}"
                         + (f"; {note}" if note else ""))
+        miss.omitted = omitted
+        return miss
     total = float(row["amt"])
     detail = f"{n} itemized {label} gift(s){left_out}"
     if late and gated:
         # A schedule-A total that is known to be short. Green, it is a finding: "gave $5,000",
-        # a week after a $50,000 late gift.
+        # a week after a $50,000 late gift. Not flagged for a left-out schedule: it counts gifts,
+        # so the flag's note would be false, and form_type=A carries both.
         con.close()
         return QueryResult(value=None, rows=n, found=False, suggestions=["form_type=A"],
                            detail=f"${total:,.2f} across {detail}, but {_late_note(late)} — not "
@@ -738,7 +834,7 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
     # Asked for by name, the schedule's figure as filed, held for a person while a late gift is
     # pending: the note alone would render green.
     return QueryResult(value=total, rows=n, detail=detail, unrestated=unrestated,
-                       late=_by_report(late))
+                       omitted=omitted, late=_by_report(late))
 
 
 def _filer_total(root: Path, *, filer_id: str, form_type: str | None = None) -> QueryResult:
@@ -768,15 +864,19 @@ def _filer_total(root: Path, *, filer_id: str, form_type: str | None = None) -> 
     """, args).fetchone()
     n, gifts = int(row["n"] or 0), int(row["gifts"] or 0)
     left_out = _unread(gifts - n)
+    omitted = _left_out_receipts(con, str(filer_id), schedule, schedule_args)
     if n == 0:
         note, hint = _elsewhere(con, filer_id, form_type)
         con.close()
         late_note = _late_note(late)
-        return _no_rows(f"no {label} contributions" + (" counted" if left_out else "")
+        miss = _no_rows(f"no {label} contributions" + (" counted" if left_out else "")
                         + f" for filer {filer_id}{left_out}{note}"
                         + (f"; {late_note}" if late_note else ""), hint)
+        miss.omitted = omitted
+        return miss
     detail = f"{n} itemized {label} gift(s){left_out}"
     if late and gated:
+        # not flagged for a left-out schedule, as in contributor_total: form_type=A carries both
         con.close()
         return _no_rows(f"${float(row['amt']):,.2f} across {detail}, but "
                         f"{_late_note(late)} — not a complete total; form_type=A gives the "
@@ -787,7 +887,7 @@ def _filer_total(root: Path, *, filer_id: str, form_type: str | None = None) -> 
     note = _late_note(late, NOT_COMPLETE)
     return QueryResult(value=float(row["amt"]), rows=n,
                        detail=detail + (f"; {note}" if note else ""), unrestated=unrestated,
-                       late=_by_report(late))
+                       omitted=omitted, late=_by_report(late))
 
 
 def _top_contributor(root: Path, *, filer_id: str,
@@ -848,11 +948,17 @@ def _top_contributor(root: Path, *, filer_id: str,
     row = groups[0] if groups else None
     if row is None:
         note, hint = _elsewhere(con, filer_id, form_type)
+        # With a schedule to rank, every gift on it can be on one a later amendment left out.
+        # Not asked while a gift has no amount: that is a miss whatever the left-out rows hold.
+        omitted = [] if unread else _left_out_receipts(con, str(filer_id), schedule,
+                                                       schedule_args)
         con.close()
         late_note = _late_note(late)
-        return _no_rows(f"no {label} contributions {'counted' if unread else 'found'} for "
+        miss = _no_rows(f"no {label} contributions {'counted' if unread else 'found'} for "
                         f"filer {filer_id}{_unread(unread)}{note}"
                         + (f"; {late_note}" if late_note else ""), hint)
+        miss.omitted = omitted
+        return miss
     top = float(row["amt"] or 0)
     tied = [r for r in groups if abs(float(r["amt"] or 0) - top) < TOLERANCE]
     names = [_shown(r["nf"], r["nm"]) for r in tied]
@@ -882,12 +988,15 @@ def _top_contributor(root: Path, *, filer_id: str,
                         "form_type=A ranks schedule A alone, for a person to check against "
                         "these late reports", ["form_type=A"])
     # Every gift, not only the top contributor's: the ranking is made of all of them, and a
-    # gift a later amendment dropped can put someone at the top, or keep someone off it.
+    # gift a later amendment dropped can put someone at the top, or keep someone off it. So can
+    # a gift the ranking leaves out, on a schedule a later amendment did not restate. Neither is
+    # asked while a gift has no amount, or a late gift holds the ranking (above).
     ids = con.execute(f"""
         SELECT GROUP_CONCAT(DISTINCT d.FILING_IDS) ids FROM ({inner}) d
         WHERE d.AMT IS NOT NULL
     """, args).fetchone()["ids"]
     unrestated = _receipt_shares(con, inner, args, ids)
+    omitted = _left_out_receipts(con, str(filer_id), schedule, schedule_args)
     con.close()
     note = _late_note(late, ", not counted — they " + (
         "could change the ranking" if contenders else "cannot change the ranking"))
@@ -903,10 +1012,10 @@ def _top_contributor(root: Path, *, filer_id: str,
         return QueryResult(value=listed, rows=len(tied),
                            detail=f"{len(tied)}-WAY TIE at ${top:,.0f} in {label} gifts — not "
                                   "a single largest contributor; do not word this as one"
-                                  + note, unrestated=unrestated, late=held)
+                                  + note, unrestated=unrestated, omitted=omitted, late=held)
     return QueryResult(value=names[0], rows=int(row["n"] or 0),
                        detail=f"${top:,.0f} across {row['n']} {label} gift(s){note}",
-                       unrestated=unrestated, late=held)
+                       unrestated=unrestated, omitted=omitted, late=held)
 
 
 def _could_change_ranking(groups: list[Any], tied: list[Any], top: float,
@@ -1123,6 +1232,9 @@ REGISTRY: dict[str, Query] = {
     # each name is spelled the same whatever order its rows were loaded in (MIN, trimmed). v6
     # built the tie from the first four rows, so a tie of five or more named four of them, and
     # it sorted with case and spelled a name from whichever row SQLite read.
+    # No bump for the flag for a schedule a later amendment left out (`omitted`), or the
+    # grouping it shares with these queries: it changes no value, and DEDUPED_RECEIPTS is the
+    # same SQL.
     "calaccess.contributor_total": Query(
         _contributor_total, ("filer_id", "contributor"),
         "contributions from one contributor (add contributor_first for an individual; "

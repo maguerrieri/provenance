@@ -111,6 +111,18 @@ def verify_query_source(src: Source, root: Path) -> Source:
         src.verification = v
         return src
 
+    if not result.found and (why := result.unsettled):
+        # Nothing counted, and every match with a readable amount is on a schedule a later
+        # amendment left out. A retry of these parameters cannot reproduce it, and a retry
+        # invites a mirror; only the filing says whether the rows stand, so a person opens it.
+        # The claimed figure is named, since nothing here checks it against the filing.
+        v.query_run = run
+        v.status = "human_review"
+        v.reason = (f"the query counts nothing ({result.note}), so nothing here reproduces the "
+                    f"claimed {q.expected!r}, but {why} Re-run: "
+                    f"{queries.human_command(q.name, dict(q.params), run.cache_root)}")
+        src.verification = v
+        return src
     if not result.found or not queries.matches(q.expected, result.value):
         # Stamped on a mismatch too, for the re-run command in the reason and for `vg judge`.
         # The review page does not show it: build does not re-run a failed row, so it drops a
@@ -124,9 +136,9 @@ def verify_query_source(src: Source, root: Path) -> Source:
         return src
     if why := result.unsettled:
         # The number reproduces, but the record it comes from is not settled: it counts rows a
-        # later amendment may have withdrawn, or leaves out a late report no schedule A restates
-        # yet. Only the filings it names say which, so a person opens them; stamped as for a
-        # mismatch.
+        # later amendment may have withdrawn, leaves out rows one may have, or leaves out a late
+        # report no schedule A restates yet. Only the filings it names say which, so a person
+        # opens them; stamped as for a mismatch.
         v.query_run = run
         v.status = "human_review"
         v.reason = (f"the query reproduces {result.value!r}, but {why} Re-run: "
@@ -795,8 +807,10 @@ def revalidate_from_cache(src: Source, root: Path, *,
         except Exception as e:  # noqa: BLE001
             return _discard(f"claimed {claimed!r} but the query could not be re-run: {e}")
         if not result.found or not queries.matches(src.query.expected, result.value):
+            # with what it leaves out, if anything: the filing to open, not a retry
             _discard(f"claimed {claimed!r} but re-running the query gives {result.value!r} "
-                     f"({result.note}), not {src.query.expected!r}")
+                     f"({result.note}), not {src.query.expected!r}"
+                     + (f"; {why}" if (why := result.unsettled) else ""))
             v.query_run = run   # what this re-run read: build's own run, so it can vouch for it
             return src
         if why := result.unsettled:
