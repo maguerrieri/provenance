@@ -1608,10 +1608,9 @@ All three now count schedule A unless `form_type` names another schedule (`""` f
 and name what they counted in their detail. When one misses on the schedule asked for but the
 name or filer has receipts on others, the miss suggests `form_type=<schedule>` instead of
 pointing at the name. It reads those schedules from the raw rows: the dedup's collapsed
-cross-form row keeps only one of its two labels. The default has a known gap: a late
-contribution reported only on Form 496 Part 3, not yet restated on a later schedule A, is left
-out (#66). And `vg calaccess contributions` still lists every schedule without saying which
-(#67).
+cross-form row keeps only one of its two labels. A late contribution not yet on any schedule A
+is the next section. And `vg calaccess contributions` still lists every schedule without saying
+which (#67).
 
 The schedule handling is shared helpers, not a copy in each query. `queries._schedule()` holds
 the filter, its args, and the refusal of a padded `form_type` (`" "` is truthy, so it filtered to
@@ -1622,6 +1621,98 @@ and the same miss happened one level down: the refusal went into two queries, an
 still returned `" "`'s sum as found. Fixing every query by hand only works until someone adds a
 guard to one copy. A new query over the receipts calls the helpers, and
 `test_every_receipt_query_is_tested_for_its_schedule_handling` fails until its tests cover it.
+
+## A late report is a contribution schedule A can't see yet
+
+A gift received in the weeks before an election is reported within 24 hours on a late report:
+Form 497 Part 1 (`S497_CD`), or Form 496 Part 3 (`F496P3` rows in `RCPT_CD`) for a committee
+making independent expenditures. It reaches schedule A only when the Form 460 covering its date
+is filed. So the schedule-A default left it out, in exactly the weeks a voter guide is written:
+`top_contributor` could name the wrong donor "the largest contributor", every total came out
+short, and a figure recorded from the query's own output reproduced green.
+
+The queries **flag, and never count**, a late entry that no schedule A restates yet
+(`queries._pending_late`):
+- **`form_type` unset:** a miss while such an entry could change the answer. For a total, that
+  is any pending gift. For `top_contributor`, it is one that could reach the top or break a tie;
+  a gift too small to matter is named, and the ranking stands.
+- **A schedule asked for by name:** `form_type=A` gives the schedule-A figure, and `""` every
+  receipt schedule (which holds Form 496 Part 3, but not Form 497). While a pending late entry
+  could change it, the value comes back with each late report attached (`QueryResult.late`:
+  the filing, its amendment and form, what it holds, where to open it). `vg verify` and
+  `vg build` send the row to `human_review`, naming five in the reason (any with an amount
+  nobody stated first, then the most money), and `vg query` prints "Will not verify" with the
+  rest. Build only ever downgrades: once a 460 restates the gifts, `vg verify` clears the hold.
+  A stated $0 late entry changes nothing and holds nothing. The value is unchanged, and a mismatch is still `snippet_not_found`.
+  For `top_contributor` that is only when the late gifts could change who leads, and it names
+  only the reports that could; a ranking they can't move is settled and verifies. Reports are
+  ordered by the money they hold either way, not their net, since a gift and its correction
+  net to $0 and either could be what a 460 restates. A date window would make such a figure
+  complete through a stated day (#78).
+
+  This first shipped as a green figure with a "NOT a complete total" note, on the tie's rule:
+  a tie verifies, and its detail says how not to word it. The epic's integration review caught
+  that the rule doesn't carry over. A tie's detail is the whole truth about a settled figure,
+  and only the sentence around it can go wrong. A figure short by a late gift is unsettled
+  itself, and its note is exactly the rejected option below, reached through a parameter. So
+  it goes to `human_review`, as #31's flag does for a figure counting a possibly-withdrawn
+  amendment: **a note is enough only when the figure is settled; when the record itself is
+  unsettled, the row goes to a person with each filing to open.** The two are one
+  `QueryResult.unsettled`, through the same hooks in `vg verify`, `vg build` and `vg query`.
+  A figure can be unsettled both ways, and the reason then names both, each with its own
+  filings.
+
+A late entry counts as restated when a schedule-A row carries the same transaction (the
+cross-form key, `tran_base_sql()`), or when a 460 the filer has filed covers its dates, since
+that 460 had to restate it. Anything uncertain leaves it pending: a date that can't be read, or
+an amount that isn't a plain number (a blank, `$5,000` and `1,000` never pair with a stated
+`0` or `1`, as a CAST would pair them).
+
+A late entry is held against every contributor it could be. That is `_could_be()`: one name's
+words all appear in the other's, whatever the case, punctuation or field. So "LAST, FIRST" in
+one field, a bare surname, a middle initial and a short form of an organization's name all
+count. This matching is wide on purpose, the reverse of the exact matching the totals use: a
+false match here only makes a query refuse, and a missed one lets a short figure through.
+The first version matched exact spellings only, and a "DOE, JANE" late gift became a new giver
+holding just its own amount, so the ranking stood. What it still can't catch is a name spelled
+*differently* (a typo). That one fails toward green.
+
+The options that were rejected, and why:
+- **Count `F496P3` in the default and let the cross-form dedup collapse it with its schedule-A
+  copy.** Right only where the `TRAN_ID` bases match, and nobody has checked how often they do on
+  a real export. Where they don't, the gift counts twice, silently, and large donors are hit
+  hardest (the double-count in (4) above).
+- **Load `S497_CD` and dedup it the same way.** The same unchecked key, for a form nobody has
+  looked at. A gift reported on both late forms is a third copy, which no key here can tell
+  from two gifts.
+- **Keep schedule A as the default and put a note in the detail.** The short total still renders
+  green, for whoever never asked. A note is prose a researcher can skim; a miss is a gate they
+  can't. That was the bug.
+
+This is the general rule in "CAL-ACCESS double-counts" applied again. When the only way to count
+something rests on a key you can't check, don't count it. Hold it against the result instead.
+A key that fails while counting manufactures a figure. A key that fails while flagging only
+makes the query refuse.
+
+A database that can't read Form 497 can't say that nothing is pending. That covers a database
+built before `S497_CD` was loaded, and one whose `S497_CD` lacks a column the check reads
+(`calaccess.LATE_COLUMNS`). Every schedule that reads late reports (the default, `form_type=A`
+and `""`) refuses there (`DegradedDatabase`) until `uv run vg calaccess build`, as `ie_total`
+does: a warning would let the short total render green, and so would a named schedule that
+could not look. Another schedule (`form_type=C`) never reads late reports and still answers. An export with no `S497_CD.TSV` at all has no late reports to miss. `build()` records
+the tables the export lacked (`EXPORT_META.not_in_export`), which is how the two are told apart.
+Record what the build *found missing*, not what it looked for. A file that was present but
+skipped (no header, none of the wanted columns) is an unreadable table, not an empty one.
+
+What is still unchecked on a real export was chosen to fail toward refusing:
+- whether a 460 cover's `FORM_TYPE` reads `F460`. If not, no period covers anything, and every
+  late entry stays pending.
+- what a Form 497 `DATE_THRU` holds. An entry is covered only when one 460 covers it from
+  `CTRIB_DATE` through `DATE_THRU`, so a date later than expected keeps it pending. An
+  unreadable one does too.
+
+Filing is not the same as restating: a gift inside a filed 460's period that the 460 omitted
+reads as restated, and is left out. That is the filer's error, in their own sworn statement.
 
 ## A surname is not a candidate
 

@@ -136,12 +136,13 @@ Do not summarize the source rules for them — the agent definition carries them
    that page. Retrying it only invites a researcher to swap in a readable copy. Retry it only
    to ask for the missing `page`.
 
-   **Not a retry either: a query figure a later amendment may have changed.** A `human_review`
-   on a query citation whose reason says "it counts rows a later amendment may have
-   withdrawn" (from `vg verify` or `vg build`) is a correct citation of an unsettled record:
-   the export cannot say whether the amendment withdrew those rows. The reason names each filing to open, and a person does.
-   Retrying it only invites a researcher to change the parameters or cite a mirror until the
-   filing drops out.
+   **Not a retry either: a query figure whose record isn't settled.** A `human_review` on a
+   query citation whose reason says "it counts rows a later amendment may have withdrawn" or
+   "it leaves out late-reported contributions" (from `vg verify` or `vg build`) is a correct
+   citation of an unsettled record. Either the export cannot say whether an amendment withdrew
+   those rows, or a late gift is on file that no Form 460 has restated yet. The reason names
+   each filing to open, and a person checks the claim against them. Retrying it only invites a
+   researcher to change the parameters or cite a mirror until the filings drop out.
 
    **A retry with no failing source: an answer whose figures no snippet carries.** The claim
    is `human_review` with every source green, and its conflict line names the dollar figures

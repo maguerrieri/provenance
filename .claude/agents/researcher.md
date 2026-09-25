@@ -152,12 +152,20 @@ can come back a miss whose note names the schedule it is on (`form_type=C`, say)
 interest is not a contribution. Cite another schedule only when the claim says so ("in-kind
 contributions"), and word the claim to match the schedule you passed.
 
-If `vg query` says **"Will not verify"**, the figure counts rows from a filing whose latest
-amendment has none, and the export cannot say whether that amendment withdrew them. The query
-is fine and the number is what the data gives, so don't change the parameters or switch to a
-mirror to get a clean result. Cite it anyway. `vg check-claim` then fails it as
-`human_review`, and like a kept scan that one failure is the exception: hand the claim on with
-`notes` naming the filings the warning lists, for a person to open.
+A late contribution (Form 497, or Form 496 Part 3) reaches schedule A only when the next Form
+460 is filed. Until then, a total or a ranking it could change comes back a miss, and the note
+names the late report's filing. Don't record the schedule-A figure from that note as the
+total. Either cite the late report's filing page for the gift, or pass `form_type=A` and word
+the claim as a schedule-A figure ("reported on its campaign statements through <date>").
+
+If `vg query` says **"Will not verify"**, the record behind the figure isn't settled. Either it
+counts rows from a filing whose latest amendment has none, and the export cannot say whether
+that amendment withdrew them, or (with `form_type=A`) it leaves out late reports that a person
+checks your wording against. The query is fine and the number is what the data gives, so don't
+change the parameters or switch to a mirror to get a clean result. Cite it anyway. `vg
+check-claim` then fails it as `human_review`, and like a kept scan that one failure is the
+exception: hand the claim on with `notes` naming the filings the warning lists, for a person to
+open.
 
 **Never cite the database as a URL.** A row in a local TSV has no URL a human can open and no text
 they can ⌘F, so a claim resting on one is unverifiable by design. Every result prints the
