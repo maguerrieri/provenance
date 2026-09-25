@@ -51,7 +51,9 @@ from .verify import (
 )
 
 app = typer.Typer(add_completion=False, help="Voter guide research pipeline")
-con = Console()
+# No emoji: escape() leaves ":ok:" alone, so claim text, notes and filer names would print with
+# a shortcode turned into an emoji. Nothing the code itself prints uses one.
+con = Console(emoji=False)
 
 
 def qid_sort_key(qid: str) -> tuple:
@@ -119,9 +121,10 @@ def _cache_root(data: Path, cache: Path | None) -> Path:
         # fetch or verify quietly created a second cache there. A cache directory holds pages/
         # or calaccess/; a root holds cache/.
         if any((cache / d).is_dir() for d in ("pages", "calaccess")):
-            con.print(f"[red]--cache {escape(str(cache))} is a cache directory itself. --cache "
-                      f"names the directory that holds cache/, so this looks like --cache "
-                      f"{escape(str(cache.resolve().parent))}.[/]")
+            # Through _printable(): an undecodable byte in argv arrives as a lone surrogate.
+            con.print("[red]" + escape(_printable(
+                f"--cache {cache} is a cache directory itself. --cache names the directory that "
+                f"holds cache/, so this looks like --cache {cache.resolve().parent}.")) + "[/]")
             raise typer.Exit(1)
         return cache
     # A candidate subdir shares its parent's cache BY DESIGN (data/<candidate> -> data/cache),
@@ -141,8 +144,9 @@ def _cache_root(data: Path, cache: Path | None) -> Path:
             _warned_strays.add(data)
             shared = parent / "cache"
             state = "" if shared.exists() else " (not created yet)"
-            con.print(f"[yellow]{escape(str(data / 'cache'))} is a stray: this candidate "
-                      f"shares {escape(str(shared))}{state}, so that is what is used. Move or "
+            con.print("[yellow]" + escape(_printable(f"{data / 'cache'} is a stray: this "
+                                                     f"candidate shares {shared}"))
+                      + f"{state}, so that is what is used. Move or "
                       f"merge anything the stray holds (pages, a CAL-ACCESS database) into it, "
                       f"or pass --cache.[/]")
         return parent
@@ -198,12 +202,12 @@ def _verdict_cache_root(data: Path, cache: Path | None) -> Path:
     if (root / "cache").is_dir():
         return root
     if cache is not None:
-        con.print(f"[red]--cache {escape(str(cache))} holds no cache/ directory, so every "
-                  f"verdict checked against it would read stale.[/]")
+        con.print(f"[red]--cache {escape(_printable(str(cache)))} holds no cache/ directory, so "
+                  f"every verdict checked against it would read stale.[/]")
         raise typer.Exit(1)
-    con.print(f"[yellow]no cache at {escape(str(root / 'cache'))}: every verdict on a cited page "
-              f"will read stale until `vg verify` fetches the pages, or --cache names the "
-              f"cache.[/]")
+    con.print(f"[yellow]no cache at {escape(_printable(str(root / 'cache')))}: every verdict on a "
+              f"cited page will read stale until `vg verify` fetches the pages, or --cache names "
+              f"the cache.[/]")
     return root
 
 
@@ -263,9 +267,11 @@ def load_claims(claims_dir: Path, *, trust_machine_fields: bool = False,
                 # it as work for the human instead of dying on the whole build. A row that is
                 # not even an object (a bare string, a number) is skipped the same way.
                 named = item.get("question_id") if isinstance(item, dict) else None
-                qid = str(named or p.stem)[:64] or "unreadable"
+                # Through _printable() here, so every later print of `skipped` is safe too:
+                # json.loads keeps a lone surrogate, and printing one raises.
+                qid = _printable(str(named or p.stem)[:64]) or "unreadable"
                 # Escaped: the id and pydantic's echo of the input are agent-authored text.
-                con.print(f"[yellow]skipping {escape(qid)} in {escape(p.name)}:[/] "
+                con.print(f"[yellow]skipping {escape(f'{qid} in {_printable(p.name)}')}:[/] "
                           f"{escape(str(e))}")
                 skipped.append(qid)
                 continue
@@ -304,7 +310,7 @@ def load_claims(claims_dir: Path, *, trust_machine_fields: bool = False,
             out.append(claim)
     if skipped:
         con.print(f"[yellow]{len(skipped)} claim(s) skipped as unreadable: "
-                  f"{', '.join(skipped)} — fix or re-run those questions[/]")
+                  f"{escape(', '.join(skipped))} — fix or re-run those questions[/]")
     return sorted(out, key=lambda c: qid_sort_key(c.question_id))
 
 
@@ -344,8 +350,8 @@ def fetch(url: str, data: Path = DATA, cache: Path = None, refresh: bool = False
         # A partly scanned PDF: the text below is the typed pages only.
         con.print(f"[yellow]no text layer on {escape(page_list(blank))} "
                   "(scanned or blank) — a quote there needs `page` set to it[/]")
-    # As Text, like a query value: escape() alone still lets ":ok:" become an emoji, and a
-    # plain string wraps at 80 columns in an agent's shell, putting line breaks in a snippet.
+    # As Text, like a query value: a plain string wraps at 80 columns in an agent's shell,
+    # putting line breaks in a snippet.
     if p.text:
         con.print(Text(p.text[:1200]), soft_wrap=True)
     else:
@@ -393,7 +399,8 @@ def races():
     """List available races."""
     for name in available_races():
         r = load_race(name)
-        con.print(f"[bold]{name}[/]  {r.title}  sources: {', '.join(r.sources)}")
+        con.print(f"[bold]{escape(name)}[/]  "
+                  + escape(f"{r.title}  sources: {', '.join(r.sources)}"))
 
 
 @app.command()
@@ -407,7 +414,7 @@ def verify(data: Path = DATA, cache: Path = None, refresh: bool = False, qid: st
     claims = [c for c in _load_or_exit(claims_dir)   # never trust: this run decides status
               if not qid or c.question_id == qid]
     if not claims:
-        con.print("[yellow]No claims found in[/] " + str(claims_dir))
+        con.print("[yellow]No claims found in[/] " + escape(str(claims_dir)))
         raise typer.Exit(1)
     from . import judgments
 
@@ -512,8 +519,7 @@ def archive(data: Path = DATA, cache: Path = None, delay: float = 3.0):
         # This command is what rebuilds the records, so a damaged file must not stop it.
         aside = data / f"{arch.RECORDS}.damaged-{datetime.now(UTC):%Y%m%dT%H%M%SZ}"
         (data / arch.RECORDS).rename(aside)
-        con.print(f"[yellow]{escape(str(e))}\n  moved it to {escape(str(aside))}; "
-                  "starting fresh[/]")
+        con.print("[yellow]" + escape(f"{e}\n  moved it to {aside}") + "; starting fresh[/]")
         records = {}
     # Every cited URL, even one already carrying a snapshot, with one source citing it.
     first = {}
@@ -567,8 +573,8 @@ def archive(data: Path = DATA, cache: Path = None, delay: float = 3.0):
         # After every URL: a run takes seconds a URL, and an interrupted one should keep
         # what it saved.
         arch.save_records(data, records)
-        con.print(f"  {'[green]saved[/]' if snap else '[red]fail[/]'} {escape(u)} "
-                  f"{escape(err or '')}")
+        con.print(f"  {'[green]saved[/]' if snap else '[red]fail[/]'} "
+                  + escape(f"{u} {err or ''}"))
 
     arch.archive_all(urls, delay=delay, progress=progress)
 
@@ -583,8 +589,8 @@ def archive(data: Path = DATA, cache: Path = None, delay: float = 3.0):
             tally[key] = tally.get(key, 0) + 1
             if s.archive_status in ("archive_unusable", "archive_unconfirmed"):
                 color = "red" if s.archive_status == "archive_unusable" else "yellow"
-                con.print(f"  [{color}]{s.archive_status}[/] {escape(c.question_id)} "
-                          f"{escape(s.publisher)}: {escape(s.archive_note or '')}")
+                con.print(f"  [{color}]{s.archive_status}[/] "
+                          + escape(f"{c.question_id} {s.publisher}: {s.archive_note or ''}"))
             before = s.verification.status
             verify_against_archive(s, cache_root)
             if s.verification.status == before:
@@ -696,9 +702,8 @@ def _question_ids(data: Path, claims: list[Claim]) -> set[str] | None:
 
     path = questions.find(data)
     if path is None:
-        con.print(f"[yellow]no {questions.FILE} in {escape(str(data))} or "
-                  f"{escape(str(data.parent))}, so no claim was checked against the question its "
-                  f"id names[/]")
+        con.print("[yellow]" + escape(f"no {questions.FILE} in {data} or {data.parent}")
+                  + ", so no claim was checked against the question its id names[/]")
         return set()
     try:
         found = questions.check(claims, questions.load(path))
@@ -710,10 +715,10 @@ def _question_ids(data: Path, claims: list[Claim]) -> set[str] | None:
         pairs = ", ".join(f"{q} from {old}" for q, old in found.pending)
         # Not "never applied": an older remap applied some without retiring them, and the file
         # can't say which.
-        con.print(f"[yellow]{where} still declares maps_from ({escape(pairs)}), a migration for "
-                  f"the retired `vg remap`. Nothing applies it now, and no claim moves, so each is "
-                  f"checked against the question at the id it sits on. Delete the key once that "
-                  f"is settled.[/]")
+        con.print("[yellow]" + escape(f"{path} still declares maps_from ({pairs})")
+                  + ", a migration for the retired `vg remap`. Nothing applies it now, and no "
+                  "claim moves, so each is checked against the question at the id it sits on. "
+                  "Delete the key once that is settled.[/]")
     if found.unlisted:
         # Each is named with what the advice below should be read against: the migration that
         # meant to move it (its research answered the mapped question), or the listed id it
@@ -725,13 +730,16 @@ def _question_ids(data: Path, claims: list[Claim]) -> set[str] | None:
                 return f"{q} (the set has {found.case_of[q]}, which differs only in case)"
             return f"{q} (maps_from of {mapped[q]})" if q in mapped else q
 
-        con.print(f"[red]{len(found.unlisted)} claim(s) sit on an id {where} does not list: "
-                  f"{escape(', '.join(named(q) for q in found.unlisted))}. If the id was retired, "
-                  f"move its claim from claims/ to claims-archive/ and its shard from "
-                  f"judgments/ to judgments-archive/, and point any derives_from naming it at "
-                  f"the new id. If the question is still asked, add it to {where} under that "
-                  f"id: a candidate run's own copy is not updated when the template gains a "
-                  f"question.[/]")
+        # One run from the path to the path again: "[/" in the first and "]" in the second
+        # are one tag to rich, however much plain text sits between them.
+        con.print(f"[red]{len(found.unlisted)} claim(s) sit on an id "
+                  + escape(f"{path} does not list: {', '.join(named(q) for q in found.unlisted)}. "
+                           f"If the id was retired, move its claim from claims/ to "
+                           f"claims-archive/ and its shard from judgments/ to judgments-archive/, "
+                           f"and point any derives_from naming it at the new id. If the question "
+                           f"is still asked, add it to {path}")
+                  + " under that id: a candidate run's own copy is not updated when the template "
+                  "gains a question.[/]")
     if found.reworded:
         con.print(f"[red]{len(found.reworded)} claim(s) answer another question than {where} asks "
                   f"at their id. Ids are never reused or reworded: give the new question a new "
@@ -765,9 +773,10 @@ def build(data: Path = DATA, cache: Path = None, race: str = "", candidate: str 
     try:
         clear_render(data / "out")
     except OSError as e:
-        con.print(f"[red]could not clear the previous render from {escape(str(data / 'out'))}: "
-                  f"{escape(str(e))}. Remove it by hand: `vg serve` must not show a render this "
-                  f"build did not produce.[/]")
+        con.print("[red]" + escape(f"could not clear the previous render from {data / 'out'}: "
+                                   f"{e}")
+                  + ". Remove it by hand: `vg serve` must not show a render this build did not "
+                  "produce.[/]")
         raise typer.Exit(1) from None
     r = load_race(race or None)
     # The title also keys the review app's saved progress, so it must name the candidate:
@@ -807,7 +816,7 @@ def build(data: Path = DATA, cache: Path = None, race: str = "", candidate: str 
                       "or recent verdicts will render as unreviewed[/]")   # verdicts live outside the claim file; merge them in
     _report_older_exports(claims, cache_root, recorded)
     html, js = render(claims, data / "out", title=title, cache_root=cache_root)
-    con.print(f"[green]wrote[/] {html}\n[green]wrote[/] {js}")
+    con.print(f"[green]wrote[/] {escape(str(html))}\n[green]wrote[/] {escape(str(js))}")
     if failing:
         _left_out(failing, "the review app")
 
@@ -829,7 +838,7 @@ def serve(data: Path = DATA, port: int = 8765, open_browser: bool = True):
         raise typer.Exit(1)
     handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(out))
     url = f"http://127.0.0.1:{port}/review.html"
-    con.print(f"Serving {out} at [bold]{url}[/]  (ctrl-C to stop)")
+    con.print(f"Serving {escape(str(out))} at [bold]{url}[/]  (ctrl-C to stop)")
     if open_browser:
         webbrowser.open(url)
     http.server.ThreadingHTTPServer(("127.0.0.1", port), handler).serve_forever()
@@ -855,9 +864,9 @@ def calaccess_build(data: Path = DATA, cache: Path = None):
         dbp = calaccess.build(root, progress=lambda t, n, note: con.print(
             f"  {t:32} {n:>9,} rows {note}"))
     except FileNotFoundError as e:
-        con.print(f"[red]{e}[/]")
+        con.print(f"[red]{escape(str(e))}[/]")
         raise typer.Exit(1) from None
-    con.print(f"[green]built[/] {dbp} ({_export_line(root)})")
+    con.print("[green]built[/] " + escape(f"{dbp} ({_export_line(root)})"))
 
 
 def _export_line(root: Path) -> str:
@@ -877,15 +886,16 @@ def calaccess_filer(name: str, data: Path = DATA, cache: Path = None, limit: int
     try:
         rows = calaccess.find_filers(_cache_root(data, cache), name, limit)
     except FileNotFoundError as e:
-        con.print(f"[red]{e}[/]")
+        con.print(f"[red]{escape(str(e))}[/]")
         raise typer.Exit(1) from None
     if not rows:
-        con.print(f"No filer matching {name!r}.")
+        con.print(f"No filer matching {escape(repr(name))}.")
         return
     t = Table("filer id", "name", "committee page", box=None)
     for r in rows:
+        # Filer text from the export, as Text: rich reads "[/]" in a table cell as markup.
         who = " ".join(x for x in (r.get("first"), r.get("last")) if x)
-        t.add_row(r["filer_id"], who, calaccess.committee_url(r["filer_id"]))
+        t.add_row(Text(str(r["filer_id"])), Text(who), Text(calaccess.committee_url(r["filer_id"])))
     con.print(t)
 
 
@@ -911,10 +921,10 @@ def calaccess_cite(filer_id: str, filing_id: str = "", data: Path = DATA, cache:
                                                 expect_year=year)
         if snap:
             bad = calaccess.unusable(note)
-            con.print(f"[{'red' if bad else 'green'}]{label}[/]: {snap}\n  {note}\n"
-                      f"  live URL for the human: {url}")
+            con.print(f"[{'red' if bad else 'green'}]{label}[/]: "
+                      + escape(f"{snap}\n  {note}\n  live URL for the human: {url}"))
         else:
-            con.print(f"[yellow]{label}[/]: {note}\n  live URL: {url}")
+            con.print(f"[yellow]{label}[/]: " + escape(f"{note}\n  live URL: {url}"))
 
 
 @calaccess_app.command("contributions")
@@ -933,18 +943,19 @@ def calaccess_contributions(filer_id: str, data: Path = DATA, cache: Path = None
         # refuses a bad --since before it opens the database
         rows = calaccess.contributions_to(_cache_root(data, cache), filer_id, top=top, since=since)
     except (FileNotFoundError, ValueError) as e:
-        con.print(f"[red]{e}[/]")
+        con.print(f"[red]{escape(str(e))}[/]")
         raise typer.Exit(1) from None
     t = Table("amount", "contributor", "employer", "date", "restated", "cite this URL",
               "latest amendment", box=None)
     for c in rows:
         # An amount that did not read is not "$0". A blank says so, and anything else is shown
-        # as filed: escaped, since rich would read "[/]" as markup; a control character made
+        # as filed: as Text, since rich would read "[/]" as markup; a control character made
         # visible, since it acts on the terminal before anything is shown; and cut to fit.
         filed = c.amount_filed if c.amount_filed.isprintable() else repr(c.amount_filed)[1:-1]
-        amt = f"${c.amount:,.0f}" if c.amount is not None else (escape(filed[:14]) or "blank")
-        t.add_row(amt, c.contributor[:30], c.occupation[:18] or c.employer[:18],
-                  c.date, (f"{c.filings}x" if c.filings > 1 else ""), c.cite_url,
+        amt = f"${c.amount:,.0f}" if c.amount is not None else (filed[:14] or "blank")
+        t.add_row(Text(amt), Text(c.contributor[:30]),
+                  Text(c.occupation[:18] or c.employer[:18]), Text(c.date),
+                  (f"{c.filings}x" if c.filings > 1 else ""), Text(c.cite_url),
                   _amendment_cell(c.unrestated))
     con.print(t)
     unread = sum(c.amount is None for c in rows)
@@ -957,11 +968,11 @@ def calaccess_contributions(filer_id: str, data: Path = DATA, cache: Path = None
     _amendment_footer([c.unrestated for c in rows])
 
 
-def _amendment_cell(unrestated) -> str:
+def _amendment_cell(unrestated) -> Text:
     """A listing row's 'latest amendment' cell: each of its filings whose latest amendment has
-    no such rows (calaccess.Unrestated), or nothing. Escaped: filing ids are export text."""
-    return escape("; ".join(f"{u.filing_id}: a{u.cover_amend} has none"
-                            for u in unrestated or ()))
+    no such rows (calaccess.Unrestated), or nothing. As Text: filing ids are export text."""
+    return Text("; ".join(f"{u.filing_id}: a{u.cover_amend} has none"
+                          for u in unrestated or ()))
 
 
 def _amendment_footer(marks: list) -> None:
@@ -993,22 +1004,23 @@ def calaccess_ie(candidate_last: str, data: Path = DATA, cache: Path = None, fir
         rows = calaccess.independent_expenditures(_cache_root(data, cache), candidate_last,
                                                   first=first, top=top, loose=loose)
     except FileNotFoundError as e:
-        con.print(f"[red]{e}[/]")
+        con.print(f"[red]{escape(str(e))}[/]")
         raise typer.Exit(1) from None
     t = Table("amount", "stance", "spender", "candidate", "date", "cite this URL",
               "latest amendment", box=None)
     for r in rows:
         # A blank amount is money nobody stated: printed "$0" it read as a stated zero, which
         # ie_total refuses to report. Anything else that is not a number is shown as filed,
-        # escaped, since it is filer text and rich would read "[/]" as markup.
+        # as Text, since it is filer text and rich would read "[/]" as markup.
         raw = (r.get("AMOUNT") or "").strip()
         try:
             amt = f"${float(raw):,.0f}" if raw else "blank"
         except ValueError:
-            amt = escape(raw)
-        t.add_row(amt, r["stance"], (r.get("FILER_NAML") or "")[:28],
-                  " ".join(x for x in (r.get("CAND_NAMF"), r.get("CAND_NAML")) if x)[:22],
-                  r.get("EXP_DATE") or "", r["cite_url"], _amendment_cell(r["unrestated"]))
+            amt = raw
+        t.add_row(Text(amt), Text(r["stance"]), Text((r.get("FILER_NAML") or "")[:28]),
+                  Text(" ".join(x for x in (r.get("CAND_NAMF"), r.get("CAND_NAML")) if x)[:22]),
+                  Text(r.get("EXP_DATE") or ""), Text(r["cite_url"]),
+                  _amendment_cell(r["unrestated"]))
     con.print(t)
     _amendment_footer([r["unrestated"] for r in rows])
 
@@ -1037,17 +1049,18 @@ def run_query(name: str = typer.Argument(""), param: list[str] = None, data: Pat
         result = queries.run(name, params, root)
     except TypeError as e:
         required = q.required if (q := queries.REGISTRY.get(name)) else ()
-        con.print(f"[red]{e}[/]\n  required: {', '.join(required)}")
+        con.print(f"[red]{escape(str(e))}[/]\n  required: {', '.join(required)}")
         raise typer.Exit(1) from None
     except Exception as e:  # noqa: BLE001
-        con.print(f"[red]{e}[/]")
+        con.print(f"[red]{escape(str(e))}[/]")   # it may quote the params
         raise typer.Exit(1) from None
     if not result.found:
-        con.print(f"[yellow]no match[/] — {result.note}")
+        # Escaped: the note lists near-matches, which are filer names from the export.
+        con.print(f"[yellow]no match[/] — {escape(result.note)}")
         raise typer.Exit(1)
     # Printed as Text, never as a markup string: researchers copy this value into `expected`
-    # verbatim, and a str would lose "[b]" to markup and ":smile:" to emoji, and wrap at 80
-    # columns when stdout is not a terminal (an agent's shell).
+    # verbatim, and a str would lose "[b]" to markup and wrap at 80 columns when stdout is not
+    # a terminal (an agent's shell).
     con.print(Text(str(result.value), style="bold"), Text(f"({result.note})", style="dim"),
               sep="  ", soft_wrap=True)
     if result.unsettled:
@@ -1457,7 +1470,7 @@ def show_judgments(data: Path = DATA, question_id: str = "",
         # Nothing to count would print a green "0 of 0" — the done signal — for a typo'd
         # --question-id or --data.
         what = f"with question id {question_id!r}" if question_id else "at all"
-        con.print(f"[red]no claim {what} in {data / 'claims'}[/]")
+        con.print("[red]" + escape(f"no claim {what} in {data / 'claims'}") + "[/]")
         raise typer.Exit(1)
     # A shard the disk opens under a claim's id is that claim's, as `vg build` reads it. On a
     # case-insensitive disk q1 opens Q1.json, and counting what build applies as unjudged sent
@@ -1557,11 +1570,12 @@ def show_judgments(data: Path = DATA, question_id: str = "",
     if aliased:
         # Which claim they belong to is not inferred from a source id but is what this disk
         # already does (judgments.opened_as()).
-        con.print(f"[yellow]{escape(_shard_names(aliased.values()))} differ from a claim's id only "
-                  f"in case, and this disk opens them under that id, so they count as that "
-                  f"claim's — but a case-sensitive checkout of {escape(str(data))} reads nothing "
-                  f"from them. Rename each to its claim's exact id by hand, through a temporary "
-                  f"name.[/]")
+        con.print("[yellow]" + escape(f"{_shard_names(aliased.values())} differ from a claim's id "
+                                      f"only in case, and this disk opens them under that id, so "
+                                      f"they count as that claim's — but a case-sensitive "
+                                      f"checkout of {data}")
+                  + " reads nothing from them. Rename each to its claim's exact id by hand, "
+                  "through a temporary name.[/]")
     if unowned:
         # Question ids are stable, so a claim never moves off its shard: a shard no claim has
         # judged a claim that is gone, or was written under an id no claim ever had.
@@ -1591,7 +1605,7 @@ def show_judgments(data: Path = DATA, question_id: str = "",
         # No gate line at all: "0 of M" as the last line reads as done to anyone taking
         # `tail -1` through a pipe, which discards the exit status.
         con.print(f"\n[red]{len(unread)} claim(s) could not be read, so nothing here counts as "
-                  f"done: {', '.join(unread)}[/]")
+                  f"done: {escape(', '.join(unread))}[/]")
         raise typer.Exit(1)
     # Printed as one number rather than left to be counted off a rich table: that table wraps,
     # so `grep -c unreviewed` under-reported twice and read as "done" when a source genuinely
@@ -1717,35 +1731,40 @@ def source_access(host: str = typer.Argument(""), run_recipe: str = "",
             return
         t = Table("host", "access", "recipes", "what it is", box=None)
         for h, e in sorted(entries.items()):
-            t.add_row(h, e.access, ", ".join(r.id for r in e.recipes) or "-", e.name)
+            # Registry files are data, and `source-import-curl` writes them from a paste.
+            t.add_row(Text(h), Text(str(e.access)),
+                      Text(", ".join(str(r.id) for r in e.recipes) or "-"), Text(str(e.name)))
         con.print(t)
         return
 
     entry = access.find(host)
     if entry is None:
-        con.print(f"[yellow]Nothing recorded for {host}.[/]\n"
+        con.print(f"[yellow]Nothing recorded for {escape(host)}.[/]\n"
                   f"If you find a way in, record it: `vg source-import-curl <file>` after "
                   f"copying the request from dev tools. If it needs a login, record that too "
                   f"— a known dead end saves the next run from substituting silently.")
         raise typer.Exit(1)
 
-    con.print(f"[bold]{entry.host}[/] — {entry.name}  ([bold]{entry.access}[/], "
-              f"verified {entry.verified or 'unknown'})")
+    # YAML reads an unquoted `verified: 2026-08-21` as a date, hence str() before escape().
+    con.print(f"[bold]{escape(entry.host)}[/] — {escape(str(entry.name))}  "
+              f"([bold]{escape(str(entry.access))}[/], "
+              f"verified {escape(str(entry.verified or 'unknown'))})")
     if entry.naive_fetch:
-        con.print(f"\n[dim]a plain fetch gets:[/] {entry.naive_fetch.strip()}")
+        con.print(f"\n[dim]a plain fetch gets:[/] {escape(str(entry.naive_fetch).strip())}")
     for r in entry.recipes:
-        con.print(f"\n[bold]{r.id}[/] {r.summary}\n  {r.method} {r.url}"
-                  + (f"\n  params: {', '.join(r.params)}" if r.params else "")
-                  + (f"\n  {r.notes.strip()}" if r.notes else ""))
+        con.print(f"\n[bold]{escape(str(r.id))}[/] "
+                  + escape(f"{r.summary}\n  {r.method} {r.url}"
+                           + (f"\n  params: {', '.join(map(str, r.params))}" if r.params else "")
+                           + (f"\n  {str(r.notes).strip()}" if r.notes else "")))
     if entry.limits:
-        con.print(f"\n[yellow]limits:[/] {entry.limits.strip()}")
+        con.print(f"\n[yellow]limits:[/] {escape(str(entry.limits).strip())}")
     if entry.manual_steps:
-        con.print(f"\n[yellow]manual retrieval:[/] {entry.manual_steps.strip()}")
+        con.print(f"\n[yellow]manual retrieval:[/] {escape(str(entry.manual_steps).strip())}")
 
     if run_recipe:
         recipe = entry.recipe(run_recipe)
         if recipe is None:
-            con.print(f"[red]no recipe {run_recipe!r}[/]")
+            con.print(f"[red]no recipe {escape(repr(run_recipe))}[/]")
             raise typer.Exit(1)
         params = dict(p.split("=", 1) for p in (param or []))
         try:
@@ -1755,7 +1774,7 @@ def source_access(host: str = typer.Argument(""), run_recipe: str = "",
             con.print(f"[red]{escape(f'{type(e).__name__}: {e}')}[/]")
             raise typer.Exit(1) from None
         con.print(f"\n[bold]HTTP {resp.status_code}[/] {len(resp.text)} chars")
-        con.print(resp.text[:1500])
+        con.print(Text(resp.text[:1500]), soft_wrap=True)   # fetched, and copied from
 
 
 @app.command(name="source-note")
@@ -1780,7 +1799,7 @@ def source_note(host: str, note: str, access: str = "", verified: str = ""):
     data["findings"] = (data.get("findings") or "") + ("\n" if data.get("findings") else "") + note
     entry_path.parent.mkdir(parents=True, exist_ok=True)
     entry_path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=100))
-    con.print(f"[green]recorded[/] {entry_path}")
+    con.print(f"[green]recorded[/] {escape(str(entry_path))}")
 
 
 @app.command(name="source-import-curl")
@@ -1816,16 +1835,18 @@ def source_import_curl(path: Path, name: str = "", write: bool = True):
 
     dest = access.REGISTRY / f"{entry['host']}.yaml"
     text = yaml.safe_dump(entry, sort_keys=False, allow_unicode=True, width=100)
+    # The entry is the pasted request, so it is printed as Text, never as markup, and unwrapped:
+    # it is YAML to be copied into a file.
     if not write:
-        con.print(text)
+        con.print(Text(text), soft_wrap=True)
         return
     if dest.exists():
-        con.print(f"[yellow]{dest} exists — printing instead of overwriting[/]\n")
-        con.print(text)
+        con.print(f"[yellow]{escape(str(dest))} exists — printing instead of overwriting[/]\n")
+        con.print(Text(text), soft_wrap=True)
         return
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(text)
-    con.print(f"[green]wrote[/] {dest}\n"
+    con.print(f"[green]wrote[/] {escape(str(dest))}\n"
               f"Fill in `summary`, `params`, and `notes`, then verify it works cookieless.")
 
 
@@ -1842,23 +1863,24 @@ def form700(first: str, last: str):
     try:
         filings = fppc.search(first, last)
     except Exception as e:  # noqa: BLE001
-        con.print(f"[red]FPPC search failed: {type(e).__name__}: {e}[/]\n"
+        con.print(f"[red]FPPC search failed: {type(e).__name__}: {escape(str(e))}[/]\n"
                   f"Do not substitute a copy silently — say the index was unreachable.")
         raise typer.Exit(1) from None
     if not filings:
-        con.print(f"No Form 700 filings found for {first} {last}.")
+        con.print(f"No Form 700 filings found for {escape(f'{first} {last}')}.")
         return
     t = Table("filed", "covers", "agency", "index id", box=None)
     for f in filings:
-        t.add_row(f.filed_date, ", ".join(str(y) for y in f.filing_years),
-                  "; ".join(f.agencies[:2]) + (" …" if len(f.agencies) > 2 else ""),
-                  f.index_id)
+        # The FPPC index's own text, as Text: rich reads "[/]" in a table cell as markup.
+        t.add_row(Text(f.filed_date), Text(", ".join(str(y) for y in f.filing_years)),
+                  Text("; ".join(f.agencies[:2]) + (" …" if len(f.agencies) > 2 else "")),
+                  Text(str(f.index_id)))
     con.print(t)
     newest = filings[0]
-    con.print(f"\n[bold]Most recent:[/] filed {newest.filed_date}, covering "
-              f"{', '.join(str(y) for y in newest.filing_years)}.")
-    con.print(f"Retrieve it at {fppc.PORTAL} (search {first} {last}); cite that one, and set "
-              f"the source `date` to its filed date.")
+    con.print("\n[bold]Most recent:[/] " + escape(
+        f"filed {newest.filed_date}, covering {', '.join(str(y) for y in newest.filing_years)}."))
+    con.print(f"Retrieve it at {fppc.PORTAL} (search {escape(f'{first} {last}')}); cite "
+              f"that one, and set the source `date` to its filed date.")
 
 
 @app.command(name="check-claim")
@@ -1878,7 +1900,7 @@ def check_claim(path: Path, data: Path = DATA, cache: Path = None, race: str = "
     try:
         raw = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as e:
-        con.print(f"[red]cannot read {path}: {e}[/]")
+        con.print(f"[red]cannot read {escape(f'{path}: {e}')}[/]")
         raise typer.Exit(1) from None
 
     ok = True
@@ -1926,20 +1948,21 @@ def check_claim(path: Path, data: Path = DATA, cache: Path = None, race: str = "
         for src_ in claim.sources:
             verify_source(src_, cache_root, rules=rules)
             st = src_.verification.status
-            cited = escape(f"{src_.publisher}: {src_.snippet!r}")
+            cited = f"{src_.publisher}: {src_.snippet!r}"
             if st in ("verified", "verified_via_archive", "could_not_verify_paywall"):
-                con.print(f"  [green]{st}[/] {cited}")
+                con.print(f"  [green]{st}[/] {escape(cited)}")
             elif st in ("normalized_match", "pdf_normalized_match"):
-                con.print(f"  [yellow]{st}[/] {cited}")
+                con.print(f"  [yellow]{st}[/] {escape(cited)}")
             else:
                 ok = False
-                con.print(f"  [red]{st}[/] {cited}\n"
-                          f"      {escape(src_.verification.reason or '')}")
+                # One run with the reason, which can quote the snippet or the page.
+                con.print(f"  [red]{st}[/] "
+                          + escape(f"{cited}\n      {src_.verification.reason or ''}"))
         for src_ in claim.sources:
             if secondary_host(src_, rules) and not (src_.secondary_host_ack or "").strip():
                 ok = False
-                con.print(f"  [red]secondary host[/] {domain(src_.url)} is not the authority "
-                          f"that issues this record\n"
+                con.print(f"  [red]secondary host[/] {escape(domain(src_.url))} is not the "
+                          f"authority that issues this record\n"
                           f"      Cite the issuing authority's own copy. If you genuinely "
                           f"cannot reach it, set `secondary_host_ack` saying what you could "
                           f"not reach and why this copy is the same document — but never "
@@ -2021,13 +2044,14 @@ def new_candidate(candidate: str, data: Path = DATA, race: str = "",
                     q["text"] = q["text"].replace(other.name, c.name)
             q["subject"] = c.id
         dest_q.write_text(json.dumps(qs, indent=1))
-        con.print(f"[green]wrote[/] {dest_q} ({len(qs)} questions retargeted to {c.name})")
+        con.print("[green]wrote[/] "
+                  + escape(f"{dest_q} ({len(qs)} questions retargeted to {c.name})"))
     elif dest_q.exists():
-        con.print(f"{dest_q} already exists — left alone")
+        con.print(f"{escape(str(dest_q))} already exists — left alone")
 
-    con.print(f"[green]ready[/] {root}\n"
-              f"  uv run vg verify --data {root}\n"
-              f"  uv run vg build  --data {root} --candidate {c.id}")
+    con.print("[green]ready[/] " + escape(f"{root}\n"
+                                          f"  uv run vg verify --data {root}\n"
+                                          f"  uv run vg build  --data {root} --candidate {c.id}"))
 
 
 @app.command()
@@ -2052,15 +2076,15 @@ def status(data: Path = DATA, cache: Path = None, race: str = ""):
     try:
         rules = load_rules(tuple(load_race(race or None).sources))
     except (FileNotFoundError, ValueError) as e:
-        con.print(f"[yellow]{e} — checking against the `us` source list only, which can pass "
-                  f"rows `vg build --race` rejects[/]")
+        con.print(f"[yellow]{escape(str(e))} — checking against the `us` source list only, "
+                  f"which can pass rows `vg build --race` rejects[/]")
         rules = load_rules(("us",))
     cache_root = _verdict_cache_root(data, cache)
     _settle(claims, data, cache_root, rules, _archive_records(data))
     t = Table("qid", "type", "status", "sources", "corroboration", "conflicts", box=None)
     for c in claims:
         t.add_row(c.question_id, c.claim_type, c.status, str(len(c.sources)),
-                  c.corroboration_note or "-", str(len(c.conflicts)))
+                  Text(c.corroboration_note or "-"), str(len(c.conflicts)))
     con.print(t)
     if failing:
         _left_out(failing, "this summary, as from the review app")
