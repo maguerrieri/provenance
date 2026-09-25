@@ -1023,9 +1023,9 @@ Related traps in the same data:
   stated: leave it out of the sum *and* the count, and name it in the detail. Test for "is a
   number", not "is empty": CAST also reads `N/A` as 0.0 and `1,000` as 1.0. A stated `0` is
   the filer's figure and counts. `amount_sql()` is that test, and every query reads `AMOUNT`
-  through it: `ie_total` (v2) and the three receipt queries (v2). A total sums the stated
+  through it: `ie_total` and the three receipt queries, from their v2. A total sums the stated
   amounts and names what it left out. A rank cannot, because a gift of unknown size could make
-  anyone largest: while any gift to the filer has no amount, `top_contributor` names no
+  anyone largest: while any gift on the schedule it ranks has no amount, `top_contributor` names no
   largest contributor, only the stated leader as a lead to check. `vg calaccess contributions`
   reads amounts the same way. It prints a blank as `blank` and any other unreadable amount as
   filed, and it gives such gifts their own `--top` slots after the ranked ones, since those
@@ -1325,6 +1325,29 @@ So: `contributor_total` can establish an amount and never a rank. Superlatives (
 ("the top five are…") are not verifiable by per-item citations at all. A green row means the
 number reproduces, not that the sentence around it is sound — which is exactly why the
 judgment pass exists.
+
+## A receipt is not a contribution
+
+`RCPT_CD` holds every receipt schedule, not only gifts:
+- monetary contributions (Form 460 schedule A);
+- in-kind items (C);
+- miscellaneous receipts (I), such as a vendor's refund or a bank's interest;
+- Form 401 payments and Form 496 Part 3 reports.
+
+`filer_total` was fixed to default to schedule A after mixing schedules made a total come out
+high. `contributor_total` and `top_contributor` read the same table through the same view, and
+were not fixed with it. So a refund could make a business that gave nothing "the largest
+contributor", and the citation reproduced green. When one query is fixed for what it reads, fix
+the rest with it: search for the table or view (`DEDUPED_RECEIPTS`), not the query's name.
+
+All three now count schedule A unless `form_type` names another schedule (`""` for all of them).
+The two ranking and per-contributor queries name the schedule in their detail. When one misses on
+the schedule asked for but the name or filer has receipts on others, the miss suggests
+`form_type=<schedule>` instead of pointing at the name. It reads those schedules from the raw
+rows: the dedup's collapsed cross-form row keeps only one of its two labels. The default has a
+known gap: a late contribution reported only on Form 496 Part 3, not yet restated on a later
+schedule A, is left out (#66). And `vg calaccess contributions` still lists every schedule
+without saying which (#67).
 
 ## A surname is not a candidate
 
