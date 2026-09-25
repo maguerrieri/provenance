@@ -17,6 +17,7 @@ same self-certification problem `verification` has elsewhere.
 from __future__ import annotations
 
 import datetime
+import json
 import re
 import shlex
 from dataclasses import dataclass, field
@@ -427,8 +428,6 @@ def _pending_late(con: Any, filer_id: str) -> list[dict[str, Any]]:
     counts once. One on both under different bases counts twice, which only makes a refusal
     likelier.
     """
-    from . import calaccess
-
     tables = {r[0] for r in con.execute("SELECT name FROM main.sqlite_master WHERE type = 'table'")}
     parts = [f"""
         SELECT r.FILING_ID AS filing_id, {tran_base_sql("r.TRAN_ID")} AS tbase,
@@ -661,11 +660,11 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
     late = _late_reports(con, filer_id, form_type, contributor, contributor_first, who, who_args)
     args: list[Any] = [str(filer_id)] + who_args + schedule_args
     inner = DEDUPED_RECEIPTS.format(extra=who + schedule)
-    # One pass for the sum, both counts and the filings: the dedup is the expensive part. The
-    # first names are read below, and only without contributor_first, since a late giver
-    # counts among them.
+    # One pass: the dedup is the expensive part, and the first-name count needs it too. The
+    # names come back whole, not counted, since a late giver may add to them (below).
     row = con.execute(f"""
         SELECT SUM(d.AMT) amt, COUNT(d.AMT) n, COUNT(*) gifts,
+               json_group_array(DISTINCT UPPER(TRIM(COALESCE(d.CTRIB_NAMF,'')))) firsts,
                GROUP_CONCAT(DISTINCT CASE WHEN d.AMT IS NOT NULL THEN d.FILING_IDS END) ids
         FROM ({inner}) d
     """, args).fetchone()
@@ -692,9 +691,7 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
                            detail=f"0 itemized {label} gift(s){note}")
 
     if not contributor_first:
-        firsts = [r[0] for r in con.execute(f"""
-            SELECT DISTINCT UPPER(TRIM(COALESCE(d.CTRIB_NAMF,''))) FROM ({inner}) d
-        """, args)]
+        firsts = json.loads(row["firsts"])
         # A late giver counts too, when their name could be nobody's here: a surname shared
         # with another giver is ambiguous whichever form that giver is on, and the detail would
         # otherwise put their gift under it. One name filed another way is still one giver.
