@@ -482,19 +482,17 @@ def test_a_share_with_no_readable_amount_comes_first(tmp_path):
            "out (open" in queries.share_text(both)
 
 
-def test_a_ranking_with_nothing_counted_says_its_left_out_gift_has_no_amount(tmp_path):
-    """With no counted gift at all, the ranking is a miss, and its only match is the left-out
-    gift with no amount. Not "NO MATCH", which reads as no gifts, nor "every match with a
-    readable amount", which reads as there being one."""
+def test_a_ranking_with_nothing_counted_is_a_miss_whatever_its_blank_gift_holds(tmp_path):
+    """With no counted gift, the only match is the left-out gift with no amount. Kept by the
+    amendment, it names no largest contributor; withdrawn, nothing is counted. Either way the
+    ranking names nobody, so the filing is not one a person need open, and the miss stays one
+    to retry rather than going to human_review."""
     root = _blank_export(tmp_path, settled=False)
     result = queries.run("calaccess.top_contributor", {"filer_id": BLANK_FILER}, root)
-    assert not result.found and unread(result.omitted) == [(BLANK_GAP, "A", 0.0, 0, 1)]
-    assert "NO MATCH" not in result.note and "readable amount is on" not in result.note
-    assert ("every match is on a schedule a later amendment left out, with no readable amount"
-            in result.note)
+    assert not result.found and result.omitted == [] and not result.unsettled
     v = verify_source(cited("calaccess.top_contributor", {"filer_id": BLANK_FILER},
                             "Tamsin Oyelaran"), root).verification
-    assert v.status == "human_review" and BLANK_GAP in v.reason
+    assert v.status == "snippet_not_found"
 
 
 def test_a_left_out_miss_still_names_the_schedules_that_count_the_gift(root):
