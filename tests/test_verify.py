@@ -2216,6 +2216,7 @@ def test_top_contributor_does_not_merge_donors_by_surname(tmp_path):
     with zipfile.ZipFile(tmp_path / "cache" / "calaccess" / "dbwebexport.zip", "w") as zf:
         zf.writestr("CalAccess/DATA/RCPT_CD.TSV", receipts)
         zf.writestr("CalAccess/DATA/FILER_FILINGS_CD.TSV", filings)
+        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", "FILING_ID\tAMEND_ID\n")
     calaccess.build(tmp_path)
 
     got = queries.run("calaccess.top_contributor", {"filer_id": "7"}, tmp_path)
@@ -2294,6 +2295,7 @@ def test_one_gift_reported_on_two_forms_counts_once(tmp_path):
     with zipfile.ZipFile(tmp_path / "cache" / "calaccess" / "dbwebexport.zip", "w") as zf:
         zf.writestr("CalAccess/DATA/RCPT_CD.TSV", receipts)
         zf.writestr("CalAccess/DATA/FILER_FILINGS_CD.TSV", filings)
+        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", "FILING_ID\tAMEND_ID\n")
     calaccess.build(tmp_path)
 
     got = queries.run("calaccess.contributor_total",
@@ -2329,6 +2331,7 @@ def test_an_individual_donor_needs_a_first_name(tmp_path):
     with zipfile.ZipFile(tmp_path / "cache" / "calaccess" / "dbwebexport.zip", "w") as zf:
         zf.writestr("CalAccess/DATA/RCPT_CD.TSV", receipts)
         zf.writestr("CalAccess/DATA/FILER_FILINGS_CD.TSV", filings)
+        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", "FILING_ID\tAMEND_ID\n")
     calaccess.build(tmp_path)
 
     merged = queries.run("calaccess.contributor_total",
@@ -2415,6 +2418,7 @@ def test_top_contributor_reports_a_tie_instead_of_picking_one(tmp_path):
     with zipfile.ZipFile(tmp_path / "cache" / "calaccess" / "dbwebexport.zip", "w") as zf:
         zf.writestr("CalAccess/DATA/RCPT_CD.TSV", receipts)
         zf.writestr("CalAccess/DATA/FILER_FILINGS_CD.TSV", filings)
+        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", "FILING_ID\tAMEND_ID\n")
     calaccess.build(tmp_path)
 
     got = queries.run("calaccess.top_contributor", {"filer_id": "7"}, tmp_path)
@@ -3120,7 +3124,7 @@ def test_calaccess_commands_share_the_cache_root_with_queries(tmp_path, monkeypa
     from vgpipe import queries
     monkeypatch.setattr(queries, "run", lambda name, params, r: seen.append(r)
                         or SimpleNamespace(found=True, value=1, note="", version=1,
-                                           export_date=""))
+                                           export_date="", unsettled=""))
 
     def every_command(**kw):
         cli.calaccess_build(data=cand, **kw)
@@ -6474,19 +6478,20 @@ _NOT_A_DEFINITION = {
                          "EXPORT_META", "EXPORT_URL", "_UNUSABLE", "_export_date",
                          "_read_export_info", "citable_snapshot", "committee_url",
                          "contributions_to", "db_path", "export_info", "filing_url",
-                         "find_filers", "independent_expenditures", "shown_date", "unusable",
-                         "zip_path"},
+                         "find_filers", "independent_expenditures", "shown_date", "Unrestated",
+                         "unusable", "zip_path"},
 }
 
 
 # name -> (version, fingerprint). See test_a_query_definition_cannot_change_unnoticed.
 QUERY_DEFINITIONS = {
-    "calaccess.contributor_total": (3, "1c3f9363e3c7"),
-    "calaccess.filer_total": (2, "bf8b0264379e"),
-    "calaccess.top_contributor": (3, "dd81012ee38f"),
+    "calaccess.contributor_total": (4, "6163fbcee90f"),
+    "calaccess.filer_total": (3, "108f79e09e48"),
+    "calaccess.top_contributor": (4, "c6606d26d9f9"),
     # moved without a bump: amount_sql() is ie_total's own amount expression, extracted
-    # unchanged, and DEDUPED_RECEIPTS, which it does not read, changed beside it
-    "calaccess.ie_total": (2, "dc70b31ada75"),
+    # unchanged, and DEDUPED_RECEIPTS, which it does not read, changed beside it; then the
+    # unsettled-amendment flag and its shared helpers, which change no value it returns
+    "calaccess.ie_total": (2, "d7800dd09682"),
 }
 
 

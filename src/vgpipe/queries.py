@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 import shlex
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, NamedTuple
 
@@ -149,6 +149,8 @@ DEDUPED_RECEIPTS = f"""
            -- becomes uncitable. The EARLIEST filing is the one the gift was first reported on.
            MIN(CAST(x.FILING_ID AS INTEGER)) AS FILING_ID,
            COUNT(DISTINCT x.FILING_ID) AS FILINGS,
+           -- every filing the gift came from, so one whose latest amendment dropped it is found
+           GROUP_CONCAT(DISTINCT x.FILING_ID) AS FILING_IDS,
            MAX(x.CTRIB_EMP) AS CTRIB_EMP, MAX(x.CTRIB_OCC) AS CTRIB_OCC,
            MAX(x.FORM_TYPE) AS FORM_TYPE
     FROM (SELECT r.*, CASE WHEN INSTR(r.TRAN_ID, '-') > 0
@@ -178,6 +180,20 @@ def _no_rows(detail: str, suggestions: list[str] | None = None) -> "QueryResult"
                        suggestions=suggestions or [])
 
 
+def _receipt_shares(con, inner: str, args: list) -> list:
+    """The filings among a receipts figure's gifts whose latest amendment has no receipt rows
+    (`calaccess.Unrestated`), with what each accounts for. `inner` is the figure's
+    DEDUPED_RECEIPTS, run with the same `args`. Only the gifts the figure counts: one with no
+    readable amount is left out of it (`amount_sql()`), so its filing has no share in it."""
+    from . import calaccess
+
+    return calaccess.unrestated_shares(con, "RCPT_CD", [
+        ([f for f in (r["ids"] or "").split(",") if f], float(r["amt"]), int(r["n"]))
+        for r in con.execute(f"""
+            SELECT d.FILING_IDS ids, SUM(d.AMT) amt, COUNT(*) n
+            FROM ({inner}) d WHERE d.AMT IS NOT NULL GROUP BY d.FILING_IDS""", args)])
+
+
 @dataclass
 class QueryResult:
     value: Any
@@ -189,6 +205,9 @@ class QueryResult:
     # export (see `Query.version` and `export_date()`).
     version: int = 0
     export_date: str = ""
+    # Filings the value counts rows from although their latest amendment has none
+    # (`calaccess.Unrestated`), with what each accounts for. A value with any is not verified.
+    unrestated: list = field(default_factory=list)
 
     @property
     def note(self) -> str:
@@ -197,7 +216,27 @@ class QueryResult:
             n += " — NO MATCH. Did you mean: " + "; ".join(self.suggestions[:4])
         elif not self.found:
             n += " — NO MATCH for that name"
+        if self.unrestated:
+            n += (" — AMENDMENT UNSETTLED in filing(s) "
+                  + ", ".join(u.filing_id for u in self.unrestated))
         return n
+
+    @property
+    def unsettled(self) -> str:
+        """Why this value cannot verify as it stands, or "".
+
+        A filing's latest amendment can carry a cover and no rows in a table, and the rows the
+        value counts are then an earlier amendment's. That amendment either withdrew them or
+        did not restate that schedule, and the export cannot say which, so a value counting
+        one goes to a person with each filing to open. A note alone would still render green.
+        """
+        if not self.unrestated:
+            return ""
+        each = "; ".join(f"{u.describe()}: ${u.amount:,.2f} in {u.rows} row(s) counted here "
+                         f"(open {u.cite_url})" for u in self.unrestated)
+        return (f"it counts rows a later amendment may have withdrawn, and the export cannot "
+                f"say whether it did. {each}. If a latest amendment removed its rows, this "
+                f"value is wrong; if it only left that schedule unchanged, the value stands.")
 
 
 def _other_schedules(con: Any, filer_id: str, form_type: str, who: str = "",
@@ -243,7 +282,7 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
         # naming none.
         raise ValueError(f"form_type must be a schedule code, or '' for every schedule, "
                          f"not {form_type!r}")
-    con = calaccess.connect(root)
+    con = calaccess.connect_citable(root)
     who = " AND UPPER(TRIM(r.CTRIB_NAML)) = UPPER(TRIM(?))"
     who_args: list[Any] = [contributor]
     if contributor_first:
@@ -282,9 +321,9 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
         con.close()
         return QueryResult(value=None, rows=0, found=False, suggestions=near, detail=detail)
 
-    con.close()
     if not contributor_first and people > 1:
         # Summing several people under one surname is how a nonexistent contributor appeared.
+        con.close()
         return QueryResult(value=None, rows=gifts, found=False,
                            detail=f"{gifts} itemized {label} gift(s) across {people} DIFFERENT "
                                   "first names — this is not one contributor; pass "
@@ -292,9 +331,12 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
     left_out = _unread(gifts - n)
     if n == 0:
         # The name matched, but no gift states an amount: unknown money, never "$0.00".
+        con.close()
         return _no_rows(f"0 itemized {label} gift(s) counted{left_out}")
+    unrestated = _receipt_shares(con, inner, args)
+    con.close()
     return QueryResult(value=float(row["amt"]), rows=n,
-                       detail=f"{n} itemized {label} gift(s){left_out}")
+                       detail=f"{n} itemized {label} gift(s){left_out}", unrestated=unrestated)
 
 
 def _filer_total(root: Path, *, filer_id: str, form_type: str = "A") -> QueryResult:
@@ -306,20 +348,23 @@ def _filer_total(root: Path, *, filer_id: str, form_type: str = "A") -> QueryRes
     """
     from . import calaccess
 
-    con = calaccess.connect(root)
+    con = calaccess.connect_citable(root)
     extra = " AND UPPER(TRIM(r.FORM_TYPE)) = UPPER(TRIM(?))" if form_type else ""
     inner = DEDUPED_RECEIPTS.format(extra=extra)
     args: list[Any] = [str(filer_id)] + ([form_type] if form_type else [])
     row = con.execute(f"SELECT SUM(d.AMT) amt, COUNT(d.AMT) n, COUNT(*) gifts FROM ({inner}) d",
                       args).fetchone()
-    con.close()
     n, gifts = int(row["n"] or 0), int(row["gifts"] or 0)
     left_out = _unread(gifts - n)
     if n == 0:
+        con.close()
         return _no_rows(f"no schedule-{form_type} contributions"
                         + (" counted" if left_out else "") + f" for filer {filer_id}{left_out}")
+    unrestated = _receipt_shares(con, inner, args)
+    con.close()
     return QueryResult(value=float(row["amt"]), rows=n,
-                       detail=f"{n} itemized schedule-{form_type} gift(s){left_out}")
+                       detail=f"{n} itemized schedule-{form_type} gift(s){left_out}",
+                       unrestated=unrestated)
 
 
 def _top_contributor(root: Path, *, filer_id: str, form_type: str = "A") -> QueryResult:
@@ -339,10 +384,11 @@ def _top_contributor(root: Path, *, filer_id: str, form_type: str = "A") -> Quer
     if form_type != form_type.strip():
         raise ValueError(f"form_type must be a schedule code, or '' for every schedule, "
                          f"not {form_type!r}")
-    con = calaccess.connect(root)
+    con = calaccess.connect_citable(root)
     schedule = " AND UPPER(TRIM(r.FORM_TYPE)) = UPPER(TRIM(?))" if form_type else ""
     label = f"schedule-{form_type}" if form_type else "every-schedule"
     inner = DEDUPED_RECEIPTS.format(extra=schedule)
+    args: list[Any] = [str(filer_id)] + ([form_type] if form_type else [])
     # Only gifts with an amount are ranked: read as 0.0, a contributor whose gifts all had blank
     # amounts tied one whose stated total was $0. The rest are counted, by a window over every
     # contributor taken before the LIMIT, so the dedup runs once. A contributor with no readable
@@ -353,10 +399,13 @@ def _top_contributor(root: Path, *, filer_id: str, form_type: str = "A") -> Quer
         FROM ({inner}) d
         GROUP BY UPPER(TRIM(d.CTRIB_NAML)), UPPER(TRIM(COALESCE(d.CTRIB_NAMF,'')))
         ORDER BY amt DESC LIMIT 4
-    """, [str(filer_id)] + ([form_type] if form_type else [])).fetchall()
+    """, args).fetchall()
     unread = int(rows[0]["unread"] or 0) if rows else 0
     rows = [r for r in rows if r["amt"] is not None]
     row = rows[0] if rows else None
+    # Every gift, not only the top contributor's: the ranking is made of all of them, and a
+    # gift a later amendment dropped can put someone at the top, or keep someone off it.
+    unrestated = _receipt_shares(con, inner, args) if row is not None else []
     if row is None:
         # A slate mailer's receipts are all on Form 401: "no schedule-A contributions" alone
         # read as a committee that received nothing.
@@ -385,9 +434,11 @@ def _top_contributor(root: Path, *, filer_id: str, form_type: str = "A") -> Quer
         # rejected a "largest contributor" that was really a two-way tie. Return the tie.
         return QueryResult(value=" | ".join(sorted(names)), rows=len(tied),
                            detail=f"{len(tied)}-WAY TIE at ${top:,.0f} in {label} gifts — not "
-                                  "a single largest contributor; do not word this as one")
+                                  "a single largest contributor; do not word this as one",
+                           unrestated=unrestated)
     return QueryResult(value=names[0], rows=int(row["n"] or 0),
-                       detail=f"${top:,.0f} across {row['n']} {label} gift(s)")
+                       detail=f"${top:,.0f} across {row['n']} {label} gift(s)",
+                       unrestated=unrestated)
 
 
 def _ie_total(root: Path, *, candidate_last: str, first: str = "", stance: str = "",
@@ -413,12 +464,9 @@ def _ie_total(root: Path, *, candidate_last: str, first: str = "", stance: str =
             "ie_total needs `first`: a surname alone mixes candidates (in testing it returned "
             "22x the real figure, mostly a different person). Pass the first name.")
 
-    con = calaccess.connect(root)
-    if not calaccess.covers_by_amendment(con):
-        # A total that renders green is a finding. Here that total can include money a later
-        # amendment gave to another candidate, so refuse rather than let it reproduce.
-        con.close()
-        raise calaccess.DegradedDatabase(calaccess.COVER_FALLBACK)
+    # Refuses a database whose covers carry no amendment ids: this total could include money a
+    # later amendment gave to another candidate.
+    con = calaccess.connect_citable(root)
     match = name_match_sql("c.CAND_NAML", "c.CAND_NAMF", first)
     args: list[Any] = name_args(candidate_last, first)
     if stance:
@@ -435,14 +483,17 @@ def _ie_total(root: Path, *, candidate_last: str, first: str = "", stance: str =
     # sum AND the count, and named in the detail. The real export has 33 blanks and nothing
     # else unreadable.
     amount = amount_sql("s.AMOUNT")
+    matched = f"""
+        SELECT fid, amt, {dated} AS dated, {inside} AS inside
+        FROM (SELECT s.FILING_ID fid, {amount} amt, {iso_date_sql("s.EXP_DATE")} d
+              FROM S496_LATEST s JOIN CVR_LATEST c ON c.FILING_ID = s.FILING_ID
+              WHERE {match})
+    """
     row = con.execute(f"""
         SELECT SUM(CASE WHEN inside THEN amt END) amt, SUM(inside AND amt IS NOT NULL) n,
                SUM(inside AND amt IS NULL) unread_n,
                SUM(NOT dated) undated_n, SUM(CASE WHEN NOT dated THEN amt END) undated_amt
-        FROM (SELECT amt, {dated} AS dated, {inside} AS inside
-              FROM (SELECT {amount} amt, {iso_date_sql("s.EXP_DATE")} d
-                    FROM S496_LATEST s JOIN CVR_LATEST c ON c.FILING_ID = s.FILING_ID
-                    WHERE {match}))
+        FROM ({matched})
     """, window_args + args).fetchone()
     n = int(row["n"] or 0)
     span = f"{since or '...'}..{until or '...'}"
@@ -472,8 +523,15 @@ def _ie_total(root: Path, *, candidate_last: str, first: str = "", stance: str =
         return _no_rows(f"no {stance or 'any'}-stance expenditures"
                         + (" counted" if left_out else "")
                         + (f" in {span}" if window else "") + left_out, near)
+    # Only the rows the total counts: one left out of the window, or with no readable amount,
+    # has no share in it.
+    unrestated = calaccess.unrestated_shares(con, "S496_CD", [
+        ([r["fid"]], float(r["amt"]), int(r["n"])) for r in con.execute(f"""
+            SELECT fid, SUM(amt) amt, COUNT(*) n FROM ({matched})
+            WHERE inside AND amt IS NOT NULL GROUP BY fid
+        """, window_args + args)])
     con.close()
-    return QueryResult(value=float(row["amt"] or 0), rows=n,
+    return QueryResult(value=float(row["amt"] or 0), rows=n, unrestated=unrestated,
                        detail=f"{n} expenditure(s)"
                               + (f", {span}{left_out}" if window else
                                  f"{left_out} — NO DATE FILTER, may span multiple races"))
@@ -512,17 +570,21 @@ REGISTRY: dict[str, Query] = {
     # the count and named (`amount_sql()`), where v1 read it as $0.00 -- or, for "1,000", $1.
     # v3 of contributor_total and top_contributor: schedule A only by default, as filer_total
     # already was. v2 summed every receipt schedule, refunds and interest included.
+    # v4 of those two and v3 of filer_total: each refuses a database whose covers carry no
+    # amendment ids (connect_citable), which the earlier versions answered from. ie_total
+    # already refused one, so its value and its refusals are unchanged, and it stays at v2. The
+    # unrestated flag every query now carries changes no value: verification acts on it.
     "calaccess.contributor_total": Query(
         _contributor_total, ("filer_id", "contributor"),
         "contributions from one contributor (add contributor_first for an individual; "
-        "schedule A unless form_type says otherwise)", 3),
+        "schedule A unless form_type says otherwise)", 4),
     "calaccess.filer_total": Query(
         _filer_total, ("filer_id",),
-        "total itemized contributions received by a filer", 2),
+        "total itemized contributions received by a filer", 3),
     "calaccess.top_contributor": Query(
         _top_contributor, ("filer_id",),
         "the largest contributor to a filer, by itemized total (schedule A unless form_type "
-        "says otherwise)", 3),
+        "says otherwise)", 4),
     "calaccess.ie_total": Query(
         _ie_total, ("candidate_last", "first"),
         "late independent expenditures naming a candidate; pass stance and since/until", 2),

@@ -41,6 +41,8 @@ def _receipts(tmp_path):
     with zipfile.ZipFile(tmp_path / "cache" / "calaccess" / "dbwebexport.zip", "w") as zf:
         zf.writestr("CalAccess/DATA/RCPT_CD.TSV", receipts)
         zf.writestr("CalAccess/DATA/FILER_FILINGS_CD.TSV", filings)
+        # an empty cover table: every citable query refuses a database without one
+        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", "FILING_ID\tAMEND_ID\n")
     calaccess.build(tmp_path)
     return tmp_path
 
@@ -239,7 +241,8 @@ def test_the_contributions_listing_never_prints_an_unreadable_amount_as_zero(
     assert listed.split()[0] == (unread.strip() or "blank")
 
 
-def test_the_listing_bounds_and_sanitizes_what_it_shows_for_unreadable_amounts(tmp_path, capsys):
+def test_the_listing_bounds_and_sanitizes_what_it_shows_for_unreadable_amounts(tmp_path, capsys,
+                                                                                monkeypatch):
     """Unreadable gifts get their own --top slots, not unlimited ones, and the footer says when
     there may be more. What was filed is filer text: a control character in it would act on
     the terminal before anything is shown, so it is made visible, and it is cut to fit."""
@@ -258,6 +261,7 @@ def test_the_listing_bounds_and_sanitizes_what_it_shows_for_unreadable_amounts(t
     out = plain(capsys.readouterr().out)
     assert "The last 1 have no readable amount" in out and "raise --top" in out
 
+    monkeypatch.setattr(cli.con, "_width", 200)     # room for the "latest amendment" column too
     cli.calaccess_contributions(MIXED, data=root, top=5)
     out = capsys.readouterr().out
     assert "\x1b[2J" not in out, "the filed escape sequence reached the terminal"
