@@ -76,7 +76,7 @@ def _load_or_exit(claims_dir: Path, **kw) -> list[Claim]:
     try:
         return load_claims(claims_dir, **kw)
     except ValueError as e:
-        con.print(f"[red]{escape(str(e))}[/]")
+        con.print(f"[red]{escape(_printable(str(e)))}[/]")
         raise typer.Exit(1) from None
 
 
@@ -92,7 +92,7 @@ def _judgments_or_exit():
     except UnreadableJudgments as e:
         # Escaped: the message quotes the file's own text, and rich reads "[/]" in a verdict as
         # markup — crashing the refusal into a traceback, or silently eating "[supports]".
-        con.print(f"[red]{escape(str(e))}[/]")
+        con.print(f"[red]{escape(_printable(str(e)))}[/]")
         raise typer.Exit(1) from None
 
 DATA = Path("data")
@@ -158,7 +158,7 @@ def _archive_records(data: Path) -> dict[str, dict]:
     try:
         return arch.load_records(data)
     except ValueError as e:
-        con.print(f"[red]{escape(str(e))}[/]")
+        con.print(f"[red]{escape(_printable(str(e)))}[/]")
         raise typer.Exit(1) from None
 
 
@@ -230,7 +230,9 @@ def _aliased_shards(data: Path, every: dict, claims: list[Claim]) -> dict[str, s
 
 
 def _shard_names(stems) -> str:
-    return ", ".join(f"{q}.json" for q in sorted(stems, key=qid_sort_key))
+    """Shard file names, for a message. Through `_printable()`: they come from listing
+    judgments/, not from the schema, so a name can hold anything a file name can."""
+    return _printable(", ".join(f"{q}.json" for q in sorted(stems, key=qid_sort_key)))
 
 
 def load_claims(claims_dir: Path, *, trust_machine_fields: bool = False,
@@ -270,9 +272,11 @@ def load_claims(claims_dir: Path, *, trust_machine_fields: bool = False,
                 # Through _printable() here, so every later print of `skipped` is safe too:
                 # json.loads keeps a lone surrogate, and printing one raises.
                 qid = _printable(str(named or p.stem)[:64]) or "unreadable"
-                # Escaped: the id and pydantic's echo of the input are agent-authored text.
+                # Escaped: the id and pydantic's echo of the input are agent-authored text, and
+                # so is a dict key in the field path it names. Line by line: its message has
+                # line breaks of its own.
                 con.print(f"[yellow]skipping {escape(f'{qid} in {_printable(p.name)}')}:[/] "
-                          f"{escape(str(e))}")
+                          f"{escape(_printable(str(e), lines=True))}")
                 skipped.append(qid)
                 continue
             key = claim.question_id.casefold()
@@ -334,15 +338,15 @@ def fetch(url: str, data: Path = DATA, cache: Path = None, refresh: bool = False
     # Nothing from the page is printed as markup: Rich reads "[[page 1]]" as a tag and prints
     # "[]", and drops "[sic]" — so the page breaks a researcher must cite by were invisible,
     # and a snippet copied from here would not be on the page.
-    con.print(f"[bold]{p.status}[/] {escape(p.final_url)}")
-    con.print(f"title: {escape(str(p.title))}  pdf: {p.is_pdf}  "
+    con.print(f"[bold]{p.status}[/] {escape(_printable(p.final_url))}")
+    con.print(f"title: {escape(_printable(str(p.title)))}  pdf: {p.is_pdf}  "
               f"paywall: {p.paywall_suspected}  chars: {len(p.text)}")
     if p.error:
-        con.print(f"[red]error:[/] {escape(p.error)}")
+        con.print(f"[red]error:[/] {escape(_printable(p.error))}")
     # A kept page carries its OLD status and text, so without this line a failed
     # `vg fetch --refresh` prints exactly like a successful one.
     if kept := kept_copy_note(p):
-        con.print(f"[red]{escape(kept)}[/]")
+        con.print(f"[red]{escape(_printable(kept))}[/]")
     # Its markers print below like text, so a scan otherwise reads as an ordinary page.
     if no_text_layer(p):
         con.print(f"[yellow]{escape(NO_TEXT_LAYER)}[/]")
@@ -351,9 +355,9 @@ def fetch(url: str, data: Path = DATA, cache: Path = None, refresh: bool = False
         con.print(f"[yellow]no text layer on {escape(page_list(blank))} "
                   "(scanned or blank) — a quote there needs `page` set to it[/]")
     # As Text, like a query value: a plain string wraps at 80 columns in an agent's shell,
-    # putting line breaks in a snippet.
+    # putting line breaks in a snippet. Line by line, as a researcher copies from it.
     if p.text:
-        con.print(Text(p.text[:1200]), soft_wrap=True)
+        con.print(Text(_printable(p.text[:1200], lines=True)), soft_wrap=True)
     else:
         con.print("[dim](no text)[/]")
 
@@ -370,14 +374,14 @@ def check(url: str, snippet: str, data: Path = DATA, cache: Path = None, refresh
     needs the whole citation, so only `vg check-claim` checks that. Exits non-zero on a
     failure."""
     if problem := snippet_problem(snippet):
-        con.print(f"[red]{problem[0]}: {escape(problem[1])}[/]")
+        con.print(f"[red]{problem[0]}: {escape(_printable(problem[1]))}[/]")
         raise typer.Exit(1)
     data = _cache_root(data, cache)
     p = fetch_url(url, data, refresh=refresh)
     # Before the verdict: on a page kept under an older extraction, a miss may be the
     # extraction, and a researcher told only "not found" drops or swaps a real citation.
     if kept := kept_copy_note(p):
-        con.print(f"[yellow]{escape(kept)}[/]")
+        con.print(f"[yellow]{escape(_printable(kept))}[/]")
     found = check_snippet(snippet, p, pdf_page=page)
     if found.match_count is not None:
         con.print(f"matches: [bold]{found.match_count}[/] ({found.mode or 'none'})")
@@ -388,9 +392,9 @@ def check(url: str, snippet: str, data: Path = DATA, cache: Path = None, refresh
     elif found.status in ("could_not_verify_paywall", "human_review"):
         # Flagged, not failed — a paywall, or a scan with no text layer. "Do not cite this"
         # about either sends the researcher off to substitute a copy they can read.
-        con.print(f"[yellow]{found.status}: {escape(found.reason)}[/]")
+        con.print(f"[yellow]{found.status}: {escape(_printable(found.reason))}[/]")
     else:
-        con.print(f"[red]{found.status}: {escape(found.reason)}[/]")
+        con.print(f"[red]{found.status}: {escape(_printable(found.reason))}[/]")
         raise typer.Exit(1)
 
 
@@ -399,8 +403,8 @@ def races():
     """List available races."""
     for name in available_races():
         r = load_race(name)
-        con.print(f"[bold]{escape(name)}[/]  "
-                  + escape(f"{r.title}  sources: {', '.join(r.sources)}"))
+        con.print(f"[bold]{escape(_printable(name))}[/]  "
+                  + escape(_printable(f"{r.title}  sources: {', '.join(r.sources)}")))
 
 
 @app.command()
@@ -414,7 +418,7 @@ def verify(data: Path = DATA, cache: Path = None, refresh: bool = False, qid: st
     claims = [c for c in _load_or_exit(claims_dir)   # never trust: this run decides status
               if not qid or c.question_id == qid]
     if not claims:
-        con.print("[yellow]No claims found in[/] " + escape(str(claims_dir)))
+        con.print("[yellow]No claims found in[/] " + escape(_printable(str(claims_dir))))
         raise typer.Exit(1)
     from . import judgments
 
@@ -448,8 +452,8 @@ def verify(data: Path = DATA, cache: Path = None, refresh: bool = False, qid: st
                 color = "cyan"
             else:
                 color = "red"
-            t.add_row(c.question_id, f"[{color}]{st}[/]", escape(s.publisher),
-                      escape((s.verification.reason or "")[:70]))
+            t.add_row(c.question_id, f"[{color}]{st}[/]", escape(_printable(s.publisher)),
+                      escape(_printable((s.verification.reason or "")[:70])))
         # Checked after this run's fetches, not before: a --refresh or an extractor re-fetch
         # is exactly what makes a verdict stale, and a list from before it would omit those.
         stale_verdicts += [f"{c.question_id}/{s.sid}: {why}" for s, _j, why in
@@ -458,7 +462,7 @@ def verify(data: Path = DATA, cache: Path = None, refresh: bool = False, qid: st
         check_corroboration(c)
         if c.corroboration_ok is False:
             t.add_row(c.question_id, "[red]corroboration[/]", "-",
-                      escape(c.corroboration_note[:70]))
+                      escape(_printable(c.corroboration_note[:70])))
     save_claims(claims, claims_dir)
     con.print(t)
     # The re-check a changed query definition calls for: the figure was just re-run under the
@@ -477,7 +481,7 @@ def _report_stale(stale: list[str]) -> None:
               f"verify`, where the page is missing):[/]")
     for x in stale[:8]:
         # Escaped: a reason can name a snapshot, whose URL embeds the agent-authored one.
-        con.print(f"  {escape(x)}")
+        con.print(f"  {escape(_printable(x))}")
 
 
 def _report_older_exports(claims: list[Claim], cache_root: Path,
@@ -501,7 +505,7 @@ def _report_older_exports(claims: list[Claim], cache_root: Path,
     if older:
         con.print(f"[dim]{len(older)} query verdict(s) were formed against an older CAL-ACCESS "
                   f"export. Their figures still reproduce on this one, so they stand; e.g. "
-                  f"{escape(older[0])}[/]")
+                  f"{escape(_printable(older[0]))}[/]")
 
 
 @app.command()
@@ -519,7 +523,8 @@ def archive(data: Path = DATA, cache: Path = None, delay: float = 3.0):
         # This command is what rebuilds the records, so a damaged file must not stop it.
         aside = data / f"{arch.RECORDS}.damaged-{datetime.now(UTC):%Y%m%dT%H%M%SZ}"
         (data / arch.RECORDS).rename(aside)
-        con.print("[yellow]" + escape(f"{e}\n  moved it to {aside}") + "; starting fresh[/]")
+        con.print("[yellow]" + escape(f"{_printable(str(e))}\n  moved it to "
+                                      f"{_printable(str(aside))}") + "; starting fresh[/]")
         records = {}
     # Every cited URL, even one already carrying a snapshot, with one source citing it.
     first = {}
@@ -574,7 +579,7 @@ def archive(data: Path = DATA, cache: Path = None, delay: float = 3.0):
         # what it saved.
         arch.save_records(data, records)
         con.print(f"  {'[green]saved[/]' if snap else '[red]fail[/]'} "
-                  + escape(f"{u} {err or ''}"))
+                  + escape(_printable(f"{u} {err or ''}")))
 
     arch.archive_all(urls, delay=delay, progress=progress)
 
@@ -589,20 +594,20 @@ def archive(data: Path = DATA, cache: Path = None, delay: float = 3.0):
             tally[key] = tally.get(key, 0) + 1
             if s.archive_status in ("archive_unusable", "archive_unconfirmed"):
                 color = "red" if s.archive_status == "archive_unusable" else "yellow"
-                con.print(f"  [{color}]{s.archive_status}[/] "
-                          + escape(f"{c.question_id} {s.publisher}: {s.archive_note or ''}"))
+                con.print(f"  [{color}]{s.archive_status}[/] " + escape(_printable(
+                    f"{c.question_id} {s.publisher}: {s.archive_note or ''}")))
             before = s.verification.status
             verify_against_archive(s, cache_root)
             if s.verification.status == before:
                 continue
             if s.verification.status == "verified_via_archive":
                 upgraded += 1
-                con.print(f"  [green]snippet confirmed in snapshot[/] {escape(c.question_id)} "
-                          f"{escape(s.publisher)}")
+                con.print(f"  [green]snippet confirmed in snapshot[/] "
+                          + escape(_printable(f"{c.question_id} {s.publisher}")))
             else:
                 # It was verified_via_archive against a snapshot this run replaced.
                 con.print(f"  [yellow]snapshot no longer confirms the snippet[/] "
-                          f"{escape(c.question_id)} {escape(s.publisher)}")
+                          + escape(_printable(f"{c.question_id} {s.publisher}")))
     save_claims(claims, claims_dir)
     con.print("sources: " + ", ".join(f"{n} {k}" for k, n in sorted(tally.items())))
     if upgraded:
@@ -630,7 +635,7 @@ def _report_rearchived_verdicts(claims: list[Claim], data: Path, cache_root: Pat
     except judgments.UnreadableJudgments as e:
         # The archive itself is done and written; an unreadable shard is every reader's to stop on.
         con.print(f"[yellow]could not check verdicts against the new snapshots: "
-                  f"{escape(str(e))}[/]")
+                  f"{escape(_printable(str(e)))}[/]")
         return
     if stale:
         con.print(f"[yellow]{len(stale)} verdict(s) on archive-verified sources were about a "
@@ -702,20 +707,21 @@ def _question_ids(data: Path, claims: list[Claim]) -> set[str] | None:
 
     path = questions.find(data)
     if path is None:
-        con.print("[yellow]" + escape(f"no {questions.FILE} in {data} or {data.parent}")
+        con.print("[yellow]" + escape(_printable(f"no {questions.FILE} in {data} or "
+                                                 f"{data.parent}"))
                   + ", so no claim was checked against the question its id names[/]")
         return set()
     try:
         found = questions.check(claims, questions.load(path))
     except questions.UnreadableQuestions as e:
-        con.print(f"[red]{escape(str(e))}[/]")   # escaped: it quotes the file's own ids
+        con.print(f"[red]{escape(_printable(str(e)))}[/]")   # escaped: it quotes the file's own ids
         return None
-    where = escape(str(path))
+    where = escape(_printable(str(path)))
     if found.pending:
         pairs = ", ".join(f"{q} from {old}" for q, old in found.pending)
         # Not "never applied": an older remap applied some without retiring them, and the file
         # can't say which.
-        con.print("[yellow]" + escape(f"{path} still declares maps_from ({pairs})")
+        con.print("[yellow]" + escape(_printable(f"{path} still declares maps_from ({pairs})"))
                   + ", a migration for the retired `vg remap`. Nothing applies it now, and no "
                   "claim moves, so each is checked against the question at the id it sits on. "
                   "Delete the key once that is settled.[/]")
@@ -733,11 +739,12 @@ def _question_ids(data: Path, claims: list[Claim]) -> set[str] | None:
         # One run from the path to the path again: "[/" in the first and "]" in the second
         # are one tag to rich, however much plain text sits between them.
         con.print(f"[red]{len(found.unlisted)} claim(s) sit on an id "
-                  + escape(f"{path} does not list: {', '.join(named(q) for q in found.unlisted)}. "
-                           f"If the id was retired, move its claim from claims/ to "
-                           f"claims-archive/ and its shard from judgments/ to judgments-archive/, "
-                           f"and point any derives_from naming it at the new id. If the question "
-                           f"is still asked, add it to {path}")
+                  + escape(_printable(
+                      f"{path} does not list: {', '.join(named(q) for q in found.unlisted)}. "
+                      f"If the id was retired, move its claim from claims/ to "
+                      f"claims-archive/ and its shard from judgments/ to judgments-archive/, "
+                      f"and point any derives_from naming it at the new id. If the question "
+                      f"is still asked, add it to {path}"))
                   + " under that id: a candidate run's own copy is not updated when the template "
                   "gains a question.[/]")
     if found.reworded:
@@ -773,8 +780,8 @@ def build(data: Path = DATA, cache: Path = None, race: str = "", candidate: str 
     try:
         clear_render(data / "out")
     except OSError as e:
-        con.print("[red]" + escape(f"could not clear the previous render from {data / 'out'}: "
-                                   f"{e}")
+        con.print("[red]" + escape(_printable(f"could not clear the previous render from "
+                                              f"{data / 'out'}: {e}"))
                   + ". Remove it by hand: `vg serve` must not show a render this build did not "
                   "produce.[/]")
         raise typer.Exit(1) from None
@@ -816,7 +823,8 @@ def build(data: Path = DATA, cache: Path = None, race: str = "", candidate: str 
                       "or recent verdicts will render as unreviewed[/]")   # verdicts live outside the claim file; merge them in
     _report_older_exports(claims, cache_root, recorded)
     html, js = render(claims, data / "out", title=title, cache_root=cache_root)
-    con.print(f"[green]wrote[/] {escape(str(html))}\n[green]wrote[/] {escape(str(js))}")
+    con.print(f"[green]wrote[/] {escape(_printable(str(html)))}\n"
+              f"[green]wrote[/] {escape(_printable(str(js)))}")
     if failing:
         _left_out(failing, "the review app")
 
@@ -832,13 +840,13 @@ def serve(data: Path = DATA, port: int = 8765, open_browser: bool = True):
     if not (out / "review.html").exists():
         # A build removes the last render before it can refuse, so this is also what a refused
         # build leaves: say so, or the next person runs serve, not build, and never sees why.
-        con.print(f"[red]No review.html in {escape(str(out))}: `vg build` has not rendered one, "
-                  f"is still rendering one, or its last run refused and rendered nothing. Run `vg build` and fix what "
-                  f"it reports.[/]")
+        con.print(f"[red]No review.html in {escape(_printable(str(out)))}: `vg build` has not "
+                  f"rendered one, is still rendering one, or its last run refused and rendered "
+                  f"nothing. Run `vg build` and fix what it reports.[/]")
         raise typer.Exit(1)
     handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(out))
     url = f"http://127.0.0.1:{port}/review.html"
-    con.print(f"Serving {escape(str(out))} at [bold]{url}[/]  (ctrl-C to stop)")
+    con.print(f"Serving {escape(_printable(str(out)))} at [bold]{url}[/]  (ctrl-C to stop)")
     if open_browser:
         webbrowser.open(url)
     http.server.ThreadingHTTPServer(("127.0.0.1", port), handler).serve_forever()
@@ -864,9 +872,9 @@ def calaccess_build(data: Path = DATA, cache: Path = None):
         dbp = calaccess.build(root, progress=lambda t, n, note: con.print(
             f"  {t:32} {n:>9,} rows {note}"))
     except FileNotFoundError as e:
-        con.print(f"[red]{escape(str(e))}[/]")
+        con.print(f"[red]{escape(_printable(str(e)))}[/]")
         raise typer.Exit(1) from None
-    con.print("[green]built[/] " + escape(f"{dbp} ({_export_line(root)})"))
+    con.print("[green]built[/] " + escape(_printable(f"{dbp} ({_export_line(root)})")))
 
 
 def _export_line(root: Path) -> str:
@@ -886,16 +894,18 @@ def calaccess_filer(name: str, data: Path = DATA, cache: Path = None, limit: int
     try:
         rows = calaccess.find_filers(_cache_root(data, cache), name, limit)
     except FileNotFoundError as e:
-        con.print(f"[red]{escape(str(e))}[/]")
+        con.print(f"[red]{escape(_printable(str(e)))}[/]")
         raise typer.Exit(1) from None
     if not rows:
         con.print(f"No filer matching {escape(repr(name))}.")
         return
     t = Table("filer id", "name", "committee page", box=None)
     for r in rows:
-        # Filer text from the export, as Text: rich reads "[/]" in a table cell as markup.
+        # Filer text from the export, as Text: rich reads "[/]" in a table cell as markup. And
+        # through _printable(): the export is latin-1, so a name can carry ESC or a C1 control.
         who = " ".join(x for x in (r.get("first"), r.get("last")) if x)
-        t.add_row(Text(str(r["filer_id"])), Text(who), Text(calaccess.committee_url(r["filer_id"])))
+        t.add_row(Text(_printable(str(r["filer_id"]))), Text(_printable(who)),
+                  Text(_printable(calaccess.committee_url(r["filer_id"]))))
     con.print(t)
 
 
@@ -922,9 +932,11 @@ def calaccess_cite(filer_id: str, filing_id: str = "", data: Path = DATA, cache:
         if snap:
             bad = calaccess.unusable(note)
             con.print(f"[{'red' if bad else 'green'}]{label}[/]: "
-                      + escape(f"{snap}\n  {note}\n  live URL for the human: {url}"))
+                      + escape(f"{_printable(snap)}\n  {_printable(note)}\n"
+                               f"  live URL for the human: {_printable(url)}"))
         else:
-            con.print(f"[yellow]{label}[/]: " + escape(f"{note}\n  live URL: {url}"))
+            con.print(f"[yellow]{label}[/]: "
+                      + escape(f"{_printable(note)}\n  live URL: {_printable(url)}"))
 
 
 @calaccess_app.command("contributions")
@@ -943,20 +955,21 @@ def calaccess_contributions(filer_id: str, data: Path = DATA, cache: Path = None
         # refuses a bad --since before it opens the database
         rows = calaccess.contributions_to(_cache_root(data, cache), filer_id, top=top, since=since)
     except (FileNotFoundError, ValueError) as e:
-        con.print(f"[red]{escape(str(e))}[/]")
+        con.print(f"[red]{escape(_printable(str(e)))}[/]")
         raise typer.Exit(1) from None
     t = Table("amount", "contributor", "employer", "date", "restated", "cite this URL",
               "latest amendment", box=None)
     for c in rows:
         # An amount that did not read is not "$0". A blank says so, and anything else is shown
-        # as filed: as Text, since rich would read "[/]" as markup; a control character made
-        # visible, since it acts on the terminal before anything is shown; and cut to fit.
-        filed = c.amount_filed if c.amount_filed.isprintable() else repr(c.amount_filed)[1:-1]
-        amt = f"${c.amount:,.0f}" if c.amount is not None else (filed[:14] or "blank")
-        t.add_row(Text(amt), Text(c.contributor[:30]),
-                  Text(c.occupation[:18] or c.employer[:18]), Text(c.date),
-                  (f"{c.filings}x" if c.filings > 1 else ""), Text(c.cite_url),
-                  _amendment_cell(c.unrestated, c.omitted))
+        # as filed, cut to fit. Every cell is export text: as Text, since rich would read "[/]"
+        # as markup, and through _printable(), since a control character acts on the terminal
+        # before anything is shown. Cut before it, so no escape is cut in half.
+        amt = (f"${c.amount:,.0f}" if c.amount is not None
+               else (_printable(c.amount_filed[:14]) or "blank"))
+        t.add_row(Text(amt), Text(_printable(c.contributor[:30])),
+                  Text(_printable(c.occupation[:18] or c.employer[:18])),
+                  Text(_printable(c.date)), (f"{c.filings}x" if c.filings > 1 else ""),
+                  Text(_printable(c.cite_url)), _amendment_cell(c.unrestated, c.omitted))
     con.print(t)
     unread = sum(c.amount is None for c in rows)
     con.print(f"\n[yellow]{len(rows)} rows. Cite the filing page, not this table — a row here "
@@ -973,14 +986,14 @@ def _amendment_cell(unrestated, omitted=(), reattributed=None) -> Text:
     no such rows (calaccess.Unrestated), each schedule of it a later amendment left out
     (calaccess.UnrestatedSchedule), and, for an expenditure listed under the candidate its own
     amendment's cover named, who the latest cover names instead (calaccess.Reattributed), or
-    nothing. As Text: filing ids, schedules and names are export text."""
+    nothing. As Text, through `_printable()`: filing ids, schedules and names are export text."""
     cells = ([f"{u.filing_id}: a{u.cover_amend} has none" for u in unrestated or ()]
              + [f"{u.filing_id}: a{u.table_amend} has no schedule {u.schedule or '(blank)'}, "
                 f"not counted" for u in omitted or ()])
     if reattributed:
         cells.append(reattributed.mark() if cells
                      else f"{reattributed.filing_id}: {reattributed.mark()}")
-    return Text("; ".join(cells))
+    return Text(_printable("; ".join(cells)))
 
 
 def _amendment_footer(marks: list, omitted: list = (), reattributed: list | None = None) -> None:
@@ -1032,22 +1045,25 @@ def calaccess_ie(candidate_last: str, data: Path = DATA, cache: Path = None, fir
         rows = calaccess.independent_expenditures(_cache_root(data, cache), candidate_last,
                                                   first=first, top=top, loose=loose)
     except FileNotFoundError as e:
-        con.print(f"[red]{escape(str(e))}[/]")
+        con.print(f"[red]{escape(_printable(str(e)))}[/]")
         raise typer.Exit(1) from None
     t = Table("amount", "stance", "spender", "candidate", "date", "cite this URL",
               "latest amendment", box=None)
     for r in rows:
         # A blank amount is money nobody stated: printed "$0" it read as a stated zero, which
-        # ie_total refuses to report. Anything else that is not a number is shown as filed,
-        # as Text, since it is filer text and rich would read "[/]" as markup.
+        # ie_total refuses to report. Anything else that is not a number is shown as filed.
+        # Every cell is filer text, as in the contributions listing: as Text, since rich would
+        # read "[/]" as markup, and through _printable().
         raw = (r.get("AMOUNT") or "").strip()
         try:
             amt = f"${float(raw):,.0f}" if raw else "blank"
         except ValueError:
-            amt = raw
-        t.add_row(Text(amt), Text(r["stance"]), Text((r.get("FILER_NAML") or "")[:28]),
-                  Text(" ".join(x for x in (r.get("CAND_NAMF"), r.get("CAND_NAML")) if x)[:22]),
-                  Text(r.get("EXP_DATE") or ""), Text(r["cite_url"]),
+            amt = _printable(raw)
+        t.add_row(Text(amt), Text(_printable(r["stance"])),
+                  Text(_printable((r.get("FILER_NAML") or "")[:28])),
+                  Text(_printable(" ".join(x for x in (r.get("CAND_NAMF"), r.get("CAND_NAML"))
+                                           if x)[:22])),
+                  Text(_printable(r.get("EXP_DATE") or "")), Text(_printable(r["cite_url"])),
                   _amendment_cell(r["unrestated"], reattributed=r["reattributed"]))
     con.print(t)
     _amendment_footer([r["unrestated"] for r in rows],
@@ -1061,13 +1077,14 @@ def _unsettled_rest(result) -> None:
 
     for u in (result.unrestated[queries.UNSETTLED_SHOWN:]
               + result.omitted[queries.UNSETTLED_SHOWN:]):
-        con.print(Text(f"  {queries.share_text(u)}", style="yellow"), soft_wrap=True)
+        con.print(Text(_printable(f"  {queries.share_text(u)}"), style="yellow"), soft_wrap=True)
     for u in result.reattributed[queries.UNSETTLED_SHOWN:]:
-        con.print(Text(f"  {queries.left_out_text(u)}", style="yellow"), soft_wrap=True)
+        con.print(Text(_printable(f"  {queries.left_out_text(u)}"), style="yellow"),
+                  soft_wrap=True)
     for r in result.late[queries.LATE_SHOWN:]:
-        con.print(Text(f"  {queries.late_text(r)}", style="yellow"), soft_wrap=True)
+        con.print(Text(_printable(f"  {queries.late_text(r)}"), style="yellow"), soft_wrap=True)
     for line in result.names[queries.LATE_SHOWN:]:
-        con.print(Text(f"  {line}", style="yellow"), soft_wrap=True)
+        con.print(Text(_printable(f"  {line}"), style="yellow"), soft_wrap=True)
 
 
 @app.command(name="query")
@@ -1094,35 +1111,35 @@ def run_query(name: str = typer.Argument(""), param: list[str] = None, data: Pat
         result = queries.run(name, params, root)
     except TypeError as e:
         required = q.required if (q := queries.REGISTRY.get(name)) else ()
-        con.print(f"[red]{escape(str(e))}[/]\n  required: {', '.join(required)}")
+        con.print(f"[red]{escape(_printable(str(e)))}[/]\n  required: {', '.join(required)}")
         raise typer.Exit(1) from None
     except Exception as e:  # noqa: BLE001
-        con.print(f"[red]{escape(str(e))}[/]")   # it may quote the params
+        con.print(f"[red]{escape(_printable(str(e)))}[/]")   # it may quote the params
         raise typer.Exit(1) from None
     if not result.found:
         # Escaped: the note lists near-matches, which are filer names from the export.
         what = "nothing counted" if result.omitted or result.reattributed else "no match"
-        con.print(f"[yellow]{what}[/] — {escape(result.note)}")
+        con.print(f"[yellow]{what}[/] — {escape(_printable(result.note))}")
         if result.unsettled:
             # every match was left out: name the filings, or the miss reads as "gave nothing"
-            con.print(Text(f"Not a finding: {result.unsettled}", style="yellow"),
+            con.print(Text(_printable(f"Not a finding: {result.unsettled}"), style="yellow"),
                       soft_wrap=True)
             _unsettled_rest(result)
         raise typer.Exit(1)
     # Printed as Text, never as a markup string: researchers copy this value into `expected`
     # verbatim, and a str would lose "[b]" to markup and wrap at 80 columns when stdout is not
-    # a terminal (an agent's shell).
-    con.print(Text(str(result.value), style="bold"), Text(f"({result.note})", style="dim"),
-              sep="  ", soft_wrap=True)
+    # a terminal (an agent's shell). Through _printable(): a value or note can be export text.
+    con.print(Text(_printable(str(result.value)), style="bold"),
+              Text(_printable(f"({result.note})"), style="dim"), sep="  ", soft_wrap=True)
     if why := result.unsettled:
         # Before a researcher records it: this value goes to human_review however it is cited.
         # The reason names the largest few; the rest are listed here, where there is room.
-        con.print(Text(f"Will not verify: {why}", style="yellow"), soft_wrap=True)
+        con.print(Text(_printable(f"Will not verify: {why}"), style="yellow"), soft_wrap=True)
         _unsettled_rest(result)
     # What the review page prints beside the command, so a reviewer can see they reproduced
     # the figure under the same definition and against the same export — or that they didn't.
     where = f"{_export_line(root)}, " if queries.dataset(name) == "CAL-ACCESS" else ""
-    con.print(Text(f"{name} v{result.version}; {where}root {root}", style="dim"),
+    con.print(Text(_printable(f"{name} v{result.version}; {where}root {root}"), style="dim"),
               soft_wrap=True)
 
 
@@ -1288,12 +1305,22 @@ def _handed(claim, cache_root: Path, *, judged=None):
 _UNPRINTABLE = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
 
 
-def _printable(text: str) -> str:
+def _printable(text: str, *, lines: bool = False) -> str:
     """`text` with every character in `_UNPRINTABLE` but a tab shown as an escape (`\\x1b`,
-    `\\u2028`), so agent- or page-authored text prints on the line it is given. Splitting on
-    `\\n` alone left an ANSI erase-line or a U+2028 to fake a line of `vg handoff`'s own
-    framing, and a lone surrogate (which json.loads keeps) made the print raise. Backslashes
-    are left alone: the text a verifier compares, snippet against context, must read as written."""
+    `\\u2028`), so text the pipeline does not control prints on the line it is given and does
+    nothing else to the terminal. Every print of such text goes through here. rich's `Text`
+    strips only BEL, BS, VT, FF and CR, so an ESC or C1 sequence in a filer name or a response
+    body erased lines or faked output. Splitting on `\\n` alone left an ANSI erase-line or a
+    U+2028 to fake a line of `vg handoff`'s own framing, and a lone surrogate (which json.loads
+    keeps, and which an undecodable byte in argv becomes) made the print raise. Backslashes are
+    left alone: the text a verifier compares, snippet against context, must read as written.
+
+    With `lines`, a line break (`\\n`, or `\\r\\n`) stays one and each line is shown as above:
+    for multi-line data a reader copies from (page text, a response body, a YAML entry), and a
+    message whose line breaks are its own (pydantic's). Any other line break (a lone CR, NEL,
+    U+2028) still shows as an escape."""
+    if lines:
+        return "\n".join(_printable(line) for line in re.split(r"\r?\n", text))
     return "".join(ch if ch == "\t" or unicodedata.category(ch) not in _UNPRINTABLE
                    else (f"\\x{ord(ch):02x}" if ord(ch) < 0x100 else
                          f"\\u{ord(ch):04x}" if ord(ch) < 0x10000 else f"\\U{ord(ch):08x}")
@@ -1337,7 +1364,9 @@ def _print_handoff(h, run_args: str) -> None:
              + (f"context token {token}" if token else "nothing to judge yet"), "bold")
         byline = _printable(" · ".join((s.publisher, s.author, s.date or "undated")))
         line(f"  {byline} · {s.source_type}")
-        line(f"  {s.url}" + (f"  (page {s.page})" if s.page else ""))
+        # `_http_only()` refuses C0 controls and whitespace in a URL, not a C1 control or a
+        # bidi override.
+        line(f"  {_printable(s.url)}" + (f"  (page {s.page})" if s.page else ""))
         line(f"  status: {s.status}")
         line(f"  snippet: {_printable(s.snippet)}")
         if s.context is None:
@@ -1508,9 +1537,9 @@ def show_judgments(data: Path = DATA, question_id: str = "",
         # shows the gaps, and a malformed shard left under an old id is one.
         every = judgments.load_every(data)
     for d in judgments.leftovers(data):
-        con.print(f"[yellow]{escape(str(d))} is scratch an interrupted re-home by the retired "
-                  f"`vg remap` left behind. Nothing reads it, and it holds at most an older copy "
-                  f"of the run's verdicts: delete it, and never restore from it.[/]")
+        con.print(f"[yellow]{escape(_printable(str(d)))} is scratch an interrupted re-home by "
+                  f"the retired `vg remap` left behind. Nothing reads it, and it holds at most an "
+                  f"older copy of the run's verdicts: delete it, and never restore from it.[/]")
     selected = [c for c in claims if not question_id or c.question_id == question_id]
     # Checking a snapshot reads it (and at times the live page) from the cache: archive rows only.
     _apply_archive_rows(data, [s for c in selected for s in c.sources], cache_root,
@@ -1520,7 +1549,7 @@ def show_judgments(data: Path = DATA, question_id: str = "",
         # Nothing to count would print a green "0 of 0" — the done signal — for a typo'd
         # --question-id or --data.
         what = f"with question id {question_id!r}" if question_id else "at all"
-        con.print("[red]" + escape(f"no claim {what} in {data / 'claims'}") + "[/]")
+        con.print("[red]" + escape(_printable(f"no claim {what} in {data / 'claims'}")) + "[/]")
         raise typer.Exit(1)
     # A shard the disk opens under a claim's id is that claim's, as `vg build` reads it. On a
     # case-insensitive disk q1 opens Q1.json, and counting what build applies as unjudged sent
@@ -1603,8 +1632,8 @@ def show_judgments(data: Path = DATA, question_id: str = "",
                 # Why it is stale, not its old note: a verifier reads this table, and a stale
                 # note can be about another answer, or another claim's.
                 note = why or (j.note if j else "")
-            t.add_row(c.question_id, escape(f"{s.publisher} {s.sid}"), v,
-                      escape((note or "")[:60]))
+            t.add_row(c.question_id, escape(_printable(f"{s.publisher} {s.sid}")), v,
+                      escape(_printable((note or "")[:60])))
     con.print(t)
 
     if orphans:
@@ -1620,10 +1649,10 @@ def show_judgments(data: Path = DATA, question_id: str = "",
     if aliased:
         # Which claim they belong to is not inferred from a source id but is what this disk
         # already does (judgments.opened_as()).
-        con.print("[yellow]" + escape(f"{_shard_names(aliased.values())} differ from a claim's id "
-                                      f"only in case, and this disk opens them under that id, so "
-                                      f"they count as that claim's — but a case-sensitive "
-                                      f"checkout of {data}")
+        con.print("[yellow]" + escape(_printable(
+                      f"{_shard_names(aliased.values())} differ from a claim's id only in case, "
+                      f"and this disk opens them under that id, so they count as that claim's — "
+                      f"but a case-sensitive checkout of {data}"))
                   + " reads nothing from them. Rename each to its claim's exact id by hand, "
                   "through a temporary name.[/]")
     if unowned:
@@ -1694,8 +1723,9 @@ def clear_contradiction(question_id: str, sid: str, data: Path = DATA):
     try:
         judgments.path_for(data, question_id)
     except ValueError as e:
-        refuse(escape(str(e)))
-    qid, s = escape(question_id), escape(sid)
+        refuse(escape(_printable(str(e))))
+    # The id was just checked; the source id is the argument as given.
+    qid, s = escape(question_id), escape(_printable(sid))
 
     def held_here() -> tuple[DroppedContradiction, list[str]]:
         """The dropped contradiction to clear, read from the claim files and the shard as they
@@ -1711,7 +1741,8 @@ def clear_contradiction(question_id: str, sid: str, data: Path = DATA):
             # q07 for q7, Q7 for q7, as `vg judge` says.
             near = [c.question_id for c in claims
                     if qid_sort_key(c.question_id.lower()) == qid_sort_key(question_id.lower())]
-            refuse(f"no claim has question id {qid} in {escape(str(data / 'claims'))}"
+            refuse(f"no claim has question id {qid} in "
+                   f"{escape(_printable(str(data / 'claims')))}"
                    + (f" — did you mean {escape(', '.join(near))}?" if near else
                       ", so no claim is held by that verdict. `vg judgments` names a shard no "
                       "claim has."))
@@ -1735,9 +1766,10 @@ def clear_contradiction(question_id: str, sid: str, data: Path = DATA):
         refuse("clearing a contradiction is a person's decision, so this asks for the reason at "
                "a terminal, and there is none here. An agent that reached this should leave the "
                "claim in review and report it to the operator.")
-    con.print(Text(f"{question_id}/{sid}: a verifier judged it contradicts the claim"
-                   + (f" ({held.judged_at})" if held.judged_at else "")
-                   + (f": {held.note}" if held.note else ""), style="yellow"), soft_wrap=True)
+    con.print(Text(_printable(f"{question_id}/{sid}: a verifier judged it contradicts the claim"
+                              + (f" ({held.judged_at})" if held.judged_at else "")
+                              + (f": {held.note}" if held.note else "")), style="yellow"),
+              soft_wrap=True)
     if citing:
         # A verdict names its source and a hash of the claim's words, never the claim's id (#30),
         # so the shard it sits in is all that says which claim it judged. Clearing touches this
@@ -1756,9 +1788,9 @@ def clear_contradiction(question_id: str, sid: str, data: Path = DATA):
         with _judgments_or_exit():
             dest = judgments.clear(data, question_id, sid, reason, shown=held)
     except (ValueError, OSError) as e:
-        refuse(escape(str(e)))
+        refuse(escape(_printable(str(e))))
     con.print(f"[green]cleared[/] the contradicts verdict on {qid}/{s}: kept, with the reason, in "
-              f"{escape(str(dest))}")
+              f"{escape(_printable(str(dest)))}")
 
 
 @app.command(name="source-access")
@@ -1782,34 +1814,40 @@ def source_access(host: str = typer.Argument(""), run_recipe: str = "",
         t = Table("host", "access", "recipes", "what it is", box=None)
         for h, e in sorted(entries.items()):
             # Registry files are data, and `source-import-curl` writes them from a paste.
-            t.add_row(Text(h), Text(str(e.access)),
-                      Text(", ".join(str(r.id) for r in e.recipes) or "-"), Text(str(e.name)))
+            t.add_row(Text(_printable(h)), Text(_printable(str(e.access))),
+                      Text(_printable(", ".join(str(r.id) for r in e.recipes) or "-")),
+                      Text(_printable(str(e.name))))
         con.print(t)
         return
 
     entry = access.find(host)
     if entry is None:
-        con.print(f"[yellow]Nothing recorded for {escape(host)}.[/]\n"
+        con.print(f"[yellow]Nothing recorded for {escape(_printable(host))}.[/]\n"
                   f"If you find a way in, record it: `vg source-import-curl <file>` after "
                   f"copying the request from dev tools. If it needs a login, record that too "
                   f"— a known dead end saves the next run from substituting silently.")
         raise typer.Exit(1)
 
-    # YAML reads an unquoted `verified: 2026-08-21` as a date, hence str() before escape().
-    con.print(f"[bold]{escape(entry.host)}[/] — {escape(str(entry.name))}  "
-              f"([bold]{escape(str(entry.access))}[/], "
-              f"verified {escape(str(entry.verified or 'unknown'))})")
+    # YAML reads an unquoted `verified: 2026-08-21` as a date, hence str() before escape(). The
+    # prose fields are often block scalars, so they keep their line breaks.
+    def prose(value) -> str:
+        return _printable(str(value).strip(), lines=True)
+
+    con.print(f"[bold]{escape(_printable(entry.host))}[/] — {escape(_printable(str(entry.name)))}  "
+              f"([bold]{escape(_printable(str(entry.access)))}[/], "
+              f"verified {escape(_printable(str(entry.verified or 'unknown')))})")
     if entry.naive_fetch:
-        con.print(f"\n[dim]a plain fetch gets:[/] {escape(str(entry.naive_fetch).strip())}")
+        con.print(f"\n[dim]a plain fetch gets:[/] {escape(prose(entry.naive_fetch))}")
     for r in entry.recipes:
-        con.print(f"\n[bold]{escape(str(r.id))}[/] "
-                  + escape(f"{r.summary}\n  {r.method} {r.url}"
-                           + (f"\n  params: {', '.join(map(str, r.params))}" if r.params else "")
-                           + (f"\n  {str(r.notes).strip()}" if r.notes else "")))
+        con.print(f"\n[bold]{escape(_printable(str(r.id)))}[/] "
+                  + escape(_printable(str(r.summary)) + "\n  " + _printable(f"{r.method} {r.url}")
+                           + (f"\n  params: {_printable(', '.join(map(str, r.params)))}"
+                              if r.params else "")
+                           + (f"\n  {prose(r.notes)}" if r.notes else "")))
     if entry.limits:
-        con.print(f"\n[yellow]limits:[/] {escape(str(entry.limits).strip())}")
+        con.print(f"\n[yellow]limits:[/] {escape(prose(entry.limits))}")
     if entry.manual_steps:
-        con.print(f"\n[yellow]manual retrieval:[/] {escape(str(entry.manual_steps).strip())}")
+        con.print(f"\n[yellow]manual retrieval:[/] {escape(prose(entry.manual_steps))}")
 
     if run_recipe:
         recipe = entry.recipe(run_recipe)
@@ -1821,10 +1859,12 @@ def source_access(host: str = typer.Argument(""), run_recipe: str = "",
             resp = access.run(recipe, params)
         except Exception as e:  # noqa: BLE001
             # Escaped: a refusal names parameters like `auth[token]`.
-            con.print(f"[red]{escape(f'{type(e).__name__}: {e}')}[/]")
+            con.print(f"[red]{escape(_printable(f'{type(e).__name__}: {e}'))}[/]")
             raise typer.Exit(1) from None
         con.print(f"\n[bold]HTTP {resp.status_code}[/] {len(resp.text)} chars")
-        con.print(Text(resp.text[:1500]), soft_wrap=True)   # fetched, and copied from
+        # Fetched, and copied from: line by line, so its line breaks stay and nothing else in
+        # it reaches the terminal.
+        con.print(Text(_printable(resp.text[:1500], lines=True)), soft_wrap=True)
 
 
 @app.command(name="source-note")
@@ -1849,7 +1889,7 @@ def source_note(host: str, note: str, access: str = "", verified: str = ""):
     data["findings"] = (data.get("findings") or "") + ("\n" if data.get("findings") else "") + note
     entry_path.parent.mkdir(parents=True, exist_ok=True)
     entry_path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=100))
-    con.print(f"[green]recorded[/] {escape(str(entry_path))}")
+    con.print(f"[green]recorded[/] {escape(_printable(str(entry_path)))}")
 
 
 @app.command(name="source-import-curl")
@@ -1869,34 +1909,38 @@ def source_import_curl(path: Path, name: str = "", write: bool = True):
     try:
         parsed = access.parse_curl(path.read_text())
     except (OSError, ValueError) as e:
-        con.print(f"[red]{escape(str(e))}[/]")
+        con.print(f"[red]{escape(_printable(str(e)))}[/]")
         raise typer.Exit(1) from None
 
     entry = parsed["entry"]
     entry["name"] = name or entry["name"]
     dropped = parsed["dropped_credentials"]
     if dropped:
-        con.print(f"[yellow]dropped credentials:[/] {escape(', '.join(dropped))} — confirm the "
-                  f"endpoint still works without them before relying on it")
+        con.print(f"[yellow]dropped credentials:[/] {escape(_printable(', '.join(dropped)))} — "
+                  f"confirm the endpoint still works without them before relying on it")
     unknown = parsed["dropped_headers"]
     if unknown:
-        con.print(f"[yellow]dropped headers not known to be safe:[/] {escape(', '.join(unknown))}"
+        con.print(f"[yellow]dropped headers not known to be safe:[/] "
+                  f"{escape(_printable(', '.join(unknown)))}"
                   f" — if the endpoint needs one and it is not a credential, add it by hand")
 
     dest = access.REGISTRY / f"{entry['host']}.yaml"
     text = yaml.safe_dump(entry, sort_keys=False, allow_unicode=True, width=100)
     # The entry is the pasted request, so it is printed as Text, never as markup, and unwrapped:
-    # it is YAML to be copied into a file.
+    # it is YAML to be copied into a file. Line by line: allow_unicode leaves a bidi override or
+    # NEL in it as it was pasted.
+    shown = Text(_printable(text, lines=True))
     if not write:
-        con.print(Text(text), soft_wrap=True)
+        con.print(shown, soft_wrap=True)
         return
     if dest.exists():
-        con.print(f"[yellow]{escape(str(dest))} exists — printing instead of overwriting[/]\n")
-        con.print(Text(text), soft_wrap=True)
+        con.print(f"[yellow]{escape(_printable(str(dest)))} exists — printing instead of "
+                  f"overwriting[/]\n")
+        con.print(shown, soft_wrap=True)
         return
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(text)
-    con.print(f"[green]wrote[/] {escape(str(dest))}\n"
+    con.print(f"[green]wrote[/] {escape(_printable(str(dest)))}\n"
               f"Fill in `summary`, `params`, and `notes`, then verify it works cookieless.")
 
 
@@ -1913,23 +1957,29 @@ def form700(first: str, last: str):
     try:
         filings = fppc.search(first, last)
     except Exception as e:  # noqa: BLE001
-        con.print(f"[red]FPPC search failed: {type(e).__name__}: {escape(str(e))}[/]\n"
+        con.print(f"[red]FPPC search failed: {type(e).__name__}: "
+                  f"{escape(_printable(str(e)))}[/]\n"
                   f"Do not substitute a copy silently — say the index was unreachable.")
         raise typer.Exit(1) from None
+    # The names as given: an undecodable byte in argv is a lone surrogate.
+    searched = escape(_printable(f"{first} {last}"))
     if not filings:
-        con.print(f"No Form 700 filings found for {escape(f'{first} {last}')}.")
+        con.print(f"No Form 700 filings found for {searched}.")
         return
     t = Table("filed", "covers", "agency", "index id", box=None)
     for f in filings:
-        # The FPPC index's own text, as Text: rich reads "[/]" in a table cell as markup.
-        t.add_row(Text(f.filed_date), Text(", ".join(str(y) for y in f.filing_years)),
-                  Text("; ".join(f.agencies[:2]) + (" …" if len(f.agencies) > 2 else "")),
-                  Text(str(f.index_id)))
+        # The FPPC index's own text, as Text: rich reads "[/]" in a table cell as markup. It is
+        # JSON, which can carry a lone surrogate as an escape.
+        t.add_row(Text(_printable(f.filed_date)),
+                  Text(_printable(", ".join(str(y) for y in f.filing_years))),
+                  Text(_printable("; ".join(f.agencies[:2])
+                                  + (" …" if len(f.agencies) > 2 else ""))),
+                  Text(_printable(str(f.index_id))))
     con.print(t)
     newest = filings[0]
-    con.print("\n[bold]Most recent:[/] " + escape(
-        f"filed {newest.filed_date}, covering {', '.join(str(y) for y in newest.filing_years)}."))
-    con.print(f"Retrieve it at {fppc.PORTAL} (search {escape(f'{first} {last}')}); cite "
+    con.print("\n[bold]Most recent:[/] " + escape(_printable(
+        f"filed {newest.filed_date}, covering {', '.join(str(y) for y in newest.filing_years)}.")))
+    con.print(f"Retrieve it at {fppc.PORTAL} (search {searched}); cite "
               f"that one, and set the source `date` to its filed date.")
 
 
@@ -1950,7 +2000,7 @@ def check_claim(path: Path, data: Path = DATA, cache: Path = None, race: str = "
     try:
         raw = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as e:
-        con.print(f"[red]cannot read {escape(f'{path}: {e}')}[/]")
+        con.print(f"[red]cannot read {escape(_printable(f'{path}: {e}'))}[/]")
         raise typer.Exit(1) from None
 
     ok = True
@@ -1962,43 +2012,44 @@ def check_claim(path: Path, data: Path = DATA, cache: Path = None, race: str = "
     run = at.parent.parent if at.parent.name == "claims" else data
     asked_in, asked = questions.find(run), None
     if asked_in is None:
-        con.print(f"[dim]no {questions.FILE} for {escape(str(run))}, so the question was not "
-                  f"checked[/]")
+        con.print(f"[dim]no {questions.FILE} for {escape(_printable(str(run)))}, so the "
+                  f"question was not checked[/]")
     else:
         try:
             asked = questions.load(asked_in)
         except questions.UnreadableQuestions as e:
             ok = False
-            con.print(f"[red]cannot check the question:[/] {escape(str(e))}")
+            con.print(f"[red]cannot check the question:[/] {escape(_printable(str(e)))}")
     for item in (raw if isinstance(raw, list) else [raw]):
         try:
             claim = Claim.model_validate(strip_machine_fields(item))
         except Exception as e:  # noqa: BLE001
-            con.print(f"[red]schema:[/] {escape(str(e))}")
+            con.print(f"[red]schema:[/] {escape(_printable(str(e), lines=True))}")
             raise typer.Exit(1) from None
         # `vg build` refuses a claim whose question isn't the one its id names, so a researcher
         # who misquotes it hears here rather than stopping the whole run's review app.
         found = questions.check([claim], asked) if asked is not None else questions.Findings()
         qid = escape(claim.question_id)
+        where = escape(_printable(str(asked_in)))
         if listed := found.case_of.get(claim.question_id):
             ok = False
-            con.print(f"  [red]question id[/] {qid} is not in {escape(str(asked_in))}, which "
-                      f"has {escape(listed)}: they differ only in case\n"
+            con.print(f"  [red]question id[/] {qid} is not in {where}, which "
+                      f"has {escape(_printable(listed))}: they differ only in case\n"
                       f"      Use the question_id you were given, exactly.")
         elif found.unlisted:
             ok = False
-            con.print(f"  [red]question id[/] {qid} is not in {escape(str(asked_in))}\n"
+            con.print(f"  [red]question id[/] {qid} is not in {where}\n"
                       f"      Use the question_id you were given, exactly. If you did, the "
                       f"question set changed under you: report that, and do not edit it.")
         for _qid, answered, text in found.reworded:
             ok = False
-            con.print(f"  [red]question[/] is not the one {escape(str(asked_in))} asks at {qid}\n"
+            con.print(f"  [red]question[/] is not the one {where} asks at {qid}\n"
                       f"      Copy it exactly as you were given it, into `question`:")
             con.print(Text(f"      yours: {answered!r}\n      asked: {text!r}"), soft_wrap=True)
         for src_ in claim.sources:
             verify_source(src_, cache_root, rules=rules)
             st = src_.verification.status
-            cited = f"{src_.publisher}: {src_.snippet!r}"
+            cited = _printable(f"{src_.publisher}: {src_.snippet!r}")
             if st in ("verified", "verified_via_archive", "could_not_verify_paywall"):
                 con.print(f"  [green]{st}[/] {escape(cited)}")
             elif st in ("normalized_match", "pdf_normalized_match"):
@@ -2006,12 +2057,13 @@ def check_claim(path: Path, data: Path = DATA, cache: Path = None, race: str = "
             else:
                 ok = False
                 # One run with the reason, which can quote the snippet or the page.
-                con.print(f"  [red]{st}[/] "
-                          + escape(f"{cited}\n      {src_.verification.reason or ''}"))
+                con.print(f"  [red]{st}[/] " + escape(
+                    f"{cited}\n      {_printable(src_.verification.reason or '')}"))
         for src_ in claim.sources:
             if secondary_host(src_, rules) and not (src_.secondary_host_ack or "").strip():
                 ok = False
-                con.print(f"  [red]secondary host[/] {escape(domain(src_.url))} is not the "
+                con.print(f"  [red]secondary host[/] {escape(_printable(domain(src_.url)))} is "
+                          f"not the "
                           f"authority that issues this record\n"
                           f"      Cite the issuing authority's own copy. If you genuinely "
                           f"cannot reach it, set `secondary_host_ack` saying what you could "
@@ -2019,13 +2071,13 @@ def check_claim(path: Path, data: Path = DATA, cache: Path = None, race: str = "
                           f"substitute silently.")
             if missing_filing_date(src_):
                 ok = False
-                con.print(f"  [red]no filing date[/] {escape(src_.url)}\n"
+                con.print(f"  [red]no filing date[/] {escape(_printable(src_.url))}\n"
                           f"      periodic filings are a series — set `date` to the filing's "
                           f"own date, and make sure it is the most recent one")
         check_corroboration(claim)
         if claim.corroboration_ok is False:
             ok = False
-            con.print(f"  [red]corroboration[/] {escape(claim.corroboration_note)}")
+            con.print(f"  [red]corroboration[/] {escape(_printable(claim.corroboration_note))}")
     if not ok:
         con.print("[red]Not ready. Fix these and re-run — do not hand this on.[/]")
         raise typer.Exit(1)
@@ -2095,13 +2147,14 @@ def new_candidate(candidate: str, data: Path = DATA, race: str = "",
             q["subject"] = c.id
         dest_q.write_text(json.dumps(qs, indent=1))
         con.print("[green]wrote[/] "
-                  + escape(f"{dest_q} ({len(qs)} questions retargeted to {c.name})"))
+                  + escape(_printable(f"{dest_q} ({len(qs)} questions retargeted to {c.name})")))
     elif dest_q.exists():
-        con.print(f"{escape(str(dest_q))} already exists — left alone")
+        con.print(f"{escape(_printable(str(dest_q)))} already exists — left alone")
 
-    con.print("[green]ready[/] " + escape(f"{root}\n"
-                                          f"  uv run vg verify --data {root}\n"
-                                          f"  uv run vg build  --data {root} --candidate {c.id}"))
+    at, cid = _printable(str(root)), _printable(c.id)
+    con.print("[green]ready[/] " + escape(f"{at}\n"
+                                          f"  uv run vg verify --data {at}\n"
+                                          f"  uv run vg build  --data {at} --candidate {cid}"))
 
 
 @app.command()
@@ -2126,15 +2179,15 @@ def status(data: Path = DATA, cache: Path = None, race: str = ""):
     try:
         rules = load_rules(tuple(load_race(race or None).sources))
     except (FileNotFoundError, ValueError) as e:
-        con.print(f"[yellow]{escape(str(e))} — checking against the `us` source list only, "
-                  f"which can pass rows `vg build --race` rejects[/]")
+        con.print(f"[yellow]{escape(_printable(str(e)))} — checking against the `us` source list "
+                  f"only, which can pass rows `vg build --race` rejects[/]")
         rules = load_rules(("us",))
     cache_root = _verdict_cache_root(data, cache)
     _settle(claims, data, cache_root, rules, _archive_records(data))
     t = Table("qid", "type", "status", "sources", "corroboration", "conflicts", box=None)
     for c in claims:
         t.add_row(c.question_id, c.claim_type, c.status, str(len(c.sources)),
-                  Text(c.corroboration_note or "-"), str(len(c.conflicts)))
+                  Text(_printable(c.corroboration_note or "-")), str(len(c.conflicts)))
     con.print(t)
     if failing:
         _left_out(failing, "this summary, as from the review app")
