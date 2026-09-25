@@ -984,11 +984,13 @@ def calaccess_contributions(filer_id: str, data: Path = DATA, cache: Path = None
 
 def _amendment_cell(unrestated, omitted=(), reattributed=None) -> Text:
     """A listing row's 'latest amendment' cell: each of its filings whose latest amendment has
-    no such rows (calaccess.Unrestated), each schedule of it a later amendment left out
-    (calaccess.UnrestatedSchedule), and, for an expenditure listed under the candidate its own
-    amendment's cover named, who the latest cover names instead (calaccess.Reattributed), or
-    nothing. As Text, through `_printable()`: filing ids, schedules and names are export text."""
-    cells = ([f"{u.filing_id}: a{u.cover_amend} has none" for u in unrestated or ()]
+    no such rows, or that has no cover record (calaccess.Unrestated), each schedule of it a
+    later amendment left out (calaccess.UnrestatedSchedule), and, for an expenditure listed under
+    the candidate its own amendment's cover named, who the latest cover names instead
+    (calaccess.Reattributed), or nothing. As Text, through `_printable()`: filing ids, schedules
+    and names are export text."""
+    cells = ([f"{u.filing_id}: " + ("no cover" if u.cover_amend is None
+                                    else f"a{u.cover_amend} has none") for u in unrestated or ()]
              + [f"{u.filing_id}: a{u.table_amend} has no schedule {u.schedule or '(blank)'}, "
                 f"not counted" for u in omitted or ()])
     if reattributed:
@@ -1008,11 +1010,19 @@ def _amendment_footer(marks: list, omitted: list = (), reattributed: list | None
                   f"dropped any of these rows{also}: its covers carry no amendment ids, or it "
                   f"has no covers at all. Rebuild it from a complete export: uv run vg calaccess "
                   f"build[/]")
-    elif flagged := sum(1 for m in marks if m):
-        con.print(f"[yellow]{flagged} row(s) come from an amendment a later one did not restate "
-                  f"(the 'latest amendment' column). That later amendment withdrew them, or "
-                  f"left the schedule unchanged, and only the filing says which: open it before "
-                  f"using the row. A figure counting one goes to human_review.[/]")
+    else:
+        # Counted by kind, so a row with one of each is in both lines: each says what to open.
+        if flagged := sum(1 for m in marks if any(u.cover_amend is not None for u in m)):
+            con.print(f"[yellow]{flagged} row(s) come from an amendment a later one did not "
+                      f"restate (the 'latest amendment' column). That later amendment withdrew "
+                      f"them, or left the schedule unchanged, and only the filing says which: "
+                      f"open it before using the row. A figure counting one goes to "
+                      f"human_review.[/]")
+        if uncovered := sum(1 for m in marks if any(u.cover_amend is None for u in m)):
+            con.print(f"[yellow]{uncovered} row(s) come from a filing with no cover record "
+                      f"('no cover' in the 'latest amendment' column), so nothing here says "
+                      f"whether a later amendment dropped them: open it before using the row. A "
+                      f"figure counting one goes to human_review.[/]")
     if any(m is None for m in omitted):
         con.print("[yellow]This database cannot tell whether a later amendment left out a "
                   "schedule these rows are on: they carry no FORM_TYPE. Rebuild it: uv run vg "
