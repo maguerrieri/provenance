@@ -67,12 +67,14 @@ COVER_ROWS = [
 IE_PARAMS = {"candidate_last": "Fairweather", "first": "Ondine", "stance": "support"}
 # Every citable CAL-ACCESS query, with parameters that reach an unrestated filing, and which.
 # A new query fails test_every_citable_query_flags_and_refuses until it is added here.
-# Every schedule ("") where the default, schedule A, would leave out the Form 496 Part 3 rows.
+# The receipt queries at their default, schedule A: Lindqvist Farms' gift is counted from the
+# settled 460 and reported on the dropped 496 too. Adapted to every schedule (""), these once
+# hid that the default never saw the 496 (#131).
 PLANTED = {
-    "calaccess.contributor_total": ({"filer_id": FILER, "contributor": "Quill Harbor PAC",
-                                     "form_type": ""}, DROPPED_496),
-    "calaccess.filer_total": ({"filer_id": FILER, "form_type": "F496P3"}, DROPPED_496),
-    "calaccess.top_contributor": ({"filer_id": FILER, "form_type": ""}, DROPPED_496),
+    "calaccess.contributor_total": ({"filer_id": FILER, "contributor": "Lindqvist Farms"},
+                                    DROPPED_496),
+    "calaccess.filer_total": ({"filer_id": FILER}, DROPPED_496),
+    "calaccess.top_contributor": ({"filer_id": FILER}, DROPPED_496),
     "calaccess.ie_total": (IE_PARAMS, IE_DROPPED),
 }
 
@@ -156,20 +158,37 @@ def test_a_settled_total_still_verifies(root):
                  {"filer_id": FILER, "contributor": "Ostrander", "contributor_first": "Mina"},
                  "250")
     assert verify_source(mina, root).verification.status == "verified"
-    # schedule A only: the Form 496's rows are F496P3, so none of them is in this total
-    sched_a = cited("calaccess.filer_total", {"filer_id": FILER}, "3750")
+    # schedule A only: the PAC's $4,000 gift is Form 496 Part 3 alone, so it is not counted,
+    # and its $1,500 gift was reported only on the settled 460
+    sched_a = cited("calaccess.contributor_total",
+                    {"filer_id": FILER, "contributor": "Quill Harbor PAC"}, "1500")
     assert verify_source(sched_a, root).verification.status == "verified"
+
+
+def test_a_schedule_a_total_rests_on_every_report_of_its_gifts(root):
+    """The filer's schedule-A total counts Lindqvist Farms' gift from the settled 460. The same
+    gift's Form 496 Part 3 report is on the dropped filing, so the total goes to human_review,
+    as it does over every schedule. It once asserted `verified` here (#131)."""
+    result = queries.run("calaccess.filer_total", {"filer_id": FILER}, root)
+    assert result.value == 3750.0, "the flag must never change the number"
+    assert [(u.filing_id, u.amount, u.rows) for u in result.unrestated] == [
+        (DROPPED_496, 2000.0, 1)]
+    v = verify_source(cited("calaccess.filer_total", {"filer_id": FILER}, "3750"),
+                      root).verification
+    assert v.status == "human_review" and DROPPED_496 in v.reason
 
 
 def test_a_gift_restated_across_filings_is_flagged_by_its_unrestated_filing(root):
     """A cross-form gift counts once, and still rests on a filing whose latest amendment
     dropped it. The filing to open is that one, not the earliest the gift is cited by."""
-    # every schedule: only there does the cross-form dedup meet both filings' rows
-    result = queries.run("calaccess.contributor_total",
-                         {"filer_id": FILER, "contributor": "Lindqvist Farms", "form_type": ""},
-                         root)
-    assert result.value == 2000.0
-    assert [(u.filing_id, u.amount) for u in result.unrestated] == [(DROPPED_496, 2000.0)]
+    # every schedule and schedule A alike: the dedup meets both filings' rows before the
+    # schedule picks the gifts to count (#131)
+    for form_type in ("", "A"):
+        result = queries.run("calaccess.contributor_total",
+                             {"filer_id": FILER, "contributor": "Lindqvist Farms",
+                              "form_type": form_type}, root)
+        assert result.value == 2000.0
+        assert [(u.filing_id, u.amount) for u in result.unrestated] == [(DROPPED_496, 2000.0)]
 
     [row] = [c for c in calaccess.contributions_to(root, FILER) if "Lindqvist" in c.contributor]
     assert row.filing_id == SETTLED_460 and row.filings == 2
