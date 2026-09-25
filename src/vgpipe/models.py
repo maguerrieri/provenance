@@ -5,6 +5,8 @@ fields. Keeping that boundary explicit is deliberate — an agent that can write
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from datetime import datetime
 from typing import Literal
@@ -58,6 +60,18 @@ NOT_JUDGED = frozenset({"could_not_verify_paywall"})
 #   archive_unusable     — checked, and it is not the cited page; no link is offered
 #   archive_failed       — nothing could be saved
 ArchiveStatus = Literal["archived", "archive_unconfirmed", "archive_unusable", "archive_failed"]
+
+
+def short_id(*parts: str) -> str:
+    """The recipe behind `Source.sid` and `Claim.fingerprint`: the first 12 hex characters of a
+    sha1 of the parts, NUL-joined. One copy, because `judgments` checks both against one shape
+    and the two must not drift apart.
+
+    NUL-joining is ambiguous for parts that can hold a NUL themselves: ("a", "b\\x00c") and
+    ("a\\x00b", "c") join alike. The sid keeps it anyway, since changing it would lapse every
+    recorded verdict. A caller with free-text parts passes one unambiguous encoding of them
+    instead, as `Claim.fingerprint` does."""
+    return hashlib.sha1("\x00".join(parts).encode()).hexdigest()[:12]
 
 
 class QueryRun(BaseModel):
@@ -270,13 +284,11 @@ class Source(BaseModel):
         expected value changed from one contributor to another, with url and snippet untouched:
         a verifier had checked one number and the row then vouched for another.
         """
-        import hashlib
-
         parts = [self.url, self.snippet]
         if self.query is not None:
             parts += [self.query.name, self.query.expected,
                       ";".join(f"{k}={v}" for k, v in sorted(self.query.params.items()))]
-        return hashlib.sha1("\x00".join(parts).encode()).hexdigest()[:12]
+        return short_id(*parts)
 
 
 # Question IDs become filenames (`data/claims/<qid>.json`, `data/judgments/<qid>.json`),
@@ -323,6 +335,24 @@ class Claim(BaseModel):
     @property
     def required_sources(self) -> int:
         return 2 if self.claim_type == "adversarial" else 1
+
+    @property
+    def fingerprint(self) -> str:
+        """What a verifier judged a source against: the claim's question and its answer.
+
+        `vg judge` stamps it on each verdict (`Judgment.claim_fingerprint`). A verdict is keyed
+        by sid, which covers the quote and not what the claim says about it, so a retry that
+        rewrites the answer and keeps the quote keeps the verdict too. The stamp is what shows
+        the verdict was about other words. Both halves go in, because a verdict judges one
+        answer to one question. Exact text, not normalized: which edits keep a claim's meaning is
+        a judgment ("$40k" to "$4k" is one character), and a spurious change costs a
+        re-judgment, never a false green. Left out: the sources, since a verdict judges one of
+        them and adding another must not lapse it; and the id, which the verdict's shard
+        already carries. See CLAUDE.md, "A verdict is about a source as cached at judgment time".
+        """
+        # As one JSON list, not two parts: both are free agent-written text, and NUL-joining
+        # them would let a rewrite that moves a NUL between them keep the fingerprint.
+        return short_id(json.dumps([self.question, self.answer]))
 
     @property
     def status(self) -> str:
