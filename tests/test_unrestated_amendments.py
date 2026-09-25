@@ -52,12 +52,16 @@ IES = ("FILING_ID\tAMEND_ID\tTRAN_ID\tLINE_ITEM\tAMOUNT\tEXP_DATE\tEXPN_DSCR\n"
        f"{IE_SETTLED}\t0\tIE2\t1\t1200\t3/9/2026 12:00:00 AM\tdigital ads\n"
        f"{IE_SETTLED}\t1\tIE2\t1\t1200\t3/9/2026 12:00:00 AM\tdigital ads\n"
        f"{IE_UNREAD}\t0\tIE3\t1\t\t3/12/2026 12:00:00 AM\tphone bank\n")
+# The 460 covers January, so the Form 496's January gifts are ones it had to restate: without
+# a period they are late gifts no schedule A restates yet, and the schedule-A default refuses
+# while one is pending (#66).
+JANUARY = ("1/1/2026 12:00:00 AM", "1/31/2026 12:00:00 AM")
 COVER_ROWS = [
-    (SETTLED_460, "0", FILER, "Friends of Example", "", "", "", "F460"),
-    (SETTLED_460, "1", FILER, "Friends of Example", "", "", "", "F460"),
-    (DROPPED_496, "0", FILER, "Friends of Example", "", "", "", "F496"),
-    (DROPPED_496, "1", FILER, "Friends of Example", "", "", "", "F496"),
-    *[(f, a, "8880900", "Committee for Example", "Fairweather", "Ondine", "S", "F496")
+    (SETTLED_460, "0", FILER, "Friends of Example", "", "", "", "F460", *JANUARY),
+    (SETTLED_460, "1", FILER, "Friends of Example", "", "", "", "F460", *JANUARY),
+    (DROPPED_496, "0", FILER, "Friends of Example", "", "", "", "F496", "", ""),
+    (DROPPED_496, "1", FILER, "Friends of Example", "", "", "", "F496", "", ""),
+    *[(f, a, "8880900", "Committee for Example", "Fairweather", "Ondine", "S", "F496", "", "")
       for f in (IE_DROPPED, IE_SETTLED, IE_UNREAD) for a in ("0", "1")],
 ]
 IE_PARAMS = {"candidate_last": "Fairweather", "first": "Ondine", "stance": "support"}
@@ -77,7 +81,7 @@ def _export(root, *, cover_amend_ids=True, covers=True):
     """The export above, with or without CVR_CAMPAIGN_DISCLOSURE_CD.AMEND_ID (a database built
     before that column was loaded), or with no cover table at all."""
     cols = ["FILING_ID", "AMEND_ID", "FILER_ID", "FILER_NAML", "CAND_NAML", "CAND_NAMF",
-            "SUP_OPP_CD", "FORM_TYPE"]
+            "SUP_OPP_CD", "FORM_TYPE", "FROM_DATE", "THRU_DATE"]
     rows = COVER_ROWS
     if not cover_amend_ids:
         cols.remove("AMEND_ID")

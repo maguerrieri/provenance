@@ -1063,12 +1063,14 @@ def run_query(name: str = typer.Argument(""), param: list[str] = None, data: Pat
     # a terminal (an agent's shell).
     con.print(Text(str(result.value), style="bold"), Text(f"({result.note})", style="dim"),
               sep="  ", soft_wrap=True)
-    if result.unsettled:
+    if why := result.unsettled:
         # Before a researcher records it: this value goes to human_review however it is cited.
         # The reason names the largest few; the rest are listed here, where there is room.
-        con.print(Text(f"Will not verify: {result.unsettled}", style="yellow"), soft_wrap=True)
+        con.print(Text(f"Will not verify: {why}", style="yellow"), soft_wrap=True)
         for u in result.unrestated[queries.UNSETTLED_SHOWN:]:
             con.print(Text(f"  {queries.share_text(u)}", style="yellow"), soft_wrap=True)
+        for r in result.late[queries.LATE_SHOWN:]:
+            con.print(Text(f"  {queries.late_text(r)}", style="yellow"), soft_wrap=True)
     # What the review page prints beside the command, so a reviewer can see they reproduced
     # the figure under the same definition and against the same export — or that they didn't.
     where = f"{_export_line(root)}, " if queries.dataset(name) == "CAL-ACCESS" else ""
