@@ -34,7 +34,7 @@ _ACTING = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
 
 TEXT = "The board approved the Example Levy on a 4-1 vote after a long hearing on Tuesday."
 RETRY = "Retry: vg fetch --refresh "
-WITHHELD = "no command is printed"
+WITHHELD = "No retry command: "
 
 
 @pytest.fixture
@@ -101,6 +101,7 @@ def test_a_kept_page_logs_its_url_and_failure_reason_as_escapes(tmp_path, refuse
                           "(ConnectError: connection reset\\x1b[2K, "), msg
     assert f"under extractor v{EXTRACTOR_VERSION - 1}" in msg, msg
     assert RETRY not in msg and WITHHELD in msg, msg
+    assert "Retry with vg verify --refresh, which reads it from the claim citing it" in msg, msg
 
 
 @pytest.mark.parametrize("url", [
@@ -142,3 +143,4 @@ def test_a_url_a_pasted_command_cannot_carry_gets_no_command(caplog, monkeypatch
     _assert_inert(msg)
     assert msg.startswith(f"{shown}: re-fetch failed (ConnectError: reset\\u202e\\udcff, "), msg
     assert RETRY not in msg and WITHHELD in msg, msg
+
