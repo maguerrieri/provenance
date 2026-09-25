@@ -6471,7 +6471,7 @@ _NOT_A_DEFINITION = {
                        "_unread", "dataset", "describe_export", "export_date", "human_command",
                        "matches", "share_text"},
     "vgpipe.calaccess": {"COVER_FALLBACK", "Contribution", "DegradedDatabaseWarning",
-                         "EXPORT_META", "EXPORT_URL", "_UNUSABLE", "_export_date",
+                         "EXPORT_META", "EXPORT_URL", "NO_COVERS", "_UNUSABLE", "_export_date",
                          "_read_export_info", "citable_snapshot", "committee_url",
                          "contributions_to", "db_path", "export_info", "filing_url",
                          "find_filers", "independent_expenditures", "shown_date", "Unrestated",
@@ -6481,13 +6481,13 @@ _NOT_A_DEFINITION = {
 
 # name -> (version, fingerprint). See test_a_query_definition_cannot_change_unnoticed.
 QUERY_DEFINITIONS = {
-    "calaccess.contributor_total": (4, "6b2c6eda22cf"),
-    "calaccess.filer_total": (3, "325478f0dbe7"),
-    "calaccess.top_contributor": (4, "0b1238b542e4"),
+    "calaccess.contributor_total": (4, "af797fffff54"),
+    "calaccess.filer_total": (3, "af5e3af41c29"),
+    "calaccess.top_contributor": (4, "7e41b33cb76b"),
     # moved without a bump: amount_sql() is ie_total's own amount expression, extracted
     # unchanged, and DEDUPED_RECEIPTS, which it does not read, changed beside it; then the
     # unsettled-amendment flag and its shared helpers, which change no value it returns
-    "calaccess.ie_total": (2, "9862fd259254"),
+    "calaccess.ie_total": (2, "bed44ba30c13"),
 }
 
 

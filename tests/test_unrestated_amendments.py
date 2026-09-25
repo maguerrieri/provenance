@@ -61,25 +61,36 @@ COVER_ROWS = [
       for f in (IE_DROPPED, IE_SETTLED, IE_UNREAD) for a in ("0", "1")],
 ]
 IE_PARAMS = {"candidate_last": "Fairweather", "first": "Ondine", "stance": "support"}
+# Every citable CAL-ACCESS query, with parameters that reach an unrestated filing, and which.
+# A new query fails test_every_citable_query_flags_and_refuses until it is added here.
+# Every schedule ("") where the default, schedule A, would leave out the Form 496 Part 3 rows.
+PLANTED = {
+    "calaccess.contributor_total": ({"filer_id": FILER, "contributor": "Quill Harbor PAC",
+                                     "form_type": ""}, DROPPED_496),
+    "calaccess.filer_total": ({"filer_id": FILER, "form_type": "F496P3"}, DROPPED_496),
+    "calaccess.top_contributor": ({"filer_id": FILER, "form_type": ""}, DROPPED_496),
+    "calaccess.ie_total": (IE_PARAMS, IE_DROPPED),
+}
 
 
-def _export(root, *, cover_amend_ids=True):
+def _export(root, *, cover_amend_ids=True, covers=True):
     """The export above, with or without CVR_CAMPAIGN_DISCLOSURE_CD.AMEND_ID (a database built
-    before that column was loaded)."""
+    before that column was loaded), or with no cover table at all."""
     cols = ["FILING_ID", "AMEND_ID", "FILER_ID", "FILER_NAML", "CAND_NAML", "CAND_NAMF",
             "SUP_OPP_CD", "FORM_TYPE"]
     rows = COVER_ROWS
     if not cover_amend_ids:
         cols.remove("AMEND_ID")
         rows = [r[:1] + r[2:] for r in rows]
-    covers = "\t".join(cols) + "\n" + "".join("\t".join(r) + "\n" for r in rows)
+    cover_tsv = "\t".join(cols) + "\n" + "".join("\t".join(r) + "\n" for r in rows)
     (root / "cache" / "calaccess").mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(root / "cache" / "calaccess" / "dbwebexport.zip", "w") as zf:
         zf.writestr("CalAccess/DATA/RCPT_CD.TSV", RECEIPTS)
         zf.writestr("CalAccess/DATA/FILER_FILINGS_CD.TSV", FILINGS)
         zf.writestr("CalAccess/DATA/S496_CD.TSV", IES)
-        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", covers)
-    if cover_amend_ids:
+        if covers:
+            zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", cover_tsv)
+    if cover_amend_ids or not covers:
         calaccess.build(root)
     else:
         with pytest.warns(calaccess.DegradedDatabaseWarning):
@@ -227,23 +238,52 @@ def test_build_downgrades_a_row_verified_before_it_asked(root):
     assert v.query_run is not None and v.query_run.cache_root == str(root)
 
 
-def test_a_database_without_cover_amend_ids_cannot_check_and_says_so(tmp_path):
-    """Every citable query refuses: without cover amendment ids nothing can find a filing's
-    latest amendment. The listings keep working as finding aids and say they cannot check."""
-    root = _export(tmp_path, cover_amend_ids=False)
-    for name, params in [
-            ("calaccess.contributor_total", {"filer_id": FILER, "contributor": "Quill Harbor PAC"}),
-            ("calaccess.filer_total", {"filer_id": FILER}),
-            ("calaccess.top_contributor", {"filer_id": FILER}),
-            ("calaccess.ie_total", IE_PARAMS)]:
+def test_both_paths_write_the_phrase_the_skill_matches(root):
+    """The research skill does not retry an unsettled figure, and tells one by this phrase in
+    its reason. `vg verify` and `vg build` word the rest of their reasons differently."""
+    phrase = "it counts rows a later amendment may have withdrawn"
+    s = cited("calaccess.ie_total", IE_PARAMS, "4200")
+    assert phrase in verify_source(s, root).verification.reason
+    s.verification = Verification(status="verified")
+    assert phrase in revalidate_from_cache(s, root).verification.reason
+
+
+def test_every_citable_query_flags_and_refuses(tmp_path):
+    """The flag and the refusal are written into each query, so this is the gate that a new
+    one has them: every registered CAL-ACCESS query must be in PLANTED, name its unrestated
+    filing, and refuse a database without cover amendment ids."""
+    assert set(PLANTED) == {n for n in queries.REGISTRY if queries.dataset(n) == "CAL-ACCESS"}
+    root = _export(tmp_path / "full")
+    for name, (params, planted) in PLANTED.items():
+        assert planted in [u.filing_id for u in queries.run(name, params, root).unrestated], name
+
+    degraded = _export(tmp_path / "degraded", cover_amend_ids=False)
+    for name, (params, _) in PLANTED.items():
         with pytest.warns(calaccess.DegradedDatabaseWarning), \
                 pytest.raises(calaccess.DegradedDatabase,
                               match="rows a later amendment dropped.*vg calaccess build"):
-            queries.run(name, params, root)
+            queries.run(name, params, degraded)
         with pytest.warns(calaccess.DegradedDatabaseWarning):
-            v = verify_source(cited(name, params, "1"), root).verification
-        assert v.status != "verified" and "vg calaccess build" in v.reason
+            v = verify_source(cited(name, params, "1"), degraded).verification
+        assert v.status != "verified" and "vg calaccess build" in v.reason, name
 
+
+def test_no_cover_table_is_refused_for_what_it_is(tmp_path):
+    """Not the old-build case, which a rebuild from the same zip fixes: the export lacked the
+    table, so the message says so."""
+    root = _export(tmp_path, covers=False)
+    for name in ("calaccess.contributor_total", "calaccess.filer_total",
+                 "calaccess.top_contributor"):
+        with pytest.raises(calaccess.DegradedDatabase, match="no CVR_CAMPAIGN_DISCLOSURE_CD "
+                                                             "table.*complete export"):
+            queries.run(name, PLANTED[name][0], root)
+
+
+def test_a_database_without_cover_amend_ids_says_the_listings_cannot_check(tmp_path):
+    """The listings keep working as finding aids under the refusal, and say they cannot
+    check; a row nobody checked never reads as settled."""
+    root = _export(tmp_path, cover_amend_ids=False)
+    assert calaccess.Contribution("1", "2", "x", "", "", 1.0, "").unrestated is None
     with pytest.warns(calaccess.DegradedDatabaseWarning):
         assert all(c.unrestated is None for c in calaccess.contributions_to(root, FILER))
     with pytest.warns(calaccess.DegradedDatabaseWarning):

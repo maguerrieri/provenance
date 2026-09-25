@@ -968,8 +968,9 @@ def _amendment_footer(marks: list) -> None:
     """Say what a marked row means, or that this database cannot mark any."""
     if any(m is None for m in marks):
         con.print("[yellow]This database cannot tell whether a filing's latest amendment "
-                  "dropped any of these rows: its covers carry no amendment ids. Rebuild it: "
-                  "uv run vg calaccess build[/]")
+                  "dropped any of these rows: its covers carry no amendment ids, or it has no "
+                  "covers at all. Rebuild it from a complete export: uv run vg calaccess "
+                  "build[/]")
     elif flagged := sum(1 for m in marks if m):
         con.print(f"[yellow]{flagged} row(s) come from an amendment a later one did not restate "
                   f"(the 'latest amendment' column). That later amendment withdrew them, or "
