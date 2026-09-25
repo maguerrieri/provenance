@@ -417,7 +417,7 @@ class Reattributed:
     the later amendment withdrew or moved them, or its cover was an update that dropped the
     candidate.
 
-    `amount` and `rows` are what a total left out; a listing leaves them 0.
+    `amount` and `rows` are what a total left out; a listing leaves them 0 and sets `own`.
     """
     filing_id: str
     own_amend: int       # the amendment the rows are from, whose cover named the candidate
@@ -425,6 +425,7 @@ class Reattributed:
     latest: str          # who that cover names (cover_names()), "" for no candidate
     amount: float = 0.0
     rows: int = 0
+    own: str = ""        # who the own amendment's cover names, for the listing's mark
 
     @property
     def cite_url(self) -> str:
@@ -436,18 +437,25 @@ class Reattributed:
                 f"({self.latest_amend}) names {self.latest or 'no candidate'}")
 
     def mark(self) -> str:
-        """The listing's note on the row: who the cover attribution goes by names instead."""
-        return f"a{self.latest_amend}'s cover names {self.latest or 'no candidate'}"
+        """The listing's note on the row: both covers, since the row is listed under its own
+        cover's candidate when the latest names someone else, and under the latest when only
+        the stance moved."""
+        return (f"a{self.own_amend}'s cover names {self.own}; a{self.latest_amend}'s names "
+                f"{self.latest or 'no candidate'}")
 
 
 def cover_names(last, first, stance) -> str:
     """Who and which stance a cover names, as Reattributed.latest has it: "" for no candidate.
     Quoted with repr, as ie_total's near matches are: the names are export text, and a control
-    byte in one would otherwise reach a terminal or a claim file raw."""
+    byte in one would otherwise reach a terminal or a claim file raw. A stance code is named
+    only when it is exactly what ie_total's test matches: "S " fails that test, so calling it
+    support would make a flagged cover read as the one asked for."""
     name = " ".join(x.strip() for x in (first, last) if x and x.strip())
     if not name:
         return ""
-    side = {"S": "support", "O": "oppose"}.get((stance or "").strip().upper(), "no stance")
+    side = {"S": "support", "O": "oppose"}.get((stance or "").upper())
+    if side is None:
+        side = f"stance {stance!r}" if (stance or "").strip() else "no stance"
     return f"{name!r} ({side})"
 
 
@@ -986,9 +994,11 @@ def independent_expenditures(root: Path, candidate_last: str, *, first: str = ""
 
     name_arglist = [f"%{candidate_last}%"] if loose else _nargs(candidate_last, first)
     checkable = covers_by_amendment(con)
+
     def exp(s: str) -> str:
         return f"""{s}.AMOUNT, {iso_date_sql(f"{s}.EXP_DATE")} AS EXP_DATE,
-                   TRIM(COALESCE({s}.EXP_DATE, '')) AS FILED_DATE, {s}.EXPN_DSCR"""
+                   TRIM(COALESCE({s}.EXP_DATE, '')) AS FILED_DATE, {s}.EXPN_DSCR,
+                   CAST({s}.AMEND_ID AS INTEGER) AS OWN_AMEND"""
 
     # Also every row whose own amendment's cover names this candidate while no cover of the
     # latest amendment, which attribution goes by, does (Reattributed): no total for this
@@ -999,13 +1009,12 @@ def independent_expenditures(root: Path, candidate_last: str, *, first: str = ""
         WITH left_out AS MATERIALIZED (
             SELECT s.* FROM S496_LATEST s WHERE {left_out_sql(named)})""", f"""
         UNION ALL
-        SELECT l.FILING_ID, NULL, NULL, NULL, NULL, NULL, {exp("l")},
-               CAST(l.AMEND_ID AS INTEGER)
+        SELECT l.FILING_ID, NULL, NULL, NULL, NULL, NULL, {exp("l")}, 1
         FROM left_out l""") if checkable else ("", "")
     q = f"""{left_out}
         SELECT * FROM (
             SELECT s.FILING_ID, c.FILER_ID, c.FILER_NAML, c.CAND_NAML, c.CAND_NAMF,
-                   c.SUP_OPP_CD, {exp("s")}, NULL AS OWN_AMEND
+                   c.SUP_OPP_CD, {exp("s")}, 0 AS LEFT_OUT
             FROM S496_LATEST s
             JOIN CVR_LATEST c ON c.FILING_ID = s.FILING_ID
             WHERE {named("c")}
@@ -1015,24 +1024,36 @@ def independent_expenditures(root: Path, candidate_last: str, *, first: str = ""
     """
     args = name_arglist * (3 if checkable else 1) + [top]
     rows = [dict(r) for r in con.execute(q, args)]
+    # Marked, and still listed: a finding aid that hid the row would hide the filing to open.
+    gaps = (unrestated_filings(con, "S496_CD", {r["FILING_ID"] for r in rows})
+            if checkable else None)
     for r in rows:
         r["reattributed"] = None
-        if r["OWN_AMEND"] is None:
+        fid = str(r["FILING_ID"])
+        # A row listed under its latest cover can still be one ie_total leaves out: its own
+        # cover named this candidate with the other stance. Only a filing whose latest
+        # amendment has no rows can differ, so only those are asked.
+        if gaps is None or not (r["LEFT_OUT"] or fid in gaps):
             continue
-        # Listed as its own amendment's cover has it. LIMIT 1: an amendment has one cover
-        # record, and should one ever carry two, this takes one that names this candidate.
+        # LIMIT 1: an amendment has one cover record, and should one ever carry two, this
+        # takes one that names this candidate.
         own = con.execute(f"""
             SELECT o.FILER_ID, o.FILER_NAML, o.CAND_NAML, o.CAND_NAMF, o.SUP_OPP_CD
             FROM CVR_CAMPAIGN_DISCLOSURE_CD o
             WHERE o.FILING_ID = ? AND CAST(o.AMEND_ID AS INTEGER) = ? AND {named("o")}
             ORDER BY o.rowid LIMIT 1""", [r["FILING_ID"], r["OWN_AMEND"]] + name_arglist
         ).fetchone()
-        r.update(dict(own))
-        r["reattributed"] = Reattributed(str(r["FILING_ID"]), r["OWN_AMEND"],
-                                         *latest_cover(con, r["FILING_ID"]))
-    # Marked, and still listed: a finding aid that hid the row would hide the filing to open.
-    gaps = (unrestated_filings(con, "S496_CD", {r["FILING_ID"] for r in rows})
-            if checkable else None)
+        same = own is not None and ((own["SUP_OPP_CD"] or "").upper()
+                                    == (r["SUP_OPP_CD"] or "").upper())
+        if not r["LEFT_OUT"] and (own is None or same):
+            continue   # its own cover named someone else, or the same stance: counted as listed
+        if r["LEFT_OUT"]:
+            # listed as its own cover has it; a stance flip stays under the latest, which a
+            # total of that stance counts
+            r.update(dict(own))
+        r["reattributed"] = Reattributed(
+            fid, r["OWN_AMEND"], *latest_cover(con, fid),
+            own=cover_names(own["CAND_NAML"], own["CAND_NAMF"], own["SUP_OPP_CD"]))
     con.close()
     for r in rows:
         # None when the database cannot check, as for Contribution

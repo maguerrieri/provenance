@@ -1010,12 +1010,11 @@ def _amendment_footer(marks: list, omitted: list = (), reattributed: list | None
                   f"only the filing says which: open it before using the row. A figure that "
                   f"leaves one out goes to human_review.[/]")
     if moved := sum(1 for r in reattributed or () if r):
-        con.print(f"[yellow]{moved} row(s) are listed under the candidate their own amendment's "
-                  f"cover named, though the filing's latest cover, which decides whose money a "
-                  f"row is, names another candidate or none (the 'latest amendment' column). No "
-                  f"total for this candidate counts them, and only the filing says which cover "
-                  f"is right: open it before using the row. A total that leaves one out goes to "
-                  f"human_review.[/]")
+        con.print(f"[yellow]{moved} row(s) have an earlier cover naming this candidate where the "
+                  f"latest cover, which decides whose money a row is, names another candidate, "
+                  f"the other stance or none (the 'latest amendment' column). A total asking for "
+                  f"what the earlier cover says leaves the row out and goes to human_review. "
+                  f"Only the filing says which cover is right: open it before using the row.[/]")
 
 
 @calaccess_app.command("independent-expenditures")
@@ -1055,6 +1054,20 @@ def calaccess_ie(candidate_last: str, data: Path = DATA, cache: Path = None, fir
                       reattributed=[r["reattributed"] for r in rows])
 
 
+def _unsettled_rest(result) -> None:
+    """Every filing, schedule or late report past the few a reason names (UNSETTLED_SHOWN,
+    LATE_SHOWN). The reason says `vg query` lists them, so this is where they are."""
+    from . import queries
+
+    for u in (result.unrestated[queries.UNSETTLED_SHOWN:]
+              + result.omitted[queries.UNSETTLED_SHOWN:]):
+        con.print(Text(f"  {queries.share_text(u)}", style="yellow"), soft_wrap=True)
+    for u in result.reattributed[queries.UNSETTLED_SHOWN:]:
+        con.print(Text(f"  {queries.left_out_text(u)}", style="yellow"), soft_wrap=True)
+    for r in result.late[queries.LATE_SHOWN:]:
+        con.print(Text(f"  {queries.late_text(r)}", style="yellow"), soft_wrap=True)
+
+
 @app.command(name="query")
 def run_query(name: str = typer.Argument(""), param: list[str] = None, data: Path = DATA,
               cache: Path = None):
@@ -1086,14 +1099,13 @@ def run_query(name: str = typer.Argument(""), param: list[str] = None, data: Pat
         raise typer.Exit(1) from None
     if not result.found:
         # Escaped: the note lists near-matches, which are filer names from the export.
-        con.print(f"[yellow]{'nothing counted' if result.omitted else 'no match'}[/] — "
-                  f"{escape(result.note)}")
+        what = "nothing counted" if result.omitted or result.reattributed else "no match"
+        con.print(f"[yellow]{what}[/] — {escape(result.note)}")
         if result.unsettled:
             # every match was left out: name the filings, or the miss reads as "gave nothing"
             con.print(Text(f"Not a finding: {result.unsettled}", style="yellow"),
                       soft_wrap=True)
-            for u in result.omitted[queries.UNSETTLED_SHOWN:]:
-                con.print(Text(f"  {queries.share_text(u)}", style="yellow"), soft_wrap=True)
+            _unsettled_rest(result)
         raise typer.Exit(1)
     # Printed as Text, never as a markup string: researchers copy this value into `expected`
     # verbatim, and a str would lose "[b]" to markup and wrap at 80 columns when stdout is not
@@ -1104,13 +1116,7 @@ def run_query(name: str = typer.Argument(""), param: list[str] = None, data: Pat
         # Before a researcher records it: this value goes to human_review however it is cited.
         # The reason names the largest few; the rest are listed here, where there is room.
         con.print(Text(f"Will not verify: {why}", style="yellow"), soft_wrap=True)
-        for u in (result.unrestated[queries.UNSETTLED_SHOWN:]
-                  + result.omitted[queries.UNSETTLED_SHOWN:]):
-            con.print(Text(f"  {queries.share_text(u)}", style="yellow"), soft_wrap=True)
-        for r in result.late[queries.LATE_SHOWN:]:
-            con.print(Text(f"  {queries.late_text(r)}", style="yellow"), soft_wrap=True)
-        for u in result.reattributed[queries.UNSETTLED_SHOWN:]:
-            con.print(Text(f"  {queries.left_out_text(u)}", style="yellow"), soft_wrap=True)
+        _unsettled_rest(result)
     # What the review page prints beside the command, so a reviewer can see they reproduced
     # the figure under the same definition and against the same export — or that they didn't.
     where = f"{_export_line(root)}, " if queries.dataset(name) == "CAL-ACCESS" else ""

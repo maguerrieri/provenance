@@ -306,6 +306,12 @@ class QueryResult:
                 # Still shown: another schedule that does count the gift is a different figure,
                 # and the claim decides whether it is the one to cite.
                 n += ". Not counted here: " + "; ".join(self.suggestions[:4])
+        elif not self.found and self.reattributed:
+            # Not "no match" either: ie_total's matches are in filings whose latest cover names
+            # someone else, as the detail says, and `unsettled` names each one. A near name is
+            # still shown: another candidate, or this one filed another way.
+            if self.suggestions:
+                n += " — similar names: " + "; ".join(self.suggestions[:4])
         elif not self.found and self.suggestions:
             n += " — NO MATCH. Did you mean: " + "; ".join(self.suggestions[:4])
         elif not self.found:
@@ -1207,12 +1213,13 @@ def _ie_total(root: Path, *, candidate_last: str, first: str = "", stance: str =
         """, args * 2 + window_args).fetchall()]
     if n == 0:
         if reattributed:
-            # Not a flag here: a miss never verifies. It says why, or it reads as "nobody
-            # spent on this candidate" when a filing's own amendment says someone did.
-            left_out += ("; not counted, because the filing's latest cover names another "
-                         "candidate, the other stance or none: "
-                         + _listed(reattributed, left_out_text, UNSETTLED_SHOWN,
-                                   "filing(s) with smaller amounts"))
+            # Carried on the miss below, as the receipt queries carry a left-out schedule: a
+            # miss with an unsettled reason goes to a person (`vg verify`), and that reason
+            # names each filing, so the detail only says why nothing was counted. Without it
+            # the miss read as "nobody spent on this candidate" when a filing's own amendment
+            # says someone did.
+            left_out += (f"; {sum(u.rows for u in reattributed)} more whose filing's latest "
+                         f"cover names another candidate, the other stance or none, not counted")
         # The failure this guard exists for: a committee filed the candidate's whole name in
         # the last-name field, so a (last, first) filter found nothing and SUM() returned 0.0:
         # a confident "nobody spent against them", wrong by the largest expenditure in the race.
@@ -1227,9 +1234,11 @@ def _ie_total(root: Path, *, candidate_last: str, first: str = "", stance: str =
         """, (f"%{candidate_last.strip()}%", f"%{candidate_last.strip()}%"))]
         con.close()
         # "counted": with rows left out, there were expenditures -- just none this can sum
-        return _no_rows(f"no {stance or 'any'}-stance expenditures"
+        miss = _no_rows(f"no {stance or 'any'}-stance expenditures"
                         + (" counted" if left_out else "")
                         + (f" in {span}" if window else "") + left_out, near)
+        miss.reattributed = reattributed
+        return miss
     # Only the rows the total counts: one left out of the window, or with no readable amount,
     # has no share in it.
     unrestated = calaccess.unrestated_shares(con, "S496_CD", [

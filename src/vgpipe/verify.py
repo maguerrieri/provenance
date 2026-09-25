@@ -113,8 +113,9 @@ def verify_query_source(src: Source, root: Path) -> Source:
 
     if not result.found and (why := result.unsettled):
         # Nothing counted, and every match with a readable amount is on a schedule a later
-        # amendment left out. A retry of these parameters cannot reproduce it, and a retry
-        # invites a mirror; only the filing says whether the rows stand, so a person opens it.
+        # amendment left out, or (ie_total) in a filing whose latest cover names someone else.
+        # A retry of these parameters cannot reproduce it, and a retry invites a mirror; only
+        # the filing says whether the rows stand, so a person opens it.
         # The claimed figure is named, since nothing here checks it against the filing.
         v.query_run = run
         v.status = "human_review"
