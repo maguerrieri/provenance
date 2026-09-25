@@ -796,6 +796,11 @@ def _top_contributor(root: Path, *, filer_id: str,
     business that gave nothing "the largest contributor", and an in-kind item (C) could decide
     between two donors. Pass another schedule to rank by that one, or "" for every schedule.
 
+    A tie is every contributor within half a cent (TOLERANCE) of the top, listed whole however
+    many there are, in name order. A large tie is not refused: the whole set is a true answer
+    that reproduces, the detail says it is no single largest contributor, and a cap would be an
+    arbitrary number turning that answer into a miss.
+
     Left unset, it is a miss when a late-reported gift no schedule A restates yet
     (`_pending_late`) could change the answer: when adding a contributor's pending late gifts
     to their schedule-A total could reach the top, or a late gift could break a tie. A late
@@ -813,8 +818,8 @@ def _top_contributor(root: Path, *, filer_id: str,
     args: list[Any] = [str(filer_id)] + schedule_args
     # Only gifts with an amount are ranked: read as 0.0, a contributor whose gifts all had blank
     # amounts tied one whose stated total was $0. The rest are counted, by a window over every
-    # contributor taken before the LIMIT, so the dedup runs once. A contributor with no readable
-    # gift sums to NULL, which sorts last and is never ranked.
+    # contributor, so the dedup runs once. A contributor with no readable gift sums to NULL,
+    # which sorts last and is never ranked.
     group = f"""
         SELECT d.CTRIB_NAML nm, d.CTRIB_NAMF nf, SUM(d.AMT) amt, COUNT(d.AMT) n,
                SUM(COUNT(*) - COUNT(d.AMT)) OVER () unread, UPPER(TRIM(d.CTRIB_NAML)) kl,
@@ -822,13 +827,14 @@ def _top_contributor(root: Path, *, filer_id: str,
         FROM ({inner}) d
         GROUP BY UPPER(TRIM(d.CTRIB_NAML)), UPPER(TRIM(COALESCE(d.CTRIB_NAMF,'')))
     """
-    # Every contributor's total only when a late entry has to be weighed against them.
-    groups = con.execute(f"{group} ORDER BY amt DESC" + ("" if late else " LIMIT 4"),
-                         args).fetchall()
+    # Every contributor's total, not the first few: a tie is everyone at the top. Fetched with
+    # LIMIT 4, five givers at the contribution limit came back as a four-way tie naming
+    # whichever four SQLite picked, and that value reproduced. The names order equal totals, so
+    # the late-report check below reads them in one order too.
+    groups = con.execute(f"{group} ORDER BY amt DESC, kl, kf", args).fetchall()
     unread = int(groups[0]["unread"] or 0) if groups else 0
     groups = [g for g in groups if g["amt"] is not None]
-    rows = groups[:4]
-    row = rows[0] if rows else None
+    row = groups[0] if groups else None
     if row is None:
         note, hint = _elsewhere(con, filer_id, form_type)
         con.close()
@@ -837,7 +843,7 @@ def _top_contributor(root: Path, *, filer_id: str,
                         f"filer {filer_id}{_unread(unread)}{note}"
                         + (f"; {late_note}" if late_note else ""), hint)
     top = float(row["amt"] or 0)
-    tied = [r for r in rows if abs(float(r["amt"] or 0) - top) < TOLERANCE]
+    tied = [r for r in groups if abs(float(r["amt"] or 0) - top) < TOLERANCE]
     names = [" ".join(x for x in (r["nf"], r["nm"]) if x).strip() for r in tied]
     if unread:
         # A total can say "the stated gifts come to X" and name what it left out. A rank
@@ -872,9 +878,9 @@ def _top_contributor(root: Path, *, filer_id: str,
         "could change the ranking" if contenders else "cannot change the ranking"))
     note = f"; {note}" if note else ""
     # Held for a person only when one could change it, naming the ones that could: a ranking no
-    # late gift can move stands, and a report that cannot move it is not the one to open. A
-    # contender can hold no late entry of its own (a tied giver past LIMIT 4, #79): the ranking
-    # is still unsettled, so every late report is held rather than none.
+    # late gift can move stands, and a report that cannot move it is not the one to open. If no
+    # contender holds a late entry of its own, the ranking is still unsettled, so every late
+    # report is held rather than none: holding none would let it verify.
     held = _by_report(moving or late) if contenders else []
     if len(tied) > 1:
         # ORDER BY ... LIMIT 1 makes an arbitrary pick among equals, and a verifier rightly
@@ -1092,6 +1098,8 @@ REGISTRY: dict[str, Query] = {
     # v6 of the three: with form_type A or "" named, a database that cannot read Form 497
     # refuses where v5 answered. The value is otherwise unchanged; a pending late gift now holds
     # it for a person (`QueryResult.late`), which verification acts on.
+    # v7 of top_contributor: a tie is every contributor at the top. v6 built it from the first
+    # four rows, so a tie of five or more named four of them.
     "calaccess.contributor_total": Query(
         _contributor_total, ("filer_id", "contributor"),
         "contributions from one contributor (add contributor_first for an individual; "
@@ -1103,7 +1111,7 @@ REGISTRY: dict[str, Query] = {
     "calaccess.top_contributor": Query(
         _top_contributor, ("filer_id",),
         "the largest contributor to a filer, by itemized total (schedule A unless form_type "
-        "says otherwise; a miss while a pending late gift could change it)", 6),
+        "says otherwise; a miss while a pending late gift could change it)", 7),
     "calaccess.ie_total": Query(
         _ie_total, ("candidate_last", "first"),
         "late independent expenditures naming a candidate; pass stance and since/until", 2),
