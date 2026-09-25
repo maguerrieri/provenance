@@ -136,6 +136,49 @@ def test_json_nested_too_deeply_to_read_is_refused_not_skipped():
     _refused(f"curl '{URL}?filter={deep}'", "too deeply")
 
 
+# #155's reproduction. Reading this body as JSON raised the nested URL's refusal, and the
+# `except` meant for a body that isn't JSON swallowed it along with `api_key`. The body then
+# went to the form reading, which finds no `=` in a JSON object, and it was recorded.
+UNPARSEABLE_NEXT = '{"api_key":"SECRET","next":"http://[bad"}'
+
+
+@pytest.mark.parametrize("content_type", ["", "application/x-www-form-urlencoded",
+                                          "application/json"])
+def test_a_json_body_holding_a_url_that_cant_be_parsed_is_refused(content_type):
+    header = f" -H 'Content-Type: {content_type}'" if content_type else ""
+    curl = f"curl 'https://example.gov/api'{header} --data-raw '{UNPARSEABLE_NEXT}'"
+    with pytest.raises(ValueError, match="URL that can't be parsed") as e:
+        parse_curl(curl)
+    assert "SECRET" not in str(e.value)
+    # The same body without the URL is refused for the credential it names.
+    with pytest.raises(ValueError, match=r"in its body \(api_key\)"):
+        parse_curl(curl.replace(',"next":"http://[bad"', ""))
+
+
+@pytest.mark.parametrize("curl", [
+    # Deeper in a JSON body, where the refusal passes through more of the reading.
+    "curl -d '" + json.dumps({"q": {"filters": [{"api_key": FAKE, "links": ["http://[bad"]}]}})
+    + f"' {URL}",
+    # JSON in a form field.
+    "curl -d 'payload=" + json.dumps({"api_key": FAKE, "next": "http://[bad"}) + f"&a=b' {URL}",
+    # A URL in a URL, in the query.
+    f"curl '{URL}?api_key={FAKE}&next=/cb?u=http://[bad'",
+])
+def test_a_url_that_cant_be_parsed_is_refused_wherever_it_sits(curl):
+    _refused(curl, "URL that can't be parsed")
+
+
+@pytest.mark.parametrize("headers", [{}, {"Content-Type": "application/x-www-form-urlencoded"},
+                                     {"Content-Type": "application/json"}])
+def test_run_refuses_a_json_body_holding_a_url_that_cant_be_parsed(headers, monkeypatch):
+    sent = _sent(monkeypatch)
+    r = Recipe(id="bad", method="POST", url="https://example.gov/api", headers=headers,
+               body=UNPARSEABLE_NEXT)
+    with pytest.raises(ValueError, match="URL that can't be parsed") as e:
+        run(r, {})
+    assert "SECRET" not in str(e.value) and not sent
+
+
 def test_a_json_string_body_sent_as_a_form_is_read_as_a_form_too():
     """The server reads a body the way its content type says, whatever it looks like."""
     _refused(f"""curl -d '"q=x&token={FAKE}"' {URL}""", "in its body")
