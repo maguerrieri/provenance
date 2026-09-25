@@ -531,6 +531,13 @@ def _name_words(last: Any, first: Any = "") -> frozenset[str]:
     return frozenset(re.findall(r"[^\W_]+", f"{first or ''} {last or ''}".upper()))
 
 
+def _shown(first: Any, last: Any) -> str:
+    """A name as a result shows it: first name first, each part trimmed. A ranking groups on
+    trimmed names, so one group's rows can pad a part ("Rue "), and joining the parts untrimmed
+    put a double space in a value on some builds and not others."""
+    return " ".join(p for p in (str(first or "").strip(), str(last or "").strip()) if p)
+
+
 def _could_be(a: frozenset[str], b: frozenset[str]) -> bool:
     """Whether two names could be one giver: one's words all in the other's. A middle
     initial, a bare surname, a short form of an organization's name, or no name at all could
@@ -797,9 +804,10 @@ def _top_contributor(root: Path, *, filer_id: str,
     between two donors. Pass another schedule to rank by that one, or "" for every schedule.
 
     A tie is every contributor within half a cent (TOLERANCE) of the top, listed whole however
-    many there are, sorted by name as displayed (first name first), ignoring case. A large tie is not refused: the whole set is a true answer
-    that reproduces, the detail says it is no single largest contributor, and a cap would be an
-    arbitrary number turning that answer into a miss.
+    many there are, by name as displayed (first name first) and ignoring case. A large tie is
+    not refused: the whole set is a true answer that reproduces, and the detail says it is no
+    single largest contributor. A cap would be an arbitrary number turning that answer into a
+    miss. The cost is a value as long as the tie, which a citation records whole.
 
     Left unset, it is a miss when a late-reported gift no schedule A restates yet
     (`_pending_late`) could change the answer: when adding a contributor's pending late gifts
@@ -820,8 +828,11 @@ def _top_contributor(root: Path, *, filer_id: str,
     # amounts tied one whose stated total was $0. The rest are counted, by a window over every
     # contributor, so the dedup runs once. A contributor with no readable gift sums to NULL,
     # which sorts last and is never ranked.
+    # MIN, not a bare column: a group's rows can spell its name in another case or with padding,
+    # and a bare column is whichever row SQLite reads, so the value's spelling could change
+    # with the order the rows were loaded in.
     group = f"""
-        SELECT d.CTRIB_NAML nm, d.CTRIB_NAMF nf, SUM(d.AMT) amt, COUNT(d.AMT) n,
+        SELECT MIN(d.CTRIB_NAML) nm, MIN(d.CTRIB_NAMF) nf, SUM(d.AMT) amt, COUNT(d.AMT) n,
                SUM(COUNT(*) - COUNT(d.AMT)) OVER () unread, UPPER(TRIM(d.CTRIB_NAML)) kl,
                UPPER(TRIM(COALESCE(d.CTRIB_NAMF,''))) kf
         FROM ({inner}) d
@@ -844,10 +855,10 @@ def _top_contributor(root: Path, *, filer_id: str,
                         + (f"; {late_note}" if late_note else ""), hint)
     top = float(row["amt"] or 0)
     tied = [r for r in groups if abs(float(r["amt"] or 0) - top) < TOLERANCE]
-    names = [" ".join(x for x in (r["nf"], r["nm"]) if x).strip() for r in tied]
-    # Sorted as displayed, ignoring case. Each name is spelled as one of its group's rows,
-    # whichever SQLite reads, so a case-sensitive sort put "Rue ABBOT" before "Rue Aaron" or
-    # after it depending on that row, and `matches()` ignores case but not order.
+    names = [_shown(r["nf"], r["nm"]) for r in tied]
+    # Sorted as displayed, ignoring case. A later export can add a row that spells a name in
+    # another case, and a case-sensitive sort then moved "Rue ABBOT" from after "Rue Aaron" to
+    # before it: `matches()` ignores case but not order.
     listed = " | ".join(sorted(names, key=str.casefold))
     if unread:
         # A total can say "the stated gifts come to X" and name what it left out. A rank
@@ -915,8 +926,7 @@ def _could_change_ranking(groups: list[Any], tied: list[Any], top: float,
     to, and no leader of a tie could move.
     """
     scheduled = {(g["kl"], g["kf"]): float(g["amt"] or 0) for g in groups}
-    names = {(g["kl"], g["kf"]): " ".join(x for x in (g["nf"], g["nm"]) if x).strip()
-             for g in groups}
+    names = {(g["kl"], g["kf"]): _shown(g["nf"], g["nm"]) for g in groups}
     words = {(g["kl"], g["kf"]): _name_words(g["nm"], g["nf"]) for g in groups}
     # Givers only the late reports name. Found before any entry is counted, so each is held
     # against every late entry, not only those after it: counted as they came, "Ada Quennell"
@@ -927,8 +937,7 @@ def _could_change_ranking(groups: list[Any], tied: list[Any], top: float,
         mine = _name_words(e["naml"], e["namf"])
         if not any(_could_be(mine, w) for w in on_schedule):
             words.setdefault(("", mine), mine)
-            names.setdefault(("", mine), " ".join(x for x in (e["namf"], e["naml"]) if x)
-                             .strip())
+            names.setdefault(("", mine), _shown(e["namf"], e["naml"]))
     lo = dict(scheduled)
     hi = dict(scheduled)
     owed: dict[Any, list[float | None]] = {}
@@ -943,8 +952,8 @@ def _could_change_ranking(groups: list[Any], tied: list[Any], top: float,
             entries.setdefault(k, []).append(e)
             lo[k] = -float("inf") if a is None else lo[k] + min(a, 0.0)
             hi[k] = float("inf") if a is None else hi[k] + max(a, 0.0)
-    # Ordered as the tie is, so the leaders who could move list in one order: as a set they
-    # listed by hash, which changes from one process to the next.
+    # Not a set: a set iterates by hash, which changes from one process to the next, and the
+    # leaders' order is the last word on the order of two who reach as high under one name.
     leaders = dict.fromkeys((r["kl"], r["kf"]) for r in tied)
     floor = min(lo[k] for k in leaders)
     could = [k for k in hi if k not in leaders and hi[k] > floor - TOLERANCE]
@@ -960,8 +969,11 @@ def _could_change_ranking(groups: list[Any], tied: list[Any], top: float,
         return (f"{names[k] or 'an unnamed giver'} (${scheduled.get(k, 0.0):,.0f} on {label}, "
                 f"{late_part})")
 
+    # Highest reach first, then by name as a tie is listed, so a refusal names the same three
+    # on every run: in load order, two late givers filed the same day could swap.
     moving = {id(e): e for k in could for e in entries.get(k, [])}
-    return [described(k) for k in sorted(could, key=lambda k: -hi[k])], list(moving.values())
+    return ([described(k) for k in sorted(could, key=lambda k: (-hi[k], names[k].casefold()))],
+            list(moving.values()))
 
 
 def _ie_total(root: Path, *, candidate_last: str, first: str = "", stance: str = "",
@@ -1104,8 +1116,10 @@ REGISTRY: dict[str, Query] = {
     # v6 of the three: with form_type A or "" named, a database that cannot read Form 497
     # refuses where v5 answered. The value is otherwise unchanged; a pending late gift now holds
     # it for a person (`QueryResult.late`), which verification acts on.
-    # v7 of top_contributor: a tie is every contributor at the top. v6 built it from the first
-    # four rows, so a tie of five or more named four of them.
+    # v7 of top_contributor: a tie is every contributor at the top, sorted ignoring case, and
+    # each name is spelled the same whatever order its rows were loaded in (MIN, trimmed). v6
+    # built the tie from the first four rows, so a tie of five or more named four of them, and
+    # it sorted with case and spelled a name from whichever row SQLite read.
     "calaccess.contributor_total": Query(
         _contributor_total, ("filer_id", "contributor"),
         "contributions from one contributor (add contributor_first for an individual; "
