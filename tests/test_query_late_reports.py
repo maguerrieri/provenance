@@ -45,9 +45,13 @@ FILINGS = ("FILER_ID\tFILING_ID\tFORM_ID\tFILING_DATE\n"
 # another filer's statement covering the late period: it restates nothing of ours
 OTHER_460 = (f"9990671\t0\tCVR\tF460\t{OTHER_FILER}\tExample Hills Committee\t7/1/2026{DAY}"
              f"\t12/31/2026{DAY}\t11/3/2026{DAY}\t\t\t\n")
+# Our Form 496 has a cover too: a filing with rows and none is unsettled (#141), and these
+# tests are about late reports, not that.
 COVERS = (CVR_HEAD
           + f"{F460}\t0\tCVR\tF460\t{FILER}\tNeighbors for Example Valley\t1/1/2026{DAY}"
             f"\t6/30/2026{DAY}\t11/3/2026{DAY}\t\t\t\n"
+          + f"{F496}\t0\tCVR\tF496\t{FILER}\tNeighbors for Example Valley\t\t\t11/3/2026{DAY}"
+            f"\t\t\t\n"
           + OTHER_460)
 
 

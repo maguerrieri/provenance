@@ -2216,7 +2216,8 @@ def test_top_contributor_does_not_merge_donors_by_surname(tmp_path):
     with zipfile.ZipFile(tmp_path / "cache" / "calaccess" / "dbwebexport.zip", "w") as zf:
         zf.writestr("CalAccess/DATA/RCPT_CD.TSV", receipts)
         zf.writestr("CalAccess/DATA/FILER_FILINGS_CD.TSV", filings)
-        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", "FILING_ID\tAMEND_ID\n")
+        # a cover for the filing: one with none is unsettled, and an empty table is refused
+        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", "FILING_ID\tAMEND_ID\n1\t0\n")
     calaccess.build(tmp_path)
 
     got = queries.run("calaccess.top_contributor", {"filer_id": "7"}, tmp_path)
@@ -2295,7 +2296,9 @@ def test_one_gift_reported_on_two_forms_counts_once(tmp_path):
     with zipfile.ZipFile(tmp_path / "cache" / "calaccess" / "dbwebexport.zip", "w") as zf:
         zf.writestr("CalAccess/DATA/RCPT_CD.TSV", receipts)
         zf.writestr("CalAccess/DATA/FILER_FILINGS_CD.TSV", filings)
-        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", "FILING_ID\tAMEND_ID\n")
+        # a cover per filing: one with none is unsettled, and an empty table is refused
+        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV",
+                    "FILING_ID\tAMEND_ID\n9990008\t0\n9990007\t0\n")
     calaccess.build(tmp_path)
 
     got = queries.run("calaccess.contributor_total",
@@ -2331,7 +2334,8 @@ def test_an_individual_donor_needs_a_first_name(tmp_path):
     with zipfile.ZipFile(tmp_path / "cache" / "calaccess" / "dbwebexport.zip", "w") as zf:
         zf.writestr("CalAccess/DATA/RCPT_CD.TSV", receipts)
         zf.writestr("CalAccess/DATA/FILER_FILINGS_CD.TSV", filings)
-        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", "FILING_ID\tAMEND_ID\n")
+        # a cover for the filing: one with none is unsettled, and an empty table is refused
+        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", "FILING_ID\tAMEND_ID\n1\t0\n")
     calaccess.build(tmp_path)
 
     merged = queries.run("calaccess.contributor_total",
@@ -2418,7 +2422,8 @@ def test_top_contributor_reports_a_tie_instead_of_picking_one(tmp_path):
     with zipfile.ZipFile(tmp_path / "cache" / "calaccess" / "dbwebexport.zip", "w") as zf:
         zf.writestr("CalAccess/DATA/RCPT_CD.TSV", receipts)
         zf.writestr("CalAccess/DATA/FILER_FILINGS_CD.TSV", filings)
-        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", "FILING_ID\tAMEND_ID\n")
+        # a cover for the filing: one with none is unsettled, and an empty table is refused
+        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", "FILING_ID\tAMEND_ID\n1\t0\n")
     calaccess.build(tmp_path)
 
     got = queries.run("calaccess.top_contributor", {"filer_id": "7"}, tmp_path)
