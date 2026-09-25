@@ -460,14 +460,28 @@ verdict notes, pages and recipe responses, CAL-ACCESS and FPPC rows, race and re
 arguments an agent passes, paths, and exception text, which quotes any of these. Only numbers,
 the pipeline's own enums (statuses, verdicts), pattern-checked question ids and the code's own
 literals go in bare.
+- **Printing data is `escape(_printable(x))` in a markup string, or `Text(_printable(x))`.**
+  Escaping settles markup only, and a terminal reads more than brackets. rich's `Text` strips
+  only BEL, BS, VT, FF and CR, so ESC and C1 sequences went out unchanged: `\x1b[2K` in a filer
+  name, a recipe response or a claim's publisher erased the line it landed on, and the rest can
+  move the cursor and overwrite what the command printed. A bidi override reorders what follows
+  it. And a lone surrogate made the print raise `UnicodeEncodeError`: `json.loads` keeps one, and
+  an undecodable byte in argv arrives as one, so a refusal quoting its argument died with a
+  traceback and the wrong exit code. `cli._printable()` shows each of these as an escape
+  (`\x1b`, `\ud800`). A URL needs it too: `_http_only()` refuses C0 controls and whitespace,
+  not a C1 control or a bidi override. `repr()` already escapes the same characters, so a
+  `{x!r}` needs neither.
+- **Multi-line data keeps its lines: `_printable(x, lines=True)`.** `_printable()` shows a line
+  break as `\x0a`, so text is printed on the line it is given. Page text, a response body and a
+  YAML entry are copied from, and pydantic's message has line breaks of its own, so those go
+  line by line: `\n` (or `\r\n`) stays a break, and any other (a lone CR, NEL, U+2028) shows.
 - **Escaping each value is not escaping the message.** `escape()` neutralises only a tag complete
   inside the value it is given. `[/` in one value and `x]` in the next, with plain text between,
   still made the closing tag `[/ x]`: `vg form700 '[/' 'x]'` raised, and so did
   `vg handoff '[/' --data 'x]'` instead of refusing. In a line, escape a run of data as one
-  string: `escape(f"{first} {last}")`, not `{escape(first)} {escape(last)}`. Or print the whole
-  message as one `Text`, as `cli._refuse()` does for the refusals `vg judge` and `vg handoff`
-  print (through `_printable()`, since an argument can also carry a control character or a lone
-  surrogate).
+  string: `escape(_printable(f"{first} {last}"))`, not `{escape(first)} {escape(last)}`. Or
+  print the whole message as one `Text`, as `cli._refuse()` does for the refusals `vg judge`
+  and `vg handoff` print.
 - **Refuse a malformed argument before anything prints it.** `vg judge`, `vg handoff` and
   `vg clear-contradiction` check the question id with `judgments.path_for()` first, so the id
   they print afterwards is a pattern-checked one.
@@ -484,15 +498,19 @@ literals go in bare.
 - **`escape()` leaves emoji shortcodes alone,** so the console is built with `emoji=False`.
   Otherwise `:ok:` in a note or a filer name printed as an emoji.
 
-Every print site in `cli.py` follows this, and a new one has to. That settles markup only. A
-lone surrogate still makes a print raise, and ESC or C1 sequences in a `Text` still reach the
-terminal. `_printable()` handles both, but only `vg handoff`, `vg judge` and the shared helpers
-they call (the `load_claims()` skip lines, the cache-root refusals) use it so far (#142).
+Every print site in `cli.py` follows this, and a new one has to.
 
 Test with both kinds of text. Whether a stray tag raises or silently vanishes depends on the tags
 around it. In `[yellow]{x}[/]`, an `x` of `[/] [sic]` closes yellow, opens `[sic]`, and the
 line's own `[/]` closes that: nothing raises, and nothing prints. So assert that the text comes
-out as written, not only that nothing raised (`tests/test_cli_markup.py`).
+out as written, not only that nothing raised (`tests/test_cli_markup.py`). For control
+characters, `tests/test_cli_control_chars.py` runs each command with them where it prints data,
+and its `_vg()` fails on any character that acts on a terminal anywhere in the output.
+
+A print that raised leaves its text in rich's buffer, and every later print in the process tries
+to write it again. In the test suite, one surrogate crash failed every CLI test after it, each
+quoting the first one's text. `test_cli_control_chars._vg()` empties `cli.con._buffer` after each
+run, so a regression fails only its own test.
 
 A test that widens the console must not pin it. `cli.con.width = n` sets rich's `_width`, and
 putting back the value read beforehand sets it again, to the width rich computed (80 under
