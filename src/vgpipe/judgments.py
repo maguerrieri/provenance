@@ -20,6 +20,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import time
 from contextlib import contextmanager
 from dataclasses import MISSING, asdict, dataclass, fields
@@ -157,6 +158,12 @@ def backup_dir(root: Path) -> Path:
     """Where a re-home by the retired `vg remap` kept every shard as it was while it rewrote
     them. Nothing writes it now, so one that exists was left by an interrupted re-home."""
     return root / "judgments-backup"
+
+
+def archive_dir(root: Path) -> Path:
+    """Where verdicts taken out of the live shards are kept, one directory per run: clear()
+    keeps a contradiction a human cleared here, with the reason."""
+    return root / "judgments-archive"
 
 
 # Every holder keeps the lock for one shard read or one rewrite: milliseconds. Waiting longer
@@ -395,6 +402,136 @@ def record(root: Path, question_id: str, sid: str, verdict: str, note: str = "",
         existing[sid] = j
         _write(p, existing.values())
     return j
+
+
+def dropped(claim, judged: dict[str, Judgment]) -> list:
+    """The `contradicts` verdicts in a claim's shard on a source the claim no longer cites.
+
+    Such a verdict does not lapse with its sid as the others do. It says the record argues
+    against the claim, and a retry that drops the source takes that off the review page
+    without resolving it: the claim rendered `verified` on the sources that agree. So it holds
+    the claim (`Claim.dropped_contradictions`) until the source is cited again, which applies
+    it as usual, or a human clears it (`clear()`).
+
+    "No longer cites" is by sid, which covers url and snippet: a retry that re-quotes the same
+    page holds the claim too, since a new quote can be a more agreeable passage of a page that
+    argued against it. A verdict filed under the claim before `vg judge` checked that it cites
+    the source is held the same way. Each fails toward review, where a human can clear it.
+
+    Never checked for staleness: that compares a verdict with the source it judged, which the
+    claim no longer carries, and `vg judge` cannot re-judge a source nothing cites. Holding the
+    claim in review is the direction to fail in."""
+    from .models import DroppedContradiction
+
+    cited = {s.sid for s in claim.sources}
+    return [DroppedContradiction(sid=sid, note=j.note or "", judged_at=j.judged_at)
+            for sid, j in judged.items() if j.verdict == "contradicts" and sid not in cited]
+
+
+def clear(root: Path, question_id: str, sid: str, reason: str, *, shown=None) -> Path:
+    """Take one `contradicts` verdict out of the live shard on a human's word, and keep it under
+    archive_dir() with the reason beside it. Returns the directory it went to.
+
+    For a contradiction a retry dropped (`dropped()`): the caller checks that the claim no
+    longer cites the source. One on a cited source is the claim's own evidence disagreeing, and
+    stays live. `shown` is the `DroppedContradiction` the person was shown: a verdict re-judged
+    since then is refused, since the reason was given for the one they read.
+
+    The archive is complete or absent: built beside its name with the verdict and the reason,
+    made durable, renamed into place, and only then is the shard rewritten. If that rewrite
+    fails, the shard still holds the verdict and the archive is taken back out, so a re-run
+    leaves one copy. Only a kill between the two leaves the verdict in both places, where the
+    live copy still holds the claim. Never in neither."""
+    if not reason.strip():
+        raise ValueError("a clearance needs a reason: it is what the record keeps in place of "
+                         "the verdict")
+    p = path_for(root, question_id)
+    with _lock(root):
+        refuse_if_interrupted(root)
+        shard = _read(p)
+        j = shard.get(sid)
+        if j is None:
+            raise ValueError(f"{p} holds no verdict for source {sid}")
+        if j.verdict != "contradicts":
+            raise ValueError(f"the verdict for source {sid} in {p} is {j.verdict}, not "
+                             f"contradicts: a lapsed {j.verdict} holds nothing to clear")
+        if shown is not None and (j.note or "", j.judged_at) != (shown.note, shown.judged_at):
+            raise ValueError(f"the verdict for source {sid} in {p} was judged again (at "
+                             f"{j.judged_at}) after it was shown: run the command again to read "
+                             f"it before clearing it")
+        stamp = _stamp()
+        dest = archive_dir(root) / stamp
+        building = dest.with_name(f".{stamp}.partial")
+        placed = False
+        try:
+            _archive(building, {question_id: {sid: j}})
+            now = datetime.now(UTC).isoformat(timespec="seconds")
+            _durable_text(building / _CLEARED_NAME,
+                          f"{question_id}/{sid} cleared {now}: {reason.strip()}\n")
+            _fsync_dir(building)
+            os.replace(building, dest)
+            placed = True
+            # The whole path to it, since mkdir may have made judgments-archive/ just now: a
+            # power loss that kept the shard rewrite and not the archive's entry would lose it.
+            for d in (dest.parent, root):
+                _fsync_dir(d)
+        except BaseException:
+            # The shard is untouched, so the archive goes, wherever it had got to.
+            shutil.rmtree(dest if placed else building, ignore_errors=True)
+            raise
+        del shard[sid]
+        try:
+            if shard:
+                _write(p, shard.values())
+            else:
+                p.unlink()          # an empty shard is no file, as for a claim never judged
+        except BaseException:
+            # Asked of the shard, not assumed: the archive goes only if the verdict is still live.
+            try:
+                live = sid in _read(p)
+            except Exception:   # noqa: BLE001 — unreadable: keep the archive
+                live = False
+            if live:
+                shutil.rmtree(dest, ignore_errors=True)
+            raise
+        _fsync_dir(p.parent)
+    return dest
+
+
+def _stamp() -> str:
+    """A fresh archive run directory's name: the time, to the microsecond."""
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+
+
+def _archive(dest: Path, orphans: dict[str, dict[str, Judgment]]) -> None:
+    """Keep verdicts no current claim cites, under the shard name they had. A fresh directory
+    per run, so an earlier run's archive is never merged into or overwritten."""
+    dest.mkdir(parents=True)
+    for qid, items in sorted(orphans.items()):
+        _write(dest / f"{qid}.json", items.values())
+    _fsync_dir(dest)
+
+
+# Inside an archive run directory clear() writes: which verdict a human cleared, and why.
+_CLEARED_NAME = "CLEARED"
+
+
+def _durable_text(p: Path, text: str) -> None:
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def _fsync_dir(d: Path) -> None:
+    """Make a directory's entries durable. A rename or unlink is only on disk once its directory
+    is, and every order this module keeps on disk depends on that, such as clear()'s archive
+    before its shard rewrite."""
+    fd = os.open(d, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def _on_disk(root: Path, stem: str) -> Path:

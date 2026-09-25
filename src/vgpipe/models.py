@@ -287,6 +287,18 @@ class Source(BaseModel):
 QID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
 
 
+class DroppedContradiction(BaseModel):
+    """A `contradicts` verdict in a claim's own shard, on a source the claim no longer cites.
+    Pipeline-owned: `cli._settle()` reads it from the shard on every build.
+
+    Only the source id: a verdict records no URL, so this is what there is to name it by. The
+    claim file's history holds the citation it was about."""
+
+    sid: str
+    note: str = ""
+    judged_at: str = ""
+
+
 class Claim(BaseModel):
     question_id: str = Field(pattern=QID_PATTERN)
     question: str
@@ -305,6 +317,8 @@ class Claim(BaseModel):
     unmet_inputs: list[str] = Field(default_factory=list)
     corroboration_note: str | None = None
     conflicts: list[str] = Field(default_factory=list)
+    # A contradiction a retry dropped still counts: see `status`.
+    dropped_contradictions: list[DroppedContradiction] = Field(default_factory=list)
 
     @property
     def required_sources(self) -> int:
@@ -341,6 +355,12 @@ class Claim(BaseModel):
         from .conflicts import unsourced_figures
 
         if any(s.contradicts for s in self.sources) or unsourced_figures(self):
+            return "human_review"
+        # The same verdict on a source a retry has since dropped. Keyed by source id, it stopped
+        # matching anything the claim cites, and the claim rendered green on the sources that
+        # agree. Dropping the source takes the disagreement off the page without resolving it,
+        # so it holds the claim until the source is cited again or a human clears it.
+        if self.dropped_contradictions:
             return "human_review"
         if self.confidence == "not_found":
             return "not_found"
@@ -385,7 +405,8 @@ class Claim(BaseModel):
 
 # Fields the pipeline owns. Anything here that arrives in an agent-authored file is
 # discarded on ingest — see `strip_machine_fields`.
-MACHINE_CLAIM_FIELDS = ("corroboration_ok", "unmet_inputs", "corroboration_note", "conflicts")
+MACHINE_CLAIM_FIELDS = ("corroboration_ok", "unmet_inputs", "corroboration_note", "conflicts",
+                        "dropped_contradictions")
 # archive_url is evidence — verify_against_archive() fetches it and a snippet found there
 # upgrades the source — so it is stripped like `verification`. It used to be kept, because
 # `vg verify` strips and writes back and would have deleted every snapshot; its safety then
