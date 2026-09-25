@@ -1456,13 +1456,29 @@ per filing, through the `FILING_ID` indexes, and only for the filings a result t
   ranking is made of all of them, and an update can raise a figure as well as withdraw one.
 - **The listings** mark the row (`unrestated`, the "latest amendment" column) and keep
   listing it: a finding aid that hid the row would hide the filing to open.
-- **A filing with no cover at all** has nothing to compare, so it is not flagged.
-- **A database without cover amendment ids** cannot check at all. Every citable query refuses
-  it (`connect_citable()`, below), and the listings say they cannot check. So does one with no
-  cover table, with its own message, since a rebuild from the same zip would not help.
+- **A filing with rows and no cover at all** is flagged too (`cover_amend` None, "no cover" in
+  the listings). Nothing says which amendment is its latest, so the same question is open. It
+  used to be read as settled, on the grounds that there was nothing to compare, and a figure
+  resting on one rendered green. That broke the rule for every staleness check: when the
+  comparison can't be made, the answer is "not checked", never "fresh". Measured against a
+  full export, the case is real for receipts: a small number of filings, all from earlier
+  cycles, none in the current one. No Form 496 filing lacks a cover, and `ie_total` could not
+  count one anyway, since it finds the candidate on the cover.
+- **A database whose covers can't say which amendment is latest** cannot check at all. Every
+  citable query refuses it (`connect_citable()`, below), and the listings say they cannot
+  check. `calaccess.cover_problem()` is the one test, with a message for each case, since a
+  rebuild from the same zip fixes only the first: no cover amendment ids (an old build), no
+  cover table, and a cover table with no rows. The last used to pass: every filing had no
+  cover, and every receipt figure verified green.
 - **Each query computes the flag itself**, so `test_every_citable_query_flags_and_refuses`
   holds every registered CAL-ACCESS query to both the flag and the refusal. A new query fails
-  it until it has them.
+  it until it has them. `test_every_citable_query_flags_a_filing_with_no_cover` does the same
+  for the no-cover kind, exempting a query that joins the covers.
+- **The suite never saw the no-cover case** because every receipt-only fixture built its cover
+  table as a header with no rows, which production never has. That is the case the check
+  mishandled, so every fixture read as settled for the wrong reason. A fixture now gives every
+  filing with rows a cover record, and a check that reads a missing input needs a test that
+  leaves it missing on purpose.
 
 **The same ambiguity recurs inside a table, and there the rule leaves rows out.** `RCPT_CD` and
 `EXPN_CD` each hold several schedules, told apart by `FORM_TYPE` (A, C, I and F496P3 among
