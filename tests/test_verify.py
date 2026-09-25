@@ -6490,7 +6490,7 @@ _NOT_A_DEFINITION = {
 QUERY_DEFINITIONS = {
     "calaccess.contributor_total": (6, "cb912a14e0bf"),
     "calaccess.filer_total": (6, "66ae532aacea"),
-    "calaccess.top_contributor": (6, "b721e4399e7f"),
+    "calaccess.top_contributor": (7, "507563c06471"),
     # moved without a bump: amount_sql() is ie_total's own amount expression, extracted
     # unchanged, and DEDUPED_RECEIPTS, which it does not read, changed beside it; then the
     # unsettled-amendment flag and its shared helpers, which change no value it returns; then
