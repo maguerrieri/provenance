@@ -68,15 +68,19 @@ CROSS_FORM = (
 )
 
 
+def _build(root, receipts=RECEIPTS, filings=FILINGS, covers=COVERS):
+    (root / "cache" / "calaccess").mkdir(parents=True)
+    with zipfile.ZipFile(root / "cache" / "calaccess" / "dbwebexport.zip", "w") as zf:
+        zf.writestr("CalAccess/DATA/RCPT_CD.TSV", receipts)
+        zf.writestr("CalAccess/DATA/FILER_FILINGS_CD.TSV", filings)
+        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", covers)
+    calaccess.build(root)
+    return root
+
+
 @pytest.fixture
 def root(tmp_path):
-    (tmp_path / "cache" / "calaccess").mkdir(parents=True)
-    with zipfile.ZipFile(tmp_path / "cache" / "calaccess" / "dbwebexport.zip", "w") as zf:
-        zf.writestr("CalAccess/DATA/RCPT_CD.TSV", RECEIPTS)
-        zf.writestr("CalAccess/DATA/FILER_FILINGS_CD.TSV", FILINGS)
-        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", COVERS)
-    calaccess.build(tmp_path)
-    return tmp_path
+    return _build(tmp_path)
 
 
 def cited(name, params, expected):
@@ -160,12 +164,40 @@ def test_every_schedule_still_counts_what_it_did(root):
     assert [u.filing_id for u in trust.unrestated] == [DROPPED_496]
 
 
+def test_a_gift_counted_from_form_496_is_flagged_by_its_schedule_a_report(tmp_path):
+    """The other direction: the gift is counted as Form 496 Part 3, from a settled 496, and its
+    schedule-A report is on a 460 whose latest amendment has no receipt rows."""
+    settled_496, dropped_460 = "7770103", "7770104"
+    gift = "\tBrackwater Mills\t\t\t\t2/3/2026 12:00:00 AM\t5000\t"
+    receipts = (RECEIPTS.splitlines(keepends=True)[0]
+                + f"{dropped_460}\t0\tA-500001\t1{gift}A\n"
+                + "".join(f"{settled_496}\t{a}\tF496P3-500001\t1{gift}F496P3\n"
+                          for a in ("0", "1")))
+    filings = (FILINGS.splitlines(keepends=True)[0]
+               + f"{FILER}\t{dropped_460}\tF460\t2/20/2026 12:00:00 AM\n"
+               + f"{FILER}\t{settled_496}\tF496\t2/4/2026 12:00:00 AM\n")
+    covers = (COVERS.splitlines(keepends=True)[0]
+              + "".join(f"{f}\t{a}\t{FILER}\tCommittee for Example\t\t\t\t{form}\n"
+                        for f, form in ((dropped_460, "F460"), (settled_496, "F496"))
+                        for a in ("0", "1")))
+    root = _build(tmp_path, receipts, filings, covers)
+
+    for form_type in ("F496P3", "A", ""):
+        params = {"filer_id": FILER, "form_type": form_type}
+        result = queries.run("calaccess.filer_total", params, root)
+        assert result.value == 5000.0, form_type
+        assert [(u.filing_id, u.amount) for u in result.unrestated] == [(dropped_460, 5000.0)]
+        v = verify_source(cited("calaccess.filer_total", params, "5000"), root).verification
+        assert v.status == "human_review" and dropped_460 in v.reason, form_type
+
+
 def test_the_gift_test_counts_exactly_what_the_row_filter_did(tmp_path):
     """Moving the schedule after the grouping is only safe if it counts the same gifts. Over
     seeded random receipts (two filings, shared and unshared transaction bases, names differing
     in case and padding, blank and unreadable amounts), the new placement must give the old
-    one's sum, count and gifts for every schedule. The old placement is the same view with the
-    schedule as a row filter and every gift kept."""
+    one's sum, count, gifts and first names for every schedule, filer-wide and narrowed to a
+    contributor as contributor_total narrows it. The old placement is the same view with the
+    schedule as a row filter, written out as v4 had it, and every gift kept."""
     import random
 
     rng = random.Random(131)
@@ -177,28 +209,31 @@ def test_the_gift_test_counts_exactly_what_the_row_filter_did(tmp_path):
         rows.append("\t".join([
             rng.choice([SETTLED_460, DROPPED_496]), "0", f"{prefix}{base}", str(i),
             rng.choice(["Pellworth Orchards", "PELLWORTH ORCHARDS ", "Harrowgate"]),
-            rng.choice(["", "Selma"]), "", "",
+            rng.choice(["", "Selma", "selma "]), "", "",
             f"1/{base % 28 + 1}/2026 12:00:00 AM",
             rng.choice(["2000", "250", "1500", "", "N/A", "1,000", str(base * 10)]), form]))
-    (tmp_path / "cache" / "calaccess").mkdir(parents=True)
-    with zipfile.ZipFile(tmp_path / "cache" / "calaccess" / "dbwebexport.zip", "w") as zf:
-        zf.writestr("CalAccess/DATA/RCPT_CD.TSV",
-                    RECEIPTS.splitlines(keepends=True)[0] + "\n".join(rows) + "\n")
-        zf.writestr("CalAccess/DATA/FILER_FILINGS_CD.TSV", FILINGS)
-        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", COVERS)
-    calaccess.build(tmp_path)
+    _build(tmp_path, RECEIPTS.splitlines(keepends=True)[0] + "\n".join(rows) + "\n")
 
+    whose = {"everyone": ("", []),
+             "Pellworth": (" AND UPPER(TRIM(r.CTRIB_NAML)) = UPPER(TRIM(?))",
+                           ["Pellworth Orchards"]),
+             "Selma Harrowgate": (" AND UPPER(TRIM(r.CTRIB_NAML)) = UPPER(TRIM(?))"
+                                  " AND UPPER(TRIM(COALESCE(r.CTRIB_NAMF,''))) = UPPER(TRIM(?))",
+                                  ["Harrowgate", "Selma"])}
+    stats = ("SELECT SUM(d.AMT), COUNT(d.AMT), COUNT(*),"
+             " COUNT(DISTINCT UPPER(TRIM(COALESCE(d.CTRIB_NAMF,'')))) FROM ({}) d")
     con = calaccess.connect(tmp_path)
-    total = "SELECT SUM(d.AMT), COUNT(d.AMT), COUNT(*) FROM ({}) d"
     try:
         for form_type in ("A", "F496P3", "C", "I", ""):
-            counted, args, _ = queries._schedule(form_type)
-            new = con.execute(total.format(queries.DEDUPED_RECEIPTS.format(
-                extra="", counted=counted)), [FILER, *args]).fetchone()
-            old = con.execute(total.format(queries.DEDUPED_RECEIPTS.format(
-                extra=f" AND {counted.replace('x.', 'r.')}", counted="1")),
-                [FILER, *args]).fetchone()
-            assert tuple(new) == tuple(old), form_type
-            assert new[2] > 0, f"no gifts on {form_type!r}: the test proves nothing there"
+            counted, sched_args, _ = queries._schedule(form_type)
+            row_filter = " AND UPPER(TRIM(r.FORM_TYPE)) = UPPER(TRIM(?))" if form_type else ""
+            for who, (who_sql, who_args) in whose.items():
+                args = [FILER, *who_args, *sched_args]
+                new = con.execute(stats.format(queries.DEDUPED_RECEIPTS.format(
+                    extra=who_sql, counted=counted)), args).fetchone()
+                old = con.execute(stats.format(queries.DEDUPED_RECEIPTS.format(
+                    extra=who_sql + row_filter, counted="1")), args).fetchone()
+                assert tuple(new) == tuple(old), (form_type, who)
+                assert new[2] > 0, f"no {who} gifts on {form_type!r}: nothing proved there"
     finally:
         con.close()
