@@ -1314,7 +1314,9 @@ Related traps in the same data:
   late-report check. A total sums the stated amounts and names what it left out. A rank cannot,
   because a gift of unknown size could make anyone largest: while any gift on the schedule it
   ranks has no amount, `top_contributor` names no largest contributor, only the stated leader
-  as a lead to check. `vg calaccess contributions`
+  as a lead to check. That holds for a gift a later amendment may have left out too: the
+  ranking goes to a person, naming the filing (#156, under "CAL-ACCESS double-counts").
+  `vg calaccess contributions`
   reads amounts the same way. It prints a blank as `blank` and any other unreadable amount as
   filed, and it gives such gifts their own `--top` slots after the ranked ones, since those
   are the gifts a total names as not counted. The IE listing prints a blank as `blank` but
@@ -1570,10 +1572,15 @@ flagged too, as the mirror image of the one above:
   schedule-A figure. A plain `HAVING` on the schedule over the combined rows would read that
   gift as counted, leaving it neither counted nor flagged. And the flag names only the
   left-out reports on the figure's schedule: naming them all put a schedule-C share on a
-  schedule-A figure. Nor is a gift with no readable
-  amount flagged, which every figure leaves out anyway
-  (`amount_sql()`), so it has no share, as in `_receipt_shares()`. `top_contributor` is
-  flagged by any other left-out gift on the schedule it ranks.
+  schedule-A figure. A total does not flag a gift with no readable amount, which it leaves out
+  anyway (`amount_sql()`), so it has no share, as in `_receipt_shares()`. `top_contributor`
+  is flagged by any left-out gift on the schedule it ranks, one with no readable amount
+  included (#156). There such a gift is not left out anyway: counted, it would make the
+  ranking a miss, since a gift of unknown size could make anyone largest. Filtered out as for
+  a total, it left a ranking one such gift could overturn verifying green. The reason names
+  it as a row with no readable amount, never as `$0.00`, and lists its share first. The totals'
+  rule came in when #92 was restacked onto #34, and it was applied to the ranking too. A rule
+  written for one kind of figure has to be checked against every figure that calls it.
 - **The contributions listing now shows a left-out gift**, marked "not counted" in the "latest
   amendment" column; before, it was invisible. Counted gifts come from their own arm of the
   listing, exactly as the figures count them, so a left-out copy never changes which filing a
@@ -1735,7 +1742,10 @@ with a miss. The flag for a filing with no cover record bumped nothing, like the
 Moving the schedule filter after the cross-form dedup (#131) did bump all three receipt queries
 (`contributor_total` and `filer_total` to v9, `top_contributor` to v10), although every value is
 unchanged. It changed the dedup itself: which reports make up the gift a figure rests on, and
-so which figures verify.
+so which figures verify. Flagging a left-out gift with no readable amount (#156) bumped
+`top_contributor` to v11. It is only a flag, but v10 verified green a ranking that such a gift
+could overturn, for an input v10 accepted. The rule says to bump when unsure, and the cost is
+one re-judge. The two totals moved without a bump: they do not ask for such gifts.
 
 A rule in a comment is one a session can skip, so it has a gate:
 `test_a_query_definition_cannot_change_unnoticed` pins each query's version to a fingerprint
