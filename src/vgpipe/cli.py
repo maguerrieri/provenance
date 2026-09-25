@@ -6,7 +6,6 @@ import json
 import re
 import shlex
 import sys
-import unicodedata
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -33,6 +32,7 @@ from .races import available as available_races
 from .races import load as load_race
 from .report import clear_render, render
 from .sources import domain, load_rules
+from .terminal import printable as _printable
 from .verify import (
     GOOD,
     NO_TEXT_LAYER,
@@ -1319,33 +1319,6 @@ def _handed(claim, cache_root: Path, *, judged=None):
             s.snippet, context, why))
     return judgments.Handoff(claim.question_id, claim.claim_type, claim.required_sources,
                              claim.question, claim.answer, tuple(sources))
-
-
-# Control, format, surrogate and line/paragraph-separator characters: what can move the cursor,
-# erase a line, reorder text or start a new line in a reader that is not this terminal.
-_UNPRINTABLE = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
-
-
-def _printable(text: str, *, lines: bool = False) -> str:
-    """`text` with every character in `_UNPRINTABLE` but a tab shown as an escape (`\\x1b`,
-    `\\u2028`), so text the pipeline does not control prints on the line it is given and does
-    nothing else to the terminal. Every print of such text goes through here. rich's `Text`
-    strips only BEL, BS, VT, FF and CR, so an ESC or C1 sequence in a filer name or a response
-    body erased lines or faked output. Splitting on `\\n` alone left an ANSI erase-line or a
-    U+2028 to fake a line of `vg handoff`'s own framing, and a lone surrogate (which json.loads
-    keeps, and which an undecodable byte in argv becomes) made the print raise. Backslashes are
-    left alone: the text a verifier compares, snippet against context, must read as written.
-
-    With `lines`, a line break (`\\n`, or `\\r\\n`) stays one and each line is shown as above:
-    for multi-line data a reader copies from (page text, a response body, a YAML entry), and a
-    message whose line breaks are its own (pydantic's). Any other line break (a lone CR, NEL,
-    U+2028) still shows as an escape."""
-    if lines:
-        return "\n".join(_printable(line) for line in re.split(r"\r?\n", text))
-    return "".join(ch if ch == "\t" or unicodedata.category(ch) not in _UNPRINTABLE
-                   else (f"\\x{ord(ch):02x}" if ord(ch) < 0x100 else
-                         f"\\u{ord(ch):04x}" if ord(ch) < 0x10000 else f"\\U{ord(ch):08x}")
-                   for ch in text)
 
 
 def _cut(text: str, n: int) -> str:
