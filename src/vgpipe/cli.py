@@ -956,7 +956,7 @@ def calaccess_contributions(filer_id: str, data: Path = DATA, cache: Path = None
         t.add_row(Text(amt), Text(c.contributor[:30]),
                   Text(c.occupation[:18] or c.employer[:18]), Text(c.date),
                   (f"{c.filings}x" if c.filings > 1 else ""), Text(c.cite_url),
-                  _amendment_cell(c.unrestated))
+                  _amendment_cell(c.unrestated, c.omitted))
     con.print(t)
     unread = sum(c.amount is None for c in rows)
     con.print(f"\n[yellow]{len(rows)} rows. Cite the filing page, not this table — a row here "
@@ -965,18 +965,23 @@ def calaccess_contributions(filer_id: str, data: Path = DATA, cache: Path = None
         con.print(f"[yellow]The last {unread} have no readable amount, so no query total counts "
                   "them" + ("; there may be more: raise --top" if unread >= top else "")
                   + ".[/]")
-    _amendment_footer([c.unrestated for c in rows])
+    _amendment_footer([c.unrestated for c in rows], [c.omitted for c in rows])
 
 
-def _amendment_cell(unrestated) -> Text:
+def _amendment_cell(unrestated, omitted=()) -> Text:
     """A listing row's 'latest amendment' cell: each of its filings whose latest amendment has
-    no such rows (calaccess.Unrestated), or nothing. As Text: filing ids are export text."""
-    return Text("; ".join(f"{u.filing_id}: a{u.cover_amend} has none"
-                          for u in unrestated or ()))
+    no such rows (calaccess.Unrestated), each schedule of it a later amendment left out
+    (calaccess.UnrestatedSchedule), or nothing. As Text: filing ids and schedules are export
+    text."""
+    return Text("; ".join([f"{u.filing_id}: a{u.cover_amend} has none"
+                           for u in unrestated or ()]
+                          + [f"{u.filing_id}: a{u.table_amend} has no schedule "
+                             f"{u.schedule or '(blank)'}, not counted" for u in omitted or ()]))
 
 
-def _amendment_footer(marks: list) -> None:
-    """Say what a marked row means, or that this database cannot mark any."""
+def _amendment_footer(marks: list, omitted: list = ()) -> None:
+    """Say what a marked row means, or that this database cannot mark any. `omitted` is each
+    row's left-out schedules, for a listing that has them (receipts)."""
     if any(m is None for m in marks):
         con.print("[yellow]This database cannot tell whether a filing's latest amendment "
                   "dropped any of these rows: its covers carry no amendment ids, or it has no "
@@ -987,6 +992,16 @@ def _amendment_footer(marks: list) -> None:
                   f"(the 'latest amendment' column). That later amendment withdrew them, or "
                   f"left the schedule unchanged, and only the filing says which: open it before "
                   f"using the row. A figure counting one goes to human_review.[/]")
+    if any(m is None for m in omitted):
+        con.print("[yellow]This database cannot tell whether a later amendment left out a "
+                  "schedule these rows are on: they carry no FORM_TYPE. Rebuild it: uv run vg "
+                  "calaccess build[/]")
+    elif left_out := sum(1 for m in omitted if m):
+        con.print(f"[yellow]{left_out} row(s) are in no figure: a later amendment of their "
+                  f"filing has rows on other schedules and none on theirs (the 'latest "
+                  f"amendment' column). It withdrew them, or left that schedule unchanged, and "
+                  f"only the filing says which: open it before using the row. A figure that "
+                  f"leaves one out goes to human_review.[/]")
 
 
 @calaccess_app.command("independent-expenditures")
@@ -1056,7 +1071,14 @@ def run_query(name: str = typer.Argument(""), param: list[str] = None, data: Pat
         raise typer.Exit(1) from None
     if not result.found:
         # Escaped: the note lists near-matches, which are filer names from the export.
-        con.print(f"[yellow]no match[/] — {escape(result.note)}")
+        con.print(f"[yellow]{'nothing counted' if result.omitted else 'no match'}[/] — "
+                  f"{escape(result.note)}")
+        if result.unsettled:
+            # every match was left out: name the filings, or the miss reads as "gave nothing"
+            con.print(Text(f"Not a finding: {result.unsettled}", style="yellow"),
+                      soft_wrap=True)
+            for u in result.omitted[queries.UNSETTLED_SHOWN:]:
+                con.print(Text(f"  {queries.share_text(u)}", style="yellow"), soft_wrap=True)
         raise typer.Exit(1)
     # Printed as Text, never as a markup string: researchers copy this value into `expected`
     # verbatim, and a str would lose "[b]" to markup and wrap at 80 columns when stdout is not
@@ -1067,7 +1089,8 @@ def run_query(name: str = typer.Argument(""), param: list[str] = None, data: Pat
         # Before a researcher records it: this value goes to human_review however it is cited.
         # The reason names the largest few; the rest are listed here, where there is room.
         con.print(Text(f"Will not verify: {why}", style="yellow"), soft_wrap=True)
-        for u in result.unrestated[queries.UNSETTLED_SHOWN:]:
+        for u in (result.unrestated[queries.UNSETTLED_SHOWN:]
+                  + result.omitted[queries.UNSETTLED_SHOWN:]):
             con.print(Text(f"  {queries.share_text(u)}", style="yellow"), soft_wrap=True)
         for r in result.late[queries.LATE_SHOWN:]:
             con.print(Text(f"  {queries.late_text(r)}", style="yellow"), soft_wrap=True)

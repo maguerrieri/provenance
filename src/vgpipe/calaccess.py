@@ -20,6 +20,7 @@ import functools
 import re
 import sqlite3
 import sys
+import uuid
 import warnings
 import zipfile
 from dataclasses import dataclass, replace
@@ -40,8 +41,10 @@ WANTED = {
     "RCPT_CD": ["FILING_ID", "AMEND_ID", "TRAN_ID", "LINE_ITEM", "CTRIB_NAML", "CTRIB_NAMF",
                 "CTRIB_EMP", "CTRIB_OCC", "RCPT_DATE", "AMOUNT", "FORM_TYPE", "CAND_NAML",
                 "SUP_OPP_CD"],
+    # FORM_TYPE tells the schedules apart, in EXPN_CD as in RCPT_CD, and without it nothing can
+    # find a schedule a filing's latest amendment left out (unrestated_schedules()).
     "EXPN_CD": ["FILING_ID", "AMEND_ID", "TRAN_ID", "LINE_ITEM", "PAYEE_NAML", "PAYEE_NAMF",
-                "EXPN_DATE", "AMOUNT", "EXPN_DSCR", "CAND_NAML", "SUP_OPP_CD"],
+                "EXPN_DATE", "AMOUNT", "EXPN_DSCR", "CAND_NAML", "SUP_OPP_CD", "FORM_TYPE"],
     "S496_CD": ["FILING_ID", "AMEND_ID", "TRAN_ID", "LINE_ITEM", "AMOUNT", "EXP_DATE",
                 "EXPN_DSCR"],
     # Form 497 late contribution reports. Not counted in any total: a gift here is restated on
@@ -94,6 +97,9 @@ class Contribution:
     # checked and none, None when not checked -- the default, so a row nobody checked never
     # reads as settled.
     unrestated: tuple[Unrestated, ...] | None = None
+    # The schedules this gift is on when a later amendment of its filing has no rows there, so
+    # no figure counts it (UnrestatedSchedule); () when it is counted, None when not checked.
+    omitted: tuple[UnrestatedSchedule, ...] | None = None
 
     @property
     def cite_url(self) -> str:
@@ -284,6 +290,11 @@ FILER_FILING_SQL = """
 # undercount, so this keeps the rows, and `unrestated_filings()` flags every figure and
 # listing row that counts one. The measurements are in CLAUDE.md, under "CAL-ACCESS
 # double-counts four ways, and all are silent".
+# The same ambiguity recurs one level down, and there this rule takes the other side. A table
+# holds several schedules (FORM_TYPE), and an amendment with rows on one schedule and none on
+# another is taken whole, so the other schedule's earlier rows are left out. Choosing the
+# schedule's own latest amendment instead would count a withdrawn schedule, so the rule stays
+# and `unrestated_schedules()` flags every figure that leaves such rows out.
 LATEST_SQL = """
     CREATE {temp}VIEW IF NOT EXISTS {view} AS
     SELECT t.* FROM {table} t
@@ -360,6 +371,7 @@ class Unrestated:
     cover_amend: int     # the filing's latest amendment, which has none there
     amount: float = 0.0
     rows: int = 0
+    does = "rests on"    # what a figure does with its rows (queries.share_text)
 
     @property
     def cite_url(self) -> str:
@@ -447,6 +459,105 @@ def late_reports_loaded(con: sqlite3.Connection) -> bool:
     except sqlite3.DatabaseError:
         return False
     return bool(row) and "S497_CD" in str(row[0]).split(",")
+
+
+SCHEDULE_FALLBACK = (
+    "this CAL-ACCESS database has no {table}.FORM_TYPE (it was built before that column was "
+    "loaded), so its schedules cannot be told apart, and no figure from that table can be "
+    "checked for a schedule a filing's later amendment left out. Rebuild the database: "
+    "uv run vg calaccess build")
+
+
+@dataclass(frozen=True)
+class UnrestatedSchedule:
+    """A schedule (FORM_TYPE) with rows in an earlier amendment of a filing, and none in the
+    filing's latest amendment in the same table, which has rows on other schedules. LATEST_SQL
+    takes that amendment whole, so it leaves this schedule's rows out, and the export cannot
+    say whether that is right: the amendment withdrew them, or did not restate a schedule it
+    did not change. Only the filing settles it.
+
+    The other side of Unrestated, one level down: there a figure counts rows the cover's
+    latest amendment lacks; here it leaves out rows the table's own latest amendment lacks.
+    `amount` and `rows` are what a figure leaves out; a listing leaves them 0.
+    """
+    filing_id: str
+    schedule: str        # its FORM_TYPE, trimmed and upper-cased
+    rows_amend: int      # the schedule's latest amendment with rows: the rows left out
+    table_amend: int     # the filing's latest amendment in the table, with none on it
+    amount: float = 0.0
+    rows: int = 0
+    does = "leaves out"  # what a figure does with its rows (queries.share_text)
+
+    @property
+    def cite_url(self) -> str:
+        return filing_url(self.filing_id)
+
+    def describe(self) -> str:
+        return (f"filing {self.filing_id}'s schedule {self.schedule or '(blank)'} rows are from "
+                f"amendment {self.rows_amend}, and its later amendment {self.table_amend} has "
+                f"rows on other schedules but none on that one")
+
+
+def unrestated_schedules(con: sqlite3.Connection, table: str,
+                         filing_ids) -> list[UnrestatedSchedule]:
+    """The schedules in `table` that a filing among `filing_ids` has rows on in an earlier
+    amendment and none on in its latest amendment there, by filing and schedule.
+
+    Asked per filing, through the FILING_ID indexes, as unrestated_filings() is: first which
+    filings have more than one amendment in the table, from the (FILING_ID, AMEND_ID) index
+    alone, then the schedules of only those. A table that is not there has no rows to leave
+    out. One without FORM_TYPE is refused (DegradedDatabase): an EXPN_CD built before that
+    column was loaded cannot tell its schedules apart, and a check that cannot run must not
+    read as settled.
+    """
+    cols = {r[1] for r in con.execute(f'PRAGMA main.table_info("{table}")')}
+    if not cols:
+        return []
+    if "FORM_TYPE" not in cols:
+        raise DegradedDatabase(SCHEDULE_FALLBACK.format(table=table))
+    ids = sorted({str(f) for f in filing_ids})
+    latest: dict[str, int] = {}
+    for i in range(0, len(ids), 500):     # under every SQLite build's limit on parameters
+        chunk = ids[i:i + 500]
+        latest.update((str(r[0]), r[1]) for r in con.execute(f"""
+            SELECT FILING_ID, MAX(CAST(AMEND_ID AS INTEGER)) FROM "{table}"
+            WHERE FILING_ID IN ({", ".join("?" * len(chunk))}) GROUP BY FILING_ID
+            HAVING MIN(CAST(AMEND_ID AS INTEGER)) < MAX(CAST(AMEND_ID AS INTEGER))
+        """, chunk))
+    out = []
+    amended = sorted(latest)
+    for i in range(0, len(amended), 500):
+        chunk = amended[i:i + 500]
+        for fid, schedule, a in con.execute(f"""
+            SELECT FILING_ID, UPPER(TRIM(COALESCE(FORM_TYPE, ''))) s,
+                   MAX(CAST(AMEND_ID AS INTEGER))
+            FROM "{table}" WHERE FILING_ID IN ({", ".join("?" * len(chunk))})
+            GROUP BY FILING_ID, s
+        """, chunk):
+            if a < latest[str(fid)]:
+                out.append(UnrestatedSchedule(str(fid), schedule, a, latest[str(fid)]))
+    return sorted(out, key=lambda u: (u.filing_id, u.schedule))
+
+
+def stage_unrestated(con: sqlite3.Connection, table: str,
+                     schedules: list[UnrestatedSchedule]) -> str:
+    """Copy the rows `schedules` leave out of `table` into a TEMP table, and return its name.
+
+    Each row carries `gap`, the index in `schedules` of the one it came from. A figure groups
+    these rows with the rows it counts (`queries.left_out_gifts()`), so a gift a counted row
+    also reports is in the figure either way, and only the rest are what it leaves out.
+    A new table per call, so SQL built on an earlier one keeps reading its own rows and `gap`
+    indexes. Commits nothing: the insert leaves the connection in a transaction, and the
+    table goes when it closes.
+    """
+    name = f"{table}_UNRESTATED_{uuid.uuid4().hex}"
+    con.execute(f'CREATE TEMP TABLE "{name}" AS SELECT *, 0 AS gap FROM main."{table}" WHERE 0')
+    con.executemany(f"""
+        INSERT INTO temp."{name}" SELECT t.*, ? FROM main."{table}" t
+        WHERE t.FILING_ID = ? AND CAST(t.AMEND_ID AS INTEGER) = ?
+          AND UPPER(TRIM(COALESCE(t.FORM_TYPE, ''))) = ?
+    """, [(i, u.filing_id, u.rows_amend, u.schedule) for i, u in enumerate(schedules)])
+    return name
 
 
 def install_views(con: sqlite3.Connection, *, temp: bool = True) -> None:
@@ -693,15 +804,39 @@ def contributions_to(root: Path, filer_id: str, *, top: int = 25,
     # keeping the TRAN_ID stable, so a raw listing showed one donor's single gift four times
     # while the query totalled it correctly. A listing that contradicts the verified number
     # is worse than no listing: it invites hand-summing the duplicates.
-    from .queries import DEDUPED_RECEIPTS, date_window_sql, iso_date_sql, real_date_sql
+    from .queries import (DEDUPED_RECEIPTS, date_window_sql, iso_date_sql, left_out_gifts,
+                          real_date_sql)
 
     window, window_args = date_window_sql("CTRIB_DATE", since, "")   # refuses a bad `since`
     con = connect(root)
-    inner = DEDUPED_RECEIPTS.format(extra="")
+    # A gift on a schedule a later amendment left out is in no figure. Listed anyway, and
+    # marked: a finding aid that hid it would hide the filing to open. A database that cannot
+    # check still lists, and its rows read as not checked (None), as for `unrestated`.
+    try:
+        left_out, with_left_out = left_out_gifts(con, str(filer_id), extra="")
+    except DegradedDatabase:
+        left_out = None
+    listed = """
+            SELECT d.FILING_ID, ? AS FILER_ID, d.CTRIB_NAML, d.CTRIB_NAMF, d.CTRIB_EMP,
+                   d.CTRIB_OCC, d.AMOUNT, d.AMT, {date} AS CTRIB_DATE,
+                   TRIM(COALESCE(d.RCPT_DATE, '')) AS FILED_DATE,
+                   d.FILINGS, d.FILING_IDS, {marks}
+            FROM ({inner}) d"""
+    date = iso_date_sql("d.RCPT_DATE")
+    rows = listed.format(date=date, marks="0 AS OMITTED, NULL AS GAPS",
+                         inner=DEDUPED_RECEIPTS.format(extra=""))
+    args = [str(filer_id)] * 2
+    if left_out:
+        # Their own arm, grouped with the counted rows so a gift a counted row also reports is
+        # not listed twice. Counted gifts come from the arm above, exactly as the figures count
+        # them: here a left-out filing could become the one a counted gift cites.
+        rows += " UNION ALL " + listed.format(date=date, marks="d.OMITTED, d.GAPS",
+                                              inner=with_left_out) + " WHERE d.OMITTED"
+        args += [str(filer_id)] * 3
     # RCPT_DATE is "M/D/YYYY 12:00:00 AM" text: compared as-is, 10/14/2025 sorts before
     # 2025-01-01 and 3/1/2010 after it. Normalize and filter in SQL, BEFORE the LIMIT --
     # filtering afterwards spent the top-N slots on old gifts and then discarded them.
-    where, args = "", [str(filer_id), str(filer_id)] + window_args
+    where = ""
     if window:
         # A gift with no usable date cannot be placed either side of `since`, so it stays in,
         # with its date showing as it was filed: dropping it would be a missing donation.
@@ -712,20 +847,13 @@ def contributions_to(root: Path, filer_id: str, *, top: int = 25,
     # newest first, rather than being cut by their LIMIT: the researcher needs its filing to
     # check it by hand. NULL sorts last in DESC.
     q = f"""
-        WITH g AS (
-            SELECT * FROM (
-                SELECT d.FILING_ID, ? AS FILER_ID, d.CTRIB_NAML, d.CTRIB_NAMF, d.CTRIB_EMP,
-                       d.CTRIB_OCC, d.AMOUNT, d.AMT, {iso_date_sql("d.RCPT_DATE")} AS CTRIB_DATE,
-                       TRIM(COALESCE(d.RCPT_DATE, '')) AS FILED_DATE,
-                       d.FILINGS, d.FILING_IDS
-                FROM ({inner}) d)
-            {where})
+        WITH g AS (SELECT * FROM ({rows}) {where})
         SELECT * FROM (SELECT * FROM g WHERE AMT IS NOT NULL ORDER BY AMT DESC LIMIT ?)
         UNION ALL
         SELECT * FROM (SELECT * FROM g WHERE AMT IS NULL ORDER BY CTRIB_DATE DESC LIMIT ?)
         ORDER BY AMT DESC, CTRIB_DATE DESC
     """
-    found = con.execute(q, args + [top, top]).fetchall()
+    found = con.execute(q, args + window_args + [top, top]).fetchall()
     ids = [set((r["FILING_IDS"] or "").split(",")) - {""} for r in found]
     # Marked, and still listed: a finding aid that hid the row would hide the filing to open.
     gaps = (unrestated_filings(con, "RCPT_CD", set().union(*ids))
@@ -733,6 +861,8 @@ def contributions_to(root: Path, filer_id: str, *, top: int = 25,
     out = []
     for r, filings in zip(found, ids):
         name = " ".join(x for x in (r["CTRIB_NAMF"], r["CTRIB_NAML"]) if x).strip()
+        omitted = (None if left_out is None else () if not r["OMITTED"] else
+                   tuple(left_out[int(g)] for g in sorted(r["GAPS"].split(","), key=int)))
         # A blank here was listed as $0, which reads as a stated zero.
         out.append(Contribution(filing_id=str(r["FILING_ID"]),
                                 filings=int(r["FILINGS"] or 1), filer_id=r["FILER_ID"],
@@ -741,8 +871,11 @@ def contributions_to(root: Path, filer_id: str, *, top: int = 25,
                                 amount=None if r["AMT"] is None else float(r["AMT"]),
                                 amount_filed=(r["AMOUNT"] or "").strip(),
                                 date=shown_date(r["CTRIB_DATE"], r["FILED_DATE"]),
-                                unrestated=None if gaps is None else tuple(
-                                    gaps[f] for f in sorted(filings) if f in gaps)))
+                                # a left-out gift is from an earlier amendment than the rows
+                                # Unrestated describes; its own mark sends a person to it
+                                unrestated=None if gaps is None else () if omitted else tuple(
+                                    gaps[f] for f in sorted(filings) if f in gaps),
+                                omitted=omitted))
     con.close()
     return out
 
