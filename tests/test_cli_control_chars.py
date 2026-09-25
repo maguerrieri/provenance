@@ -191,16 +191,17 @@ def test_a_lone_surrogate_in_an_argument_prints_as_an_escape(args, code, said, t
 def test_contributions_print_donor_text_through_printable(tmp_path, monkeypatch):
     from vgpipe import calaccess
 
+    # The cut cells get what fits their width as shown: `\x1b[2K` shows as 7 characters.
     monkeypatch.setattr(calaccess, "contributions_to", lambda root, filer_id, top, since: [
         calaccess.Contribution(filing_id=f"2002{CTRL}", filer_id="1001",
-                               contributor=f"Doe{LONE}{CTRL}", employer=f"Acme{CTRL}",
-                               occupation="", amount=None, amount_filed=f"1{CTRL}",
+                               contributor=f"Doe{CTRL}", employer=f"Acme{LONE}",
+                               occupation="", amount=None, amount_filed=f"1{LONE}",
                                date=f"2030-01-02{CTRL}", filings=2,
                                unrestated=(calaccess.Unrestated(f"2002{CTRL}", rows_amend=0,
                                                                 cover_amend=1),))])
     code, out = _vg("calaccess", "contributions", "1001", "--data", tmp_path)
     assert code == 0, out
-    assert f"1{SHOWN} Doe\\ud800{SHOWN} Acme{SHOWN} 2030-01-02{SHOWN} 2x" in out
+    assert f"1\\ud800 Doe{SHOWN} Acme\\ud800 2030-01-02{SHOWN} 2x" in out
     assert f"2002{SHOWN}: a1 has none" in out
 
 
@@ -210,15 +211,54 @@ def test_independent_expenditures_print_filer_text_through_printable(tmp_path, m
     from vgpipe import calaccess
 
     monkeypatch.setattr(calaccess, "independent_expenditures", lambda root, last, **kw: [
-        {"AMOUNT": f"{CTRL}n/a", "stance": f"X{CTRL}", "FILER_NAML": f"PAC{LONE}{CTRL}",
-         "CAND_NAMF": "Pat", "CAND_NAML": f"Doe{CTRL}", "EXP_DATE": f"2030-01-02{CTRL}",
+        {"AMOUNT": "n/a\x9b", "stance": f"X{CTRL}", "FILER_NAML": f"PAC{LONE}\x1b[2K",
+         "CAND_NAMF": "Pat", "CAND_NAML": "Doe\x1b[2K", "EXP_DATE": f"2030-01-02{CTRL}",
          "cite_url": calaccess.filing_url("2002") + CTRL,
          "unrestated": (calaccess.Unrestated(f"2002{CTRL}", rows_amend=0, cover_amend=1),),
          "reattributed": None}])   # every listed row carries one (#89)
     code, out = _vg("calaccess", "independent-expenditures", "Doe", "--data", tmp_path)
     assert code == 0, out
-    assert (f"{SHOWN}n/a X{SHOWN} PAC\\ud800{SHOWN} Pat Doe{SHOWN} 2030-01-02{SHOWN} "
+    assert (f"n/a\\x9b X{SHOWN} PAC\\ud800\\x1b[2K Pat Doe\\x1b[2K 2030-01-02{SHOWN} "
             f"{calaccess.filing_url('2002')}{SHOWN} 2002{SHOWN}: a1 has none") in out
+
+
+def test_a_cell_is_cut_to_its_width_as_shown_and_never_inside_an_escape(tmp_path, monkeypatch):
+    """Cut before escaping, a cell of control bytes showed four times as wide as its column and
+    folded the table. Cut after, it could end inside an escape, which then reads as another
+    character. Each escape here shows as 4 characters: 3 fit an amount's 14, 7 a name's 30."""
+    from vgpipe import calaccess
+
+    soh, stx = "\\x01", "\\x02"   # as shown
+    monkeypatch.setattr(calaccess, "contributions_to", lambda root, filer_id, top, since: [
+        calaccess.Contribution(filing_id="2002", filer_id="1001", contributor="\x02" * 40,
+                               employer="Acme", occupation="", amount=None,
+                               amount_filed="\x01" * 14, date="2030-01-02")])
+    code, out = _vg("calaccess", "contributions", "1001", "--data", tmp_path)
+    assert code == 0 and f"{soh * 3} {stx * 7} Acme" in out, out
+
+    monkeypatch.setattr(calaccess, "independent_expenditures", lambda root, last, **kw: [
+        {"AMOUNT": "\x01" * 14, "stance": "support", "FILER_NAML": "PAC", "CAND_NAMF": "Pat",
+         "CAND_NAML": "Doe", "EXP_DATE": "2030-01-02", "cite_url": calaccess.filing_url("2002"),
+         "unrestated": (), "reattributed": None}])
+    code, out = _vg("calaccess", "independent-expenditures", "Doe", "--data", tmp_path)
+    assert code == 0 and f"{soh * 3} support PAC" in out, out
+
+
+def test_exception_text_keeps_its_own_line_breaks(tmp_path, monkeypatch):
+    """Shown whole through `_printable()`, the download command a missing export names, and the
+    link an HTTP error ends with, landed on the line before them after a `\\x0a`."""
+    from vgpipe import fppc
+
+    code, lines = _vg("calaccess", "build", "--data", tmp_path, lines=True)
+    assert code == 1 and any(x.startswith("  curl -L -o ") for x in lines), lines
+
+    def failed(first, last):
+        raise RuntimeError(f"HTTP 500{LONE}\nFor more information check: https://err.example/")
+
+    monkeypatch.setattr(fppc, "search", failed)
+    code, lines = _vg("form700", "Pat", "Doe", lines=True)
+    assert code == 1 and "For more information check: https://err.example/" in lines, lines
+    assert "FPPC search failed: RuntimeError: HTTP 500\\ud800" in lines
 
 
 def test_calaccess_cite_prints_snapshot_notes_through_printable(tmp_path, monkeypatch):
@@ -273,12 +313,20 @@ def test_form700_prints_the_index_through_printable(monkeypatch):
 
 
 def test_fetch_and_check_print_page_text_through_printable(tmp_path):
-    """Page text keeps its lines, as a researcher copies a snippet from it."""
+    """Page text keeps its lines, as a researcher copies a snippet from it. An escape in it is
+    text the pipeline inserted, and a snippet copied with one is on no page, so `vg fetch`
+    says so wherever it showed one."""
     data = tmp_path / "data"
     _cache_page(data, title=f"Title{CTRL}", text=f"{TEXT}\nsecond line{CTRL}")
     code, lines = _vg("fetch", URL, "--data", data, lines=True)
     assert code == 0 and TEXT in lines and f"second line{SHOWN}" in lines, lines
     assert any(f"title: Title{SHOWN}" in x for x in lines), lines
+    note = "The page holds the character, not the escape: quote around it, never with it."
+    assert note in " ".join(lines), lines
+
+    _cache_page(data, f"{URL}/plain", text=f"{TEXT}\r\n{TEXT}")   # a CRLF is a line break
+    code, out = _vg("fetch", f"{URL}/plain", "--data", data)
+    assert code == 0 and TEXT in out and note not in out, out
 
     code, out = _vg("check", URL, "approved the Example Levy on a 4-1 vote", "--data", data)
     assert code == 0 and "OK — literal and unique." in out, out
