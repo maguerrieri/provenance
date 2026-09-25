@@ -10,7 +10,9 @@ Quillon, Rue left the other rows out. Each value reproduced, so a citation of it
 Three fixes each patched one pair of names, and each left the next pair open. The rule now is
 one relation and its closure: two names are linked when an initial could stand for a word
 either way round (`_could_be`), and groups are the transitive closure (`_groups`). That
-over-merges by construction, so a group's total bounds any real giver in it. Groups are only
+over-merges by construction, so a group's total bounds any real giver in it. A name that could
+be a shorter filing of another with no surname in common ('R'/'' for 'Quillon'/'Rue', `_fits`)
+counts in that name's group without linking it. Groups are only
 ever a safety check: every figure is for a name exactly as filed. A ranking stands only when the
 leader's own total is at least every other group's bound and no other name is in the leader's
 group; a total only when no other name is in its group. names=as_filed lifts that gate, and
@@ -205,27 +207,63 @@ def linked(a, b):
                for targets in itertools.permutations(sorted(many), len(few)))
 
 
+def fits(a, b):
+    """`_fits` by brute force: some one-to-one map from `a`'s words into `b`'s, every letter
+    that has case read as an initial, a word spelled out to itself and an initial to a word
+    starting with its letter."""
+    def loose(v):
+        return sorted(f"{w}." if len(w) == 1 and w.lower() != w else w for w in v.words)
+
+    few, many = loose(a), loose(b)
+    return any(all(t[0] == w[0] if queries._initial(w) else t == w for w, t in zip(few, ts))
+               for ts in itertools.permutations(many, len(few)))
+
+
 def components(ws):
-    """The groups by brute force: every pair tested, closed by search. A name with no words is
-    in every group and links none, so it bridges nothing: it gets `_ANYONE`."""
+    """The groups each name counts in, by brute force: every pair tested, links closed by
+    search, and a name in the group of every name it fits. A name with no words is in every
+    group, and in one of its own with the other names that have none."""
     keys = [k for k in ws if ws[k].words]
-    group = {k: queries._ANYONE for k in ws if not ws[k].words}
+    own = {}
     for k in keys:
-        if k in group:
+        if k in own:
             continue
-        group[k], todo = k, [k]
+        own[k], todo = k, [k]
         while todo:
             a = todo.pop()
             for b in keys:
-                if b not in group and linked(ws[a], ws[b]):
-                    group[b] = k
+                if b not in own and linked(ws[a], ws[b]):
+                    own[b] = k
                     todo.append(b)
-    return group
+    every = frozenset(own.values()) | {"nobody"}
+    return {k: frozenset({own[k]} | {own[j] for j in keys if fits(ws[k], ws[j])})
+            if ws[k].words else every for k in ws}
+
+
+def shape(ws, sets):
+    """Each name's groups as the names in them, so two groupings compare whatever their ids."""
+    return {k: frozenset(frozenset(j for j in ws if g in sets[j]) for g in sets[k]) for k in ws}
 
 
 def test_the_relation_is_the_one_to_one_map_and_is_symmetric():
     for a, b in itertools.product({queries._name(*n) for n in ALL}, repeat=2):
         assert queries._could_be(a, b) == linked(a, b) == queries._could_be(b, a), (a, b)
+        assert queries._fits(a, b) == fits(a, b), (a, b)
+
+
+def test_every_pair_the_first_late_check_related_is_still_one_giver():
+    """#66's late-report check related two names when one's words were all in the other's,
+    whatever the surname. Folded into the grouping, it must hold nothing less: a restack that
+    folds two guards into one keeps every hold either had."""
+    def first_check(a, b):
+        wa, wb = ({w for w in re.findall(r"[^\W_]+", f"{f} {l}".upper())} for l, f in (a, b))
+        return wa <= wb or wb <= wa
+
+    names = ALL + [("R", ""), ("R M", ""), ("A", ""), ("Quennell", "A"), ("Q", "Rue"),
+                   ("Smith", "Rue Q"), ("Odile Marwick", ""), ("Marwick", "Odile")]
+    for a, b in itertools.product(names, repeat=2):
+        if first_check(a, b):
+            assert queries._one_giver(queries._name(*a), queries._name(*b)), (a, b)
 
 
 def test_the_index_finds_the_same_groups_as_testing_every_pair():
@@ -234,25 +272,23 @@ def test_the_index_finds_the_same_groups_as_testing_every_pair():
     rng = random.Random(129)
     for _ in range(60):
         ws = {i: queries._name(*n) for i, n in enumerate(rng.sample(ALL, rng.randint(2, 18)))}
-        got, want = queries._groups(ws), components(ws)
-        assert {frozenset(k for k in ws if got[k] == got[j]) for j in ws} == {
-            frozenset(k for k in ws if want[k] == want[j]) for j in ws}, ws
-        assert {k for k in ws if got[k] == queries._ANYONE} == {
-            k for k in ws if not ws[k].words}, ws
+        assert shape(ws, queries._groups(ws)) == shape(ws, components(ws)), ws
 
 
 def test_the_index_does_not_test_every_pair(monkeypatch):
     """Tens of thousands of names on a ranking: a first-letter index over every word made each
     initial a candidate for every name sharing the letter."""
     calls = 0
-    real = queries._could_be
 
-    def counted(a, b):
-        nonlocal calls
-        calls += 1
-        return real(a, b)
+    def counted(real):
+        def call(a, b):
+            nonlocal calls
+            calls += 1
+            return real(a, b)
+        return call
 
-    monkeypatch.setattr(queries, "_could_be", counted)
+    monkeypatch.setattr(queries, "_could_be", counted(queries._could_be))
+    monkeypatch.setattr(queries, "_fits", counted(queries._fits))
     # Everyone has a middle initial, the same few, and most surnames start with one of them:
     # the shape where indexing a word by its first letter made everyone everyone's candidate.
     ws = {i: queries._name(f"Surname{i:04d}", f"Rue {'SABC'[i % 4]}") for i in range(3000)}
@@ -264,9 +300,10 @@ def test_the_index_does_not_test_every_pair(monkeypatch):
 
 
 def test_a_ranking_stands_exactly_when_the_rule_says(tmp_path):
-    """Checked against the rule stated plainly, on random rankings: the leader alone in its
-    group, and every other group's bound below the top. A bound is every positive gift in the
-    group, and a gift with no readable amount in a group of several names has none."""
+    """Checked against the rule stated plainly, on random rankings: the leader alone in every
+    group it counts in, and every other group's bound below the top. A bound is every positive
+    gift in the group, and a gift with no readable amount in a group of several names has
+    none."""
     rng = random.Random(1290)
     top = 5000.0
     leader = {"nm": "Vardle", "nf": "Tamsin", "amt": top, "n": 1, "kl": "VARDLE",
@@ -282,12 +319,10 @@ def test_a_ranking_stands_exactly_when_the_rule_says(tmp_path):
         got = queries._could_change_ranking(groups, [leader], top, [], use_names=True)
 
         ws = {i: queries._name(g["kl"], g["kf"]) for i, g in enumerate(groups)}
-        of = components(ws)
         members = {}
-        for i in ws:
-            members.setdefault(of[i], []).append(groups[i])
-        anyone = members.pop(queries._ANYONE, [])
-        members = {gid: ms + anyone for gid, ms in members.items()}
+        for i, gids in components(ws).items():
+            for g in gids:
+                members.setdefault(g, []).append(groups[i])
         refuse = False
         for ms in members.values():
             if leader in ms:
@@ -299,6 +334,117 @@ def test_a_ranking_stands_exactly_when_the_rule_says(tmp_path):
                          else sum(g["pos"] for g in ms))
                 refuse |= bound > top - queries.TOLERANCE
         assert bool(got) == refuse, (rest, got)
+
+
+# --- names with no spelled-out surname in common ----------------------------------------------
+
+# A name that could be a shorter filing of another without a surname in common, and that other.
+# #66's late check related each pair (one name's words inside the other's); the surname rule
+# alone did not, so these were each held by one guard and not the other.
+UNPLACED = [(("R", ""), ("Quillon", "R")), (("R M", ""), ("Quillon", "R M")),
+            (("A", ""), ("Quennell", "A")), (("Q", "Rue"), ("Smith", "Rue Q"))]
+UNPLACED_IDS = ["initial", "initials", "other-initial", "one-letter-surname"]
+
+
+def as_asked(name):
+    last, first = name
+    return {"contributor": last, "contributor_first": first}
+
+
+def f496(i, name, amount):
+    """A Form 496 Part 3 row after the 460's period: pending, and on every schedule."""
+    last, first = name
+    return (f"{F497}\t0\tF496P3-{i}\t{i}\t{last}\t{first}\t\t\t\t\t9/18/2026{DAY}"
+            f"\t{amount}\tF496P3\n")
+
+
+def build_rows(root, rows, late=()):
+    (root / "cache" / "calaccess").mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(calaccess.zip_path(root), "w") as zf:
+        zf.writestr("CalAccess/DATA/RCPT_CD.TSV", (RCPT_HEAD + "".join(rows)).encode("latin-1"))
+        zf.writestr("CalAccess/DATA/FILER_FILINGS_CD.TSV", FILINGS)
+        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", COVERS)
+        zf.writestr("CalAccess/DATA/S497_CD.TSV", (S497_HEAD + "".join(
+            late_gift(i, *g) for i, g in enumerate(late, 1))).encode("latin-1"))
+    calaccess.build(root)
+    return root
+
+
+@pytest.mark.parametrize("vague,full", UNPLACED, ids=UNPLACED_IDS)
+def test_a_name_with_no_surname_in_common_is_held_in_the_group_it_fits(vague, full):
+    """Held in the fuller name's group, never linking it: 'R' could be Quillon's R or anyone
+    else's, and that does not make those two one giver."""
+    a, b = queries._name(*vague), queries._name(*full)
+    assert not queries._could_be(a, b) and queries._fits(a, b) and queries._one_giver(a, b)
+    ws = {"vague": a, "full": b, "other": queries._name("Vardle", "R")}
+    sets = queries._groups(ws)
+    assert sets["full"] <= sets["vague"] and not sets["full"] & sets["other"], sets
+
+
+@pytest.mark.parametrize("vague,full", UNPLACED, ids=UNPLACED_IDS)
+def test_a_name_with_no_surname_in_common_holds_a_ranking(tmp_path, vague, full):
+    """$3,000 and $2,500 that could be one giver's pass a $5,000 leader."""
+    root = build(tmp_path, [(VARDLE, "5000"), (vague, "3000"), (full, "2500")])
+    got = run(root, "top_contributor")
+    assert not got.found and "could be one giver's: up to $5,500" in got.note, got.note
+    held = run(root, "top_contributor", names="as_filed")
+    assert held.value == "Tamsin Vardle" and held.names and held.unsettled, held.note
+
+
+@pytest.mark.parametrize("vague,full", UNPLACED, ids=UNPLACED_IDS)
+@pytest.mark.parametrize("form_type", [None, "A", ""], ids=["default", "schedule-A", "every"])
+def test_a_name_with_no_surname_in_common_holds_a_total(tmp_path, vague, full, form_type):
+    """Either way round: the fuller name's total is held for the vaguer one, and the vaguer
+    name's for the fuller one."""
+    root = build(tmp_path, [(VARDLE, "5000"), (vague, "300"), (full, "2500")])
+    schedule = {} if form_type is None else {"form_type": form_type}
+    for asked, other in ((full, vague), (vague, full)):
+        got = run(root, "contributor_total", **as_asked(asked), **schedule)
+        assert not got.found and _filed(other) in got.note, got.note
+        held = run(root, "contributor_total", names="as_filed", **as_asked(asked), **schedule)
+        assert held.found and any(n.startswith(_filed(other)) for n in held.names), held.note
+
+
+def _filed(name):
+    return f"{name[0]!r}/{name[1]!r}"
+
+
+@pytest.mark.parametrize("vague,full", UNPLACED, ids=UNPLACED_IDS)
+def test_a_form_496_row_with_no_surname_in_common_is_held_on_every_schedule(tmp_path, vague,
+                                                                           full):
+    """#80's every-schedule case, under a name the surname rule alone did not relate: every
+    schedule sums the Form 496 Part 3 row under its own name, and the total asked for leaves it
+    out."""
+    root = build_rows(tmp_path, [gift(1, full, "2500"), f496(2, vague, "9000")])
+    every = run(root, "contributor_total", **as_asked(full), form_type="")
+    assert not every.found and f"{_filed(vague)} $9,000.00" in every.note, every.note
+    held = run(root, "contributor_total", names="as_filed", **as_asked(full), form_type="")
+    assert held.value == 2500.0 and held.unsettled, held.note
+    # held against the default too, as a late gift no schedule A restates yet
+    assert not run(root, "contributor_total", **as_asked(full)).found
+
+
+@pytest.mark.parametrize("vague,full", UNPLACED, ids=UNPLACED_IDS)
+def test_a_form_497_gift_with_no_surname_in_common_is_held(tmp_path, vague, full):
+    """The Form 497 gap: a late gift filed under the vaguer name is held against the fuller
+    name's total, and against a ranking it could change."""
+    root = build(tmp_path, [(VARDLE, "5000"), (full, "3000")], late=[(vague, "2500")])
+    got = run(root, "contributor_total", **as_asked(full))
+    assert not got.found and "1 late-report entry ($2,500.00" in got.note, got.note
+    named = run(root, "contributor_total", **as_asked(full), form_type="A")
+    assert named.value == 3000.0 and [r.amount for r in named.late] == [2500.0], named.note
+    ranking = run(root, "top_contributor")
+    assert not ranking.found and "late-report" in ranking.note, ranking.note
+
+
+@pytest.mark.parametrize("vague,full", UNPLACED, ids=UNPLACED_IDS)
+def test_late_only_names_with_no_surname_in_common_are_held_as_one(tmp_path, vague, full):
+    """Neither name is on schedule A: two $3,000 late gifts that could be one giver's $6,000
+    pass the $5,000 leader."""
+    root = build(tmp_path, [(VARDLE, "5000")], late=[(vague, "3000"), (full, "3000")])
+    got = run(root, "top_contributor")
+    assert not got.found and "$0 on schedule-A, $6,000 late)" in got.note, got.note
+    assert run(root, "top_contributor", form_type="A").unsettled
 
 
 # --- top_contributor ---------------------------------------------------------------------
