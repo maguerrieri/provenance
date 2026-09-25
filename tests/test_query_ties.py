@@ -35,7 +35,7 @@ COVERS = ("FILING_ID\tAMEND_ID\tREC_TYPE\tFORM_TYPE\tFILER_ID\tFILER_NAML\tFROM_
 
 # Five givers at the limit, one below it.
 AT_LIMIT = ["Quillon", "Brasket", "Oddvar", "Tamsley", "Eskerby"]
-LIMIT = "5500"
+LIMIT = "4750"
 
 
 def gift(i, last, amount, first="Rue"):
@@ -75,7 +75,7 @@ FIVE = " | ".join(sorted(f"Rue {last}" for last in AT_LIMIT))
 def test_a_five_way_tie_names_all_five(tmp_path):
     got = top(five_way(tmp_path))
     assert got.value == FIVE, f"the tie set was cut short: {got.value!r}"
-    assert got.detail.startswith("5-WAY TIE at $5,500"), got.detail
+    assert got.detail.startswith("5-WAY TIE at $4,750"), got.detail
     assert got.rows == 5
 
 
@@ -93,11 +93,12 @@ def test_a_tie_reads_the_same_whatever_order_the_rows_come_in(tmp_path):
 
 
 def test_a_tie_is_within_half_a_cent_and_no_wider(tmp_path):
-    """Float sums of the same total tie; a cent short does not."""
+    """A figure is exact to the half cent (TOLERANCE), so a tie is too: a total a fifth of a
+    cent short ties, and one a cent short does not. Not float noise: SQLite's SUM is
+    compensated, so gifts adding to the limit come out exact."""
     root = build(tmp_path, [gift(i, last, LIMIT) for i, last in enumerate(AT_LIMIT, 1)]
-                 # 5499.7 + 0.3 is not 5500.0 in binary floats, but it is the same total
-                 + [gift(10, "Vantner", "5499.7"), gift(11, "Vantner", "0.3")]
-                 + [gift(12, "Corriby", "5499.99")])
+                 + [gift(10, "Vantner", "4749.7"), gift(11, "Vantner", "0.298")]
+                 + [gift(12, "Corriby", "4749.99")])
 
     got = top(root)
     assert got.detail.startswith("6-WAY TIE"), got.detail
@@ -148,5 +149,24 @@ def test_a_late_gift_to_any_tied_contributor_breaks_the_tie(tmp_path):
     for last in AT_LIMIT:
         got = top(five_way(tmp_path / last, late=late_gift(last, "100")))
         assert not got.found, f"a tie {last}'s late gift breaks was reported: {got.value}"
-        assert f"Rue {last} ($5,500 on schedule-A, $100 late)" in got.note, got.note
+        assert f"Rue {last} ($4,750 on schedule-A, $100 late)" in got.note, got.note
         assert FIVE in got.note, got.note
+
+
+def test_a_tie_is_in_name_order_whatever_case_a_name_is_filed_in(tmp_path):
+    """A group's name is spelled as whichever of its rows SQLite reads. Sorted with case, one
+    tie read "Rue ABBOT | Rue Aaron" or "Rue Aaron | Rue Abbot" depending on that row, and a
+    recorded value stopped reproducing."""
+    for n, abbot in enumerate(("ABBOT", "Abbot", "abbot")):
+        got = top(build(tmp_path / str(n), [gift(1, abbot, LIMIT), gift(2, "Aaron", LIMIT)]))
+        assert got.value == f"Rue Aaron | Rue {abbot}", got.value
+
+
+def test_a_refusal_lists_the_leaders_who_could_move_in_the_ties_order(tmp_path):
+    """A late gift under the first name alone could be any of the five. They were a set, so
+    which three the refusal named, and in what order, changed with the hash seed."""
+    got = top(five_way(tmp_path, late=late_gift("", "100")))
+    assert not got.found, got.value
+    names = sorted(f"Rue {last}" for last in AT_LIMIT)
+    listed = "; ".join(f"{n} ($4,750 on schedule-A, $100 late)" for n in names[:3])
+    assert f"ranking: {listed}; and 2 more — not a settled ranking" in got.note, got.note
