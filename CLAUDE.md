@@ -1425,6 +1425,65 @@ per filing, through the `FILING_ID` indexes, and only for the filings a result t
   holds every registered CAL-ACCESS query to both the flag and the refusal. A new query fails
   it until it has them.
 
+**The same ambiguity recurs inside a table, and there the rule leaves rows out.** `RCPT_CD` and
+`EXPN_CD` each hold several schedules, told apart by `FORM_TYPE` (A, C, I and F496P3 among
+receipts). The per-table maximum takes a filing's latest amendment in the table whole. So when
+that amendment has rows on schedule C and none on schedule A, the earlier amendment's schedule
+A rows count nowhere, and the per-table flag sees nothing, since the table's maximum is the
+cover's. Measured against a full export, the case is real: a small share of the receipt
+filings with more than one amendment, mostly from before 2021, with some in the current cycle.
+A figure drawn from one undercounted silently and rendered green.
+
+Taking each schedule's own latest amendment would trade that undercount for an overcount
+wherever the amendment really did withdraw the schedule. So the rule stays, and this case is
+flagged too, as the mirror image of the one above:
+- `calaccess.unrestated_schedules()` finds such a schedule. It asks per filing, through the
+  `FILING_ID` indexes: first which filings have more than one amendment in the table, from the
+  index alone, then the schedules of only those.
+- **A citable receipts figure** that would have counted rows from one carries it
+  (`QueryResult.omitted`), with what it leaves out, and goes to `human_review` through the same
+  `unsettled` reason. That reason says it "leaves out rows a later amendment may have
+  withdrawn", and the skill matches the phrase both reasons share, so it doesn't retry either.
+- **A miss carries it too.** When every match with a readable amount is on a left-out
+  schedule, the query finds nothing counted, and "NO MATCH for that name" would tell a
+  researcher the donor gave nothing. The note says every such match was left out instead, and
+  `vg query` names the filings. Such a citation goes to `human_review`, not
+  `snippet_not_found`: a retry of its parameters cannot reproduce it and would only invite a
+  mirror, and the reason names the claimed figure, which nothing here checked. The note still
+  names another `form_type` that counts the gift: that is a different figure, for the claim to
+  choose. `top_contributor` can miss this way too, since it ranks schedule A by default; not
+  while a gift has no amount, which names no largest contributor whatever the left-out rows
+  hold.
+- **The late-report gate's own miss carries no left-out flag.** With `form_type` unset, a
+  figure a pending late gift could change is a miss that still counts gifts, so the flag's note
+  ("every match … left out") would be false; `form_type=A` returns the figure with both flags.
+  And a Form 496 whose schedule-A copy is on a left-out schedule reads as pending unless a 460
+  period covers its date, since `_pending_late()` looks for the copy among counted rows. The
+  gate then refuses: toward a person, never toward green.
+- **What counts as left out** is decided by the figure's own grouping. The left-out rows are
+  staged in a TEMP table and grouped with the counted ones under the figure's own filter
+  (`queries.left_out_gifts()`, which the listing uses too). A gift a counted row also reports,
+  such as the Form 496 copy of a Schedule A gift, is in the figure either way and is not
+  flagged. Nor is a gift with no readable amount, which every figure leaves out anyway
+  (`amount_sql()`), so it has no share, as in `_receipt_shares()`. `top_contributor` is
+  flagged by any other left-out gift on the schedule it ranks.
+- **The contributions listing now shows a left-out gift**, marked "not counted" in the "latest
+  amendment" column; before, it was invisible. Counted gifts come from their own arm of the
+  listing, exactly as the figures count them, so a left-out copy never changes which filing a
+  counted gift cites. The listing groups every schedule, so "not counted" means no figure
+  counts the gift. A figure on one schedule can still leave out a gift the listing shows
+  unmarked: when its only schedule-A copy is left out and a Form 496 copy counts it, the
+  schedule-A figure's own reason names the filing, and its note names the `form_type` that
+  counts the gift.
+- **`ie_total` has nothing to check**: `S496_CD` holds a single schedule.
+  `test_every_citable_query_is_checked_for_left_out_schedules` holds every citable query to
+  the check or to that exemption, so a new one fails it until it is classified.
+- **The build loads `EXPN_CD.FORM_TYPE`**, so the check can run on expenditures too. Nothing
+  reads `EXPN_CD` yet: a query or listing that does must call `unrestated_schedules()` on it,
+  as the receipt queries do. A database built before that needs `uv run vg calaccess build`,
+  and until then `unrestated_schedules()` refuses the table (`DegradedDatabase`) rather than
+  read it as settled.
+
 **Whose money a kept row is has the same ambiguity, and the latest cover still decides it.**
 Form 496 rows join `CVR_LATEST`, the filing's latest cover. (Receipts reach their filer
 through `FILER_FILING` and never join a cover.) When the latest cover comes from a later
@@ -1535,6 +1594,7 @@ began refusing a database whose covers carry no amendment ids, which their earli
 answered from, so each bumped from the version it had: `contributor_total` and
 `top_contributor` to v4, `filer_total` to v3. The unsettled-amendment flag every query now
 carries bumped nothing: it changes no value, and verification acts on it, not the calculation.
+Neither did the receipt queries' flag for a left-out schedule, for the same reason.
 
 A rule in a comment is one a session can skip, so it has a gate:
 `test_a_query_definition_cannot_change_unnoticed` pins each query's version to a fingerprint
