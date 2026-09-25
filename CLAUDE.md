@@ -1468,16 +1468,19 @@ per filing, through the `FILING_ID` indexes, and only for the filings a result t
   stands is the same open question. The filing named is the unrestated one, not the earliest
   filing the listing cites. `top_contributor` is flagged by *any* such gift to the filer. The
   ranking is made of all of them, and an update can raise a figure as well as withdraw one.
-- **"Any filing it came from" means every report of the gift, whatever schedule the figure
-  counts.** The receipt queries count schedule A by default, and filtered *rows* by schedule
-  before the cross-form dedup grouped them. So a gift's Form 496 Part 3 report never reached
-  the group, and a gift whose only unrestated report was that one verified green under the
-  default and under `form_type=A`, while `""` sent the same figure to human review (#131).
+- **"Any filing it came from" means every report the dedup groups into the gift, whatever
+  schedule the figure counts.** The receipt queries count schedule A by default, and filtered
+  *rows* by schedule before the cross-form dedup grouped them. So a gift's Form 496 Part 3
+  report never reached the group, and a gift whose only unrestated report was that one
+  verified green under the default and under `form_type=A`, while `""` sent the same figure to
+  human review (#131).
   Now `_schedule()` is a test on the *gift*, `DEDUPED_RECEIPTS`' `{counted}`, applied as a
   `HAVING` after the grouping. A gift counts when any of its reports is on the schedule, which
   counts exactly the gifts the row filter did, and `FILING_IDS` holds every filing it was
   reported on. `{extra}` still filters rows before the grouping, but only on a group key (the
-  contributor's name), which removes whole gifts.
+  contributor's name), which removes whole gifts. The reach is the dedup's own: two reports it
+  does not recognize as one gift (date text, amount or name filed differently) stay two gifts,
+  and under schedule A the Form 496 one is neither counted nor consulted.
   Two lessons. **A filter placed before a dedup decides what the dedup can see**, so it
   narrows every check that reads the group, not only the sum. Ask which side of the grouping
   a filter belongs on. And **a test adapted to pass during integration can hide the
