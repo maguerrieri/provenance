@@ -469,6 +469,13 @@ malformed argument before anything prints it: both commands check the question i
 `_cache_root()`'s refusals) still escape value by value, so both commands can still raise
 there until #35 lands.
 
+A test that widens the console must not pin it. `cli.con.width = n` sets rich's `_width`, and
+putting back the value read beforehand sets it again, to the width rich computed (80 under
+pytest). From then on `COLUMNS` never reaches `cli.con` in that process, so a later test passing
+`env={"COLUMNS": ...}` to `CliRunner` wraps its table or not depending on test order. Widen with
+`monkeypatch.setattr(cli.con, "_width", n)`, which puts back `None`. Older tests still restore
+by assignment (#132).
+
 ## A verdict is about a source as cached at judgment time
 
 Three staleness bugs in one night, all the same shape and caught by three different amounts of
