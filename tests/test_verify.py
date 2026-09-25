@@ -3124,7 +3124,7 @@ def test_calaccess_commands_share_the_cache_root_with_queries(tmp_path, monkeypa
     from vgpipe import queries
     monkeypatch.setattr(queries, "run", lambda name, params, r: seen.append(r)
                         or SimpleNamespace(found=True, value=1, note="", version=1,
-                                           export_date="", unsettled=""))
+                                           export_date="", unsettled="", unrestated=[]))
 
     def every_command(**kw):
         cli.calaccess_build(data=cand, **kw)
@@ -6467,9 +6467,9 @@ def _definition_fingerprint(name):
 # What cannot change a value a query returns: display, messages, listings (finding aids, not
 # citations), the export metadata, and the comparison and command a result is checked with.
 _NOT_A_DEFINITION = {
-    "vgpipe.queries": {"Query", "QueryResult", "REGISTRY", "_other_schedules", "_unread",
-                       "dataset",
-                       "describe_export", "export_date", "human_command", "matches"},
+    "vgpipe.queries": {"Query", "QueryResult", "REGISTRY", "UNSETTLED_SHOWN", "_other_schedules",
+                       "_unread", "dataset", "describe_export", "export_date", "human_command",
+                       "matches", "share_text"},
     "vgpipe.calaccess": {"COVER_FALLBACK", "Contribution", "DegradedDatabaseWarning",
                          "EXPORT_META", "EXPORT_URL", "_UNUSABLE", "_export_date",
                          "_read_export_info", "citable_snapshot", "committee_url",
@@ -6481,13 +6481,13 @@ _NOT_A_DEFINITION = {
 
 # name -> (version, fingerprint). See test_a_query_definition_cannot_change_unnoticed.
 QUERY_DEFINITIONS = {
-    "calaccess.contributor_total": (4, "6163fbcee90f"),
-    "calaccess.filer_total": (3, "108f79e09e48"),
-    "calaccess.top_contributor": (4, "c6606d26d9f9"),
+    "calaccess.contributor_total": (4, "6b2c6eda22cf"),
+    "calaccess.filer_total": (3, "325478f0dbe7"),
+    "calaccess.top_contributor": (4, "0b1238b542e4"),
     # moved without a bump: amount_sql() is ie_total's own amount expression, extracted
     # unchanged, and DEDUPED_RECEIPTS, which it does not read, changed beside it; then the
     # unsettled-amendment flag and its shared helpers, which change no value it returns
-    "calaccess.ie_total": (2, "d7800dd09682"),
+    "calaccess.ie_total": (2, "9862fd259254"),
 }
 
 

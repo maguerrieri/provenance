@@ -180,13 +180,21 @@ def _no_rows(detail: str, suggestions: list[str] | None = None) -> "QueryResult"
                        suggestions=suggestions or [])
 
 
-def _receipt_shares(con, inner: str, args: list) -> list:
+def _receipt_shares(con, inner: str, args: list, filing_ids: str | None) -> list:
     """The filings among a receipts figure's gifts whose latest amendment has no receipt rows
     (`calaccess.Unrestated`), with what each accounts for. `inner` is the figure's
     DEDUPED_RECEIPTS, run with the same `args`. Only the gifts the figure counts: one with no
-    readable amount is left out of it (`amount_sql()`), so its filing has no share in it."""
+    readable amount is left out of it (`amount_sql()`), so its filing has no share in it.
+
+    `filing_ids` is every filing the figure's counted gifts came from (a GROUP_CONCAT of
+    FILING_IDS), read in the pass that computed the figure: the usual figure counts no such
+    filing, and then costs no second pass over its gifts.
+    """
     from . import calaccess
 
+    if not calaccess.unrestated_filings(
+            con, "RCPT_CD", {f for f in (filing_ids or "").split(",") if f}):
+        return []
     return calaccess.unrestated_shares(con, "RCPT_CD", [
         ([f for f in (r["ids"] or "").split(",") if f], float(r["amt"]), int(r["n"]))
         for r in con.execute(f"""
@@ -216,9 +224,6 @@ class QueryResult:
             n += " — NO MATCH. Did you mean: " + "; ".join(self.suggestions[:4])
         elif not self.found:
             n += " — NO MATCH for that name"
-        if self.unrestated:
-            n += (" — AMENDMENT UNSETTLED in filing(s) "
-                  + ", ".join(u.filing_id for u in self.unrestated))
         return n
 
     @property
@@ -229,14 +234,27 @@ class QueryResult:
         value counts are then an earlier amendment's. That amendment either withdrew them or
         did not restate that schedule, and the export cannot say which, so a value counting
         one goes to a person with each filing to open. A note alone would still render green.
+
+        Names the UNSETTLED_SHOWN largest shares: this becomes a claim file's reason, and a
+        committee's whole history can name dozens. `vg query` prints the rest.
         """
         if not self.unrestated:
             return ""
-        each = "; ".join(f"{u.describe()}: ${u.amount:,.2f} in {u.rows} row(s) counted here "
-                         f"(open {u.cite_url})" for u in self.unrestated)
+        each = "; ".join(share_text(u) for u in self.unrestated[:UNSETTLED_SHOWN])
+        if (rest := len(self.unrestated) - UNSETTLED_SHOWN) > 0:
+            each += f"; and {rest} more filing(s) with smaller shares, which `vg query` lists"
         return (f"it counts rows a later amendment may have withdrawn, and the export cannot "
                 f"say whether it did. {each}. If a latest amendment removed its rows, this "
                 f"value is wrong; if it only left that schedule unchanged, the value stands.")
+
+
+UNSETTLED_SHOWN = 5
+
+
+def share_text(u) -> str:
+    """One unrestated filing's line in `QueryResult.unsettled`: what it is, what it accounts
+    for, and where to open it."""
+    return f"{u.describe()}: ${u.amount:,.2f} in {u.rows} row(s) counted here (open {u.cite_url})"
 
 
 def _other_schedules(con: Any, filer_id: str, form_type: str, who: str = "",
@@ -296,7 +314,8 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
     # One pass: the dedup is the expensive part, and the first-name count needs it too.
     row = con.execute(f"""
         SELECT SUM(d.AMT) amt, COUNT(d.AMT) n, COUNT(*) gifts,
-               COUNT(DISTINCT UPPER(TRIM(COALESCE(d.CTRIB_NAMF,'')))) people
+               COUNT(DISTINCT UPPER(TRIM(COALESCE(d.CTRIB_NAMF,'')))) people,
+               GROUP_CONCAT(DISTINCT CASE WHEN d.AMT IS NOT NULL THEN d.FILING_IDS END) ids
         FROM ({inner}) d
     """, args).fetchone()
     n, gifts, people = int(row["n"] or 0), int(row["gifts"] or 0), int(row["people"] or 0)
@@ -333,7 +352,7 @@ def _contributor_total(root: Path, *, filer_id: str, contributor: str,
         # The name matched, but no gift states an amount: unknown money, never "$0.00".
         con.close()
         return _no_rows(f"0 itemized {label} gift(s) counted{left_out}")
-    unrestated = _receipt_shares(con, inner, args)
+    unrestated = _receipt_shares(con, inner, args, row["ids"])
     con.close()
     return QueryResult(value=float(row["amt"]), rows=n,
                        detail=f"{n} itemized {label} gift(s){left_out}", unrestated=unrestated)
@@ -352,15 +371,18 @@ def _filer_total(root: Path, *, filer_id: str, form_type: str = "A") -> QueryRes
     extra = " AND UPPER(TRIM(r.FORM_TYPE)) = UPPER(TRIM(?))" if form_type else ""
     inner = DEDUPED_RECEIPTS.format(extra=extra)
     args: list[Any] = [str(filer_id)] + ([form_type] if form_type else [])
-    row = con.execute(f"SELECT SUM(d.AMT) amt, COUNT(d.AMT) n, COUNT(*) gifts FROM ({inner}) d",
-                      args).fetchone()
+    row = con.execute(f"""
+        SELECT SUM(d.AMT) amt, COUNT(d.AMT) n, COUNT(*) gifts,
+               GROUP_CONCAT(DISTINCT CASE WHEN d.AMT IS NOT NULL THEN d.FILING_IDS END) ids
+        FROM ({inner}) d
+    """, args).fetchone()
     n, gifts = int(row["n"] or 0), int(row["gifts"] or 0)
     left_out = _unread(gifts - n)
     if n == 0:
         con.close()
         return _no_rows(f"no schedule-{form_type} contributions"
                         + (" counted" if left_out else "") + f" for filer {filer_id}{left_out}")
-    unrestated = _receipt_shares(con, inner, args)
+    unrestated = _receipt_shares(con, inner, args, row["ids"])
     con.close()
     return QueryResult(value=float(row["amt"]), rows=n,
                        detail=f"{n} itemized schedule-{form_type} gift(s){left_out}",
@@ -403,9 +425,6 @@ def _top_contributor(root: Path, *, filer_id: str, form_type: str = "A") -> Quer
     unread = int(rows[0]["unread"] or 0) if rows else 0
     rows = [r for r in rows if r["amt"] is not None]
     row = rows[0] if rows else None
-    # Every gift, not only the top contributor's: the ranking is made of all of them, and a
-    # gift a later amendment dropped can put someone at the top, or keep someone off it.
-    unrestated = _receipt_shares(con, inner, args) if row is not None else []
     if row is None:
         # A slate mailer's receipts are all on Form 401: "no schedule-A contributions" alone
         # read as a committee that received nothing.
@@ -416,6 +435,16 @@ def _top_contributor(root: Path, *, filer_id: str, form_type: str = "A") -> Quer
                         + (f"; receipts on schedule {', '.join(others)} not counted"
                            if others else ""),
                         ["form_type=" + ", form_type=".join(others)] if others else None)
+    # Every gift, not only the top contributor's: the ranking is made of all of them, and a
+    # gift a later amendment dropped can put someone at the top, or keep someone off it. Not
+    # asked while a gift has no amount: that names no largest contributor at all (below).
+    unrestated = []
+    if not unread:
+        ids = con.execute(f"""
+            SELECT GROUP_CONCAT(DISTINCT d.FILING_IDS) ids FROM ({inner}) d
+            WHERE d.AMT IS NOT NULL
+        """, args).fetchone()["ids"]
+        unrestated = _receipt_shares(con, inner, args, ids)
     con.close()
     top = float(row["amt"] or 0)
     tied = [r for r in rows if abs(float(r["amt"] or 0) - top) < TOLERANCE]

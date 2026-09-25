@@ -1338,7 +1338,10 @@ finds such a filing: its highest cover `AMEND_ID` is above the highest its table
 per filing, through the `FILING_ID` indexes, and only for the filings a result touched:
 - **A citable figure** that counts a row from one carries it (`QueryResult.unrestated`), with
   what that filing accounts for. `vg verify` and `vg build` send the row to `human_review`,
-  naming each filing to open and its share (`QueryResult.unsettled`). The value is compared
+  naming each filing to open and its share (`QueryResult.unsettled`: the largest few, since it
+  lands in the claim file; `vg query` lists every one). The skill does not retry such a row,
+  which would only invite a researcher to change parameters until the filing drops out. The
+  value is compared
   as before, so a mismatch is still `snippet_not_found`, and the flag never changes a number.
   A note alone would still render green.
 - **What counts as counted** differs by query. `ie_total` asks only about the rows its window

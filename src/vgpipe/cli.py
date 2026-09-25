@@ -1051,7 +1051,10 @@ def run_query(name: str = typer.Argument(""), param: list[str] = None, data: Pat
               sep="  ", soft_wrap=True)
     if result.unsettled:
         # Before a researcher records it: this value goes to human_review however it is cited.
+        # The reason names the largest few; the rest are listed here, where there is room.
         con.print(Text(f"Will not verify: {result.unsettled}", style="yellow"), soft_wrap=True)
+        for u in result.unrestated[queries.UNSETTLED_SHOWN:]:
+            con.print(Text(f"  {queries.share_text(u)}", style="yellow"), soft_wrap=True)
     # What the review page prints beside the command, so a reviewer can see they reproduced
     # the figure under the same definition and against the same export — or that they didn't.
     where = f"{_export_line(root)}, " if queries.dataset(name) == "CAL-ACCESS" else ""
