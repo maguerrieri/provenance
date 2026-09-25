@@ -281,8 +281,9 @@ class QueryResult:
     # export (see `Query.version` and `export_date()`).
     version: int = 0
     export_date: str = ""
-    # Filings the value counts rows from although their latest amendment has none
-    # (`calaccess.Unrestated`), with what each accounts for. A value with any is not verified.
+    # Filings the value counts rows from although their latest amendment has none, or with no
+    # cover record to say which is latest (`calaccess.Unrestated`), with what each accounts
+    # for. A value with any is not verified.
     unrestated: list = field(default_factory=list)
     # Schedules a filing's later amendment has no rows on, whose earlier rows the value leaves
     # out (`calaccess.UnrestatedSchedule`), with what it leaves out. A value with any is not
@@ -332,7 +333,9 @@ class QueryResult:
 
         - `unrestated`: a filing's latest amendment can carry a cover and no rows in a table,
           and the rows the value counts are then an earlier amendment's. That amendment either
-          withdrew them or did not restate that schedule, and the export cannot say which.
+          withdrew them or did not restate that schedule, and the export cannot say which. A
+          filing with no cover record at all cannot say which amendment is its latest, so it
+          is named the same way.
         - `omitted`: the same one level down, the other way round. A later amendment has rows
           on some schedules and none on another, and the value leaves out the earlier rows on
           that one.
@@ -360,9 +363,9 @@ class QueryResult:
             each = _listed(self.unrestated, share_text, UNSETTLED_SHOWN,
                            "filing(s) with smaller shares")
             why.append(f"counts rows a later amendment may have withdrawn, and the export cannot "
-                       f"say whether it did. {each}. If a latest amendment removed its rows, this "
-                       f"value is wrong; if it only left that schedule unchanged, the value "
-                       f"stands.")
+                       f"say whether it did. {each}. If a filing's latest amendment removed its "
+                       f"rows, this value is wrong; if it kept them, or only left that schedule "
+                       f"unchanged, the value stands.")
         if self.omitted:
             each = _listed(self.omitted, share_text, UNSETTLED_SHOWN,
                            "schedule(s) with smaller shares")
@@ -2079,23 +2082,28 @@ REGISTRY: dict[str, Query] = {
     # names as the queries do, in Python, normalized and case-folded (`_name_key`). v6 used
     # SQLite's ASCII-only UPPER and TRIM, so a gift's two copies filed 'Élise' and 'élise' were
     # both counted, and a late gift restated as 'JOSÉ' was still pending as 'José'.
+    # v8 of contributor_total and filer_total, v9 of top_contributor and v3 of ie_total: a
+    # database whose cover table has no rows is refused (`calaccess.cover_problem()`). The
+    # earlier versions answered from it: the receipt queries as if every filing were settled,
+    # and ie_total, which joins the covers, with a miss. The flag for a counted filing with no
+    # cover record changes no value: verification acts on it.
     "calaccess.contributor_total": Query(
         _contributor_total, ("filer_id", "contributor"),
         "contributions from one contributor (add contributor_first for an individual; "
         "schedule A unless form_type says otherwise; a miss while a late gift is pending, or "
-        "while another name could be the giver's, unless names=as_filed)", 7),
+        "while another name could be the giver's, unless names=as_filed)", 8),
     "calaccess.filer_total": Query(
         _filer_total, ("filer_id",),
         "total itemized contributions received by a filer (schedule A unless form_type says "
-        "otherwise; a miss while a late gift is pending)", 7),
+        "otherwise; a miss while a late gift is pending)", 8),
     "calaccess.top_contributor": Query(
         _top_contributor, ("filer_id",),
         "the largest contributor to a filer, by itemized total (schedule A unless form_type "
         "says otherwise; a miss while a pending late gift, or names that could be one giver's, "
-        "could change it, unless names=as_filed)", 8),
+        "could change it, unless names=as_filed)", 9),
     "calaccess.ie_total": Query(
         _ie_total, ("candidate_last", "first"),
-        "late independent expenditures naming a candidate; pass stance and since/until", 2),
+        "late independent expenditures naming a candidate; pass stance and since/until", 3),
 }
 
 

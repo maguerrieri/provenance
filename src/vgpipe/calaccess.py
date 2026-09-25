@@ -95,9 +95,9 @@ class Contribution:
     committee: str = ""
     filings: int = 1        # how many filings restated this one gift
     amount_filed: str = ""  # the AMOUNT text as filed, for showing one that did not read
-    # This gift's filings whose latest amendment has no receipt rows (Unrestated); () when
-    # checked and none, None when not checked -- the default, so a row nobody checked never
-    # reads as settled.
+    # This gift's filings whose latest amendment has no receipt rows, or that have no cover
+    # record to say which amendment is latest (Unrestated); () when checked and none, None when
+    # not checked -- the default, so a row nobody checked never reads as settled.
     unrestated: tuple[Unrestated, ...] | None = None
     # The schedules this gift is on when a later amendment of its filing has no rows there, so
     # no figure counts it (UnrestatedSchedule); () when it is counted, None when not checked.
@@ -334,29 +334,55 @@ COVER_FALLBACK = (
 
 
 def connect_citable(root: Path) -> sqlite3.Connection:
-    """connect() for a citable query: refuses (DegradedDatabase) a database whose covers carry
-    no amendment ids.
+    """connect() for a citable query: refuses (DegradedDatabase) a database whose covers cannot
+    say which amendment of a filing is its latest (`cover_problem()`).
 
-    Without them nothing can find a filing's latest amendment, so no figure can be checked
-    for rows that amendment dropped (`unrestated_filings()`), and an independent expenditure
-    can be credited to a candidate a later amendment replaced. A total that renders green is a
-    finding, and a warning printed once to stderr still let one re-run and render green.
+    Without that, no figure can be checked for rows the latest amendment dropped
+    (`unrestated_filings()`), and an independent expenditure can be credited to a candidate a
+    later amendment replaced. A total that renders green is a finding, and a warning printed
+    once to stderr still let one re-run and render green.
     """
     con = connect(root)
-    if not covers_by_amendment(con):
-        has_covers = con.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = "
-                                 "'CVR_CAMPAIGN_DISCLOSURE_CD'").fetchone()
+    if problem := cover_problem(con):
         con.close()
-        # No cover table at all is not the old-build case, and a rebuild from the same zip
-        # would not fix it, so say which it is.
-        raise DegradedDatabase(COVER_FALLBACK if has_covers else NO_COVERS)
+        raise DegradedDatabase(problem)
     return con
+
+
+def cover_problem(con: sqlite3.Connection) -> str | None:
+    """Why this database's covers cannot say which amendment of a filing is its latest, or
+    None when they can. Each case has its own message, since a rebuild from the same zip fixes
+    only the old build:
+
+    - no cover table: the export lacked it (NO_COVERS);
+    - a cover table with no rows: the export's file held only its header (EMPTY_COVERS);
+    - no AMEND_ID: built before that column was loaded (COVER_FALLBACK).
+
+    An empty table used to pass. Every filing then had no cover, a filing with no cover read as
+    settled, and every receipt figure verified green with nothing checked. Such a filing now
+    reads as unsettled (`unrestated_filings()`), which on an empty table would name every
+    filing in every figure: a broken database, not records to open, so it is refused here.
+    """
+    cols = {r[1] for r in con.execute('PRAGMA main.table_info("CVR_CAMPAIGN_DISCLOSURE_CD")')}
+    if not cols:
+        return NO_COVERS
+    if con.execute('SELECT 1 FROM main."CVR_CAMPAIGN_DISCLOSURE_CD" LIMIT 1').fetchone() is None:
+        return EMPTY_COVERS
+    if "AMEND_ID" not in cols:
+        return COVER_FALLBACK
+    return None
 
 
 NO_COVERS = (
     "this CAL-ACCESS database has no CVR_CAMPAIGN_DISCLOSURE_CD table, so no figure can be "
     "checked for rows a filing's later amendment dropped. The export it was built from lacked "
     "the cover table: download a complete export, then uv run vg calaccess build")
+
+EMPTY_COVERS = (
+    "this CAL-ACCESS database's CVR_CAMPAIGN_DISCLOSURE_CD table has no rows, so no filing has a "
+    "cover record to say which amendment is its latest, and no figure can be checked for rows a "
+    "filing's later amendment dropped. The export it was built from lacked the cover records: "
+    "download a complete export, then uv run vg calaccess build")
 
 
 @dataclass(frozen=True)
@@ -366,11 +392,15 @@ class Unrestated:
     cannot say whether that is right: the later amendment withdrew them, or did not restate
     that schedule (a fixed address, a signature). Only the filing settles it.
 
+    Or a filing with rows in the table and no cover record at all (`cover_amend` None).
+    Nothing then says which amendment is its latest, so the same question is open, and it is
+    never read as settled: a check that cannot compare answers "not checked", never "fresh".
+
     `amount` and `rows` are what a figure took from the filing; a listing leaves them 0.
     """
     filing_id: str
     rows_amend: int      # the latest amendment with rows in the table: the rows counted
-    cover_amend: int     # the filing's latest amendment, which has none there
+    cover_amend: int | None  # the filing's latest amendment, with none there; None: no cover
     amount: float = 0.0
     rows: int = 0
     does = "rests on"    # what a figure does with its rows (queries.share_text)
@@ -380,6 +410,9 @@ class Unrestated:
         return filing_url(self.filing_id)
 
     def describe(self) -> str:
+        if self.cover_amend is None:
+            return (f"filing {self.filing_id}'s rows are from amendment {self.rows_amend}, and it "
+                    f"has no cover record to say whether a later amendment dropped them")
         return (f"filing {self.filing_id}'s rows are from amendment {self.rows_amend}, and its "
                 f"latest amendment ({self.cover_amend}) has none")
 
@@ -387,12 +420,14 @@ class Unrestated:
 def unrestated_filings(con: sqlite3.Connection, table: str,
                        filing_ids) -> dict[str, Unrestated]:
     """The filings among `filing_ids` whose highest cover AMEND_ID is greater than the highest
-    AMEND_ID `table` has for them, by filing id.
+    AMEND_ID `table` has for them, or that have rows in `table` and no cover record at all, by
+    filing id.
 
     Asked per filing, through the FILING_ID indexes, not over the whole table: only the
-    filings a result touched matter. A filing with no cover at all has nothing to compare, so
-    it is not reported. Needs covers_by_amendment(con); a caller without it says it cannot
-    check (connect_citable() refuses).
+    filings a result touched matter. A filing with no cover has nothing to compare, so it is
+    reported (`cover_amend` None) rather than read as settled. Needs readable covers
+    (`cover_problem()` None); a caller without them says it cannot check (connect_citable()
+    refuses).
     """
     ids = sorted({str(f) for f in filing_ids})
     out: dict[str, Unrestated] = {}
@@ -405,7 +440,7 @@ def unrestated_filings(con: sqlite3.Connection, table: str,
             FROM "{table}" t WHERE t.FILING_ID IN ({", ".join("?" * len(chunk))})
             GROUP BY t.FILING_ID
         """, chunk):
-            if r["cover_a"] is not None and r["cover_a"] > r["rows_a"]:
+            if r["cover_a"] is None or r["cover_a"] > r["rows_a"]:
                 out[str(r["fid"])] = Unrestated(str(r["fid"]), r["rows_a"], r["cover_a"])
     return out
 
@@ -953,7 +988,7 @@ def contributions_to(root: Path, filer_id: str, *, top: int = 25,
     ids = [set((r["FILING_IDS"] or "").split(",")) - {""} for r in found]
     # Marked, and still listed: a finding aid that hid the row would hide the filing to open.
     gaps = (unrestated_filings(con, "RCPT_CD", set().union(*ids))
-            if covers_by_amendment(con) else None)
+            if cover_problem(con) is None else None)
     out = []
     for r, filings in zip(found, ids):
         name = " ".join(x for x in (r["CTRIB_NAMF"], r["CTRIB_NAML"]) if x).strip()
@@ -999,7 +1034,7 @@ def independent_expenditures(root: Path, candidate_last: str, *, first: str = ""
         return name_match_sql(f"{cover}.CAND_NAML", f"{cover}.CAND_NAMF", first)
 
     name_arglist = [f"%{candidate_last}%"] if loose else _nargs(candidate_last, first)
-    checkable = covers_by_amendment(con)
+    checkable = cover_problem(con) is None
 
     def exp(s: str) -> str:
         return f"""{s}.AMOUNT, {iso_date_sql(f"{s}.EXP_DATE")} AS EXP_DATE,

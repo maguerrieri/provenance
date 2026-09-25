@@ -6497,9 +6497,11 @@ _NOT_A_DEFINITION = {
 
 # name -> (version, fingerprint). See test_a_query_definition_cannot_change_unnoticed.
 QUERY_DEFINITIONS = {
-    "calaccess.contributor_total": (7, "5e49909dbb3e"),
-    "calaccess.filer_total": (7, "8ec9ce0a3281"),
-    "calaccess.top_contributor": (8, "1757587c9791"),
+    # bumped from #129's versions: an empty cover table is refused where these answered from
+    # it (#141)
+    "calaccess.contributor_total": (8, "e4e64acf1d44"),
+    "calaccess.filer_total": (8, "b63642abddd0"),
+    "calaccess.top_contributor": (9, "44707cb1310b"),
     # moved without a bump: amount_sql() is ie_total's own amount expression, extracted
     # unchanged, and DEDUPED_RECEIPTS, which it does not read, changed beside it; then the
     # unsettled-amendment flag and its shared helpers, which change no value it returns; then
@@ -6510,8 +6512,8 @@ QUERY_DEFINITIONS = {
     # later cover reattributed (`reattributed`), which verification acts on and which changes
     # no value, on a total and on a miss; then the name grouping and the name key the receipt
     # queries match and dedup by, which it does not use: it matches a candidate with
-    # name_match_sql()
-    "calaccess.ie_total": (2, "a15f2f41cf52"),
+    # name_match_sql(). Bumped: an empty cover table is refused where it found nothing (#141)
+    "calaccess.ie_total": (3, "a1d21de8564f"),
 }
 
 
