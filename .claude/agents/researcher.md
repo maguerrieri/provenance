@@ -177,18 +177,19 @@ same way. If the note also names another `form_type` as "not counted here", that
 figure is a different one: cite it only when the claim is about that schedule.
 
 One donor can be filed under more than one name: the whole name in the last-name field on one
-filing, split on another, or with initials for a first or middle name. The queries never add
-those together, because two such names can be two people. A total or a ranking another name
-could change comes back a miss. Its note lists each other name on the schedule as filed
-(`'last'/'first'`) with its figure and the city, ZIP and employer on its filings, and each late
-report by filing. Open those filings and decide whether they are the same giver. Don't add the
-figures yourself, and don't call anyone "the largest contributor" from that note.
+filing, split on another, with initials for a first or middle name, or as initials alone. The
+queries never add those together, because two such names can be two people. A total or a ranking
+another name could change comes back a miss. Its note lists each other name on the schedule as
+filed (`'last'/'first'`) with its figure and the city, ZIP and employer on its filings, and each
+late report by filing. Open those filings and decide whether they are the same giver. Don't add
+the figures yourself, and don't call anyone "the largest contributor" from that note.
 `names=as_filed` gives the figure under the name you asked for, or ranks each name as filed. As
 with `form_type=A`, `vg query` then says **"Will not verify"** and lists the other names, and
 `vg check-claim` fails it as `human_review`: a person checks whether they are one giver. Word
 the claim as that filing name's figure, not the donor's whole total, cite it anyway, and hand it
 on with `notes` naming the other names. The two switches are separate: each lifts only its own
 check.
+
 
 **Never cite the database as a URL.** A row in a local TSV has no URL a human can open and no text
 they can ⌘F, so a claim resting on one is unverifiable by design. Every result prints the

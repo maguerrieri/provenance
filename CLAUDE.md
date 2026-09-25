@@ -1880,16 +1880,22 @@ more shape (a whole name split, a first initial, initials either way round), and
 next shape open. Pairwise can't close: once an initial fits a word either way the relation stops
 being transitive (Rue could be R, R could be Roe, Rue could not be Roe), and finding the best
 set of names every two of which could be one giver's is a max-weight clique. So the rule is one
-relation and its closure:
+relation and its closure, and a second relation that places a name without linking it:
 - **Link** (`_could_be()`): two names share a surname, a word spelled out in both that is the
   surname of one of them, and each word of the shorter is a different word of the other, or an
   initial of one, either way round.
 - **Group** (`_groups()`): the transitive closure, by union-find. It over-merges by
-  construction (a bare surname joins every giver who has it), so every giver's names are in one
-  group, and a group's total bounds any real giver in it. A name with no words (a blank, or a
-  `-`) could be anyone's, so it is counted in every group, but it links none (`_ANYONE`).
-  Bridged through it, every giver on a committee was one group, and a total listed an unrelated
-  giver as a name that could be the giver's.
+  construction (a bare surname joins every giver who has it), so a giver's names are all in
+  some group, and that group's total bounds the giver.
+- **Fit** (`_fits()`): a name that could be a shorter filing of another whatever the surnames:
+  each word it spells out is a word of the other, and each initial (every letter that has case,
+  wherever it was filed) a different word of the other with its letter. `'R'/''`, `'R M'/''`
+  and `'R Q'/''` fit `'Quillon'/'Rue M'`, and `'Q'/'Rue'` fits `'Smith'/'Rue Q'`. Such a name
+  counts in the group of every name it fits, and links none: `R` could be Rue Quillon or Roe
+  Smith, which does not make those two one giver. A name with no words (a blank, or a `-`) is
+  the extreme case: it fits every name, so it counts in every group. Linked through either, every
+  giver on a committee was one group, and a total listed an unrelated giver as a name that could
+  be the giver's.
 - **`top_contributor`** stands only when (1) the leader's own total is at least every other
   group's bound, and (2) no other name is in the leader's group. Otherwise it is a miss naming
   each group that could change the order, and its bound. A bound is every positive gift in the
@@ -1946,23 +1952,38 @@ answer:** its value was `""`, which matches `""` and verified, so a leader or ti
 a miss whatever the gates.
 
 **The index is part of the rule.** Linking is tested only for pairs an index offers, so a pair
-the index misses is a giver ranked as two. It keys each name by a word it spells out beside
-each of its other words, and beside the first letter of each; a name is tested only against
-names holding one of its words (as a surname, where the word isn't its own) beside its rarest
-other word, that word's initial, or for an initial its letter. The first version indexed each
-word by its initial, which made every initial a candidate for every name with that letter: 4
-million tests on 30,000 synthetic names, and a bare surname linked to any name with a matching
-middle initial. Keyed by (surname, first letter), a ranking still took 6 seconds on 60,000
-synthetic gifts whose given names all began with one letter. Tests check, on random names, that the index finds the groups testing
-every pair would, that the ranking refuses exactly when the rule stated plainly says, and that
-the index does not test every pair.
+the index misses is a giver ranked as two. It keys each name by a word it spells out beside each
+of its other words, and beside the first letter of each; a name is tested only against names
+holding one of its words (as a surname, where the word isn't its own) beside its rarest other
+word, that word's initial, or for an initial its letter. A name is tested for fitting only
+against the rarest pair of its words: one it spells out beside another (or an initial's letter),
+or for a name of initials alone, two of its letters. A name of one word is placed by the groups
+holding that word or letter, with no test at all. The first version indexed each word by its
+initial, which made every initial a candidate for every name with that letter: 4 million tests
+on 30,000 synthetic names, and a bare surname linked to any name with a matching middle initial.
+Keyed by (surname, first letter), a ranking still took 6 seconds on 60,000 synthetic gifts whose
+given names all began with one letter. Tests check, on random names, that the index finds the
+groups testing every pair would, that the ranking refuses exactly when the rule stated plainly
+says, and that the index does not test every pair.
 
-The cost is that the queries refuse more often: a bare surname joins groups nobody could split
-without a person looking, and an unnamed row is in every group, so it gates every total and
-ranking for its filer (#127 is to measure how often). What still slips:
-a name spelled differently (a typo, `Bob` for `Robert`), one sharing no spelled-out surname with
-the other (`R Q` for Rue Quillon), and one name held by two people, which no grouping by name
-can see.
+**Folding two guards into one keeps every hold either had.** The late-report check matched a late
+name to a giver when one's words were all in the other's, whatever the surname: `'R'/''` was
+held against `'Quillon'/'R'`. The surname rule alone did not relate them, so folding that check
+into the grouping first dropped those holds, for Form 497 gifts, Form 496 rows on every schedule,
+late-only givers and the ranking. `_fits` is what restores them, and
+`test_every_pair_the_first_late_check_related_is_still_one_giver` holds the grouping to every
+pair the old check related. When a rule replaces two, check the new one against each old one's
+cases, not only its own.
+
+The cost is that the queries refuse more often, and that is intended: a false refusal costs a
+person a look, while a false green is a finding nobody checks. A bare surname joins groups
+nobody could split without a person looking, a name of initials or a lone word counts in the
+group of every name it fits, and an unnamed row is in every group, so it gates every total and
+ranking for its filer. #127 is to measure how often, and #130 is the way to resolve a flag: a
+claim of identity with its evidence, not a wider or narrower match here. A synthetic committee of
+60,000 gifts takes about 2 s to rank or total on a loaded machine. What still slips: a name
+spelled differently (a typo, `Bob` for `Robert`), and one name held by two people, which no
+grouping by name can see.
 
 A test fixture with an accent has to be written in latin-1, the encoding the build reads the
 export in (`calaccess._rows`). Written as UTF-8, `Élise` loaded as mojibake, and the accent test

@@ -786,9 +786,9 @@ def _could_be(a: _Name, b: _Name) -> bool:
 
     So 'Quillon'/'R' could be 'Quillon'/'Rue', and so could 'Quillon'/'R M', each shorter than
     the other somewhere. A middle or first initial, a bare surname, fields swapped, or a short
-    form of an organization's name could each be the same giver. Missed: a name spelled
-    differently (a typo, a nickname), and one sharing no spelled-out surname with the other
-    ('R Q' for Rue Quillon, or 'Quillon' for a 'Rue'/'Q' whose Q might be it).
+    form of an organization's name could each be the same giver. A name sharing no spelled-out
+    surname with the other ('R Q' for Rue Quillon) is `_fits`'s: it is held in the other's
+    group without linking it. Missed by both: a name spelled differently (a typo, a nickname).
 
     It is not transitive: Rue could be R, and R could be Roe, but Rue could not be Roe. It only
     links two names; `_groups` closes it. One word matches one word, so 'Rue'/'R' is not a
@@ -832,28 +832,66 @@ def _each_to_one(few: frozenset[str], many: frozenset[str]) -> bool:
     return all(place(w, set()) for w in sorted(few))
 
 
-def _groups(names: dict[Any, _Name]) -> dict[Any, int]:
-    """Each key's group: the names `_could_be` links, closed transitively with union-find.
+def _loose(v: _Name) -> frozenset[str]:
+    """A name's words as `_fits` reads them: every letter that has case is an initial, wherever
+    it was filed. 'R'/'' holds R., which could be Rue, as 'Quillon'/'R' does."""
+    return frozenset(f"{w}." if len(w) == 1 and w.lower() != w else w for w in v.words)
+
+
+def _fits(a: _Name, b: _Name) -> bool:
+    """Whether `a` could be a shorter filing of `b`, whatever their surnames: each of its words
+    spelled out is a word of `b`, and each initial (`_loose`) a different word of `b` starting
+    with its letter. So 'R'/'', 'R M'/'' and 'R Q'/'' could each be 'Quillon'/'Rue M', and
+    'Q'/'Rue' could be 'Smith'/'Rue Q': names `_could_be` does not link, since they share no
+    spelled-out surname. A name with no words fits every name.
+
+    One way only, so it is transitive: 'Quillon' is not a filing of 'Rue'/'Q', whose Q is the
+    shorter. It never links names (`_groups`): 'R' could be Rue Quillon or Roe Smith, and that
+    does not make those two one giver. It covers every pair the first late-report check related,
+    one name's words inside the other's, so folding that check in held nothing less."""
+    few, many = _loose(a), _loose(b)
+    if len(few) > len(many):
+        return False
+    spelled = {w for w in few if not _initial(w)}
+    if not spelled <= many:
+        return False
+    # An initial fits any word starting with its letter, so counting letters is the matching.
+    need = Counter(w[0] for w in few if _initial(w))
+    have = Counter(w[0] for w in many - spelled)
+    return all(have[c] >= n for c, n in need.items())
+
+
+def _one_giver(a: _Name, b: _Name) -> bool:
+    """Whether two names could be one giver's, by either rule (`_could_be`, `_fits`)."""
+    return _could_be(a, b) or _fits(a, b) or _fits(b, a)
+
+
+def _groups(names: dict[Any, _Name]) -> dict[Any, frozenset[int]]:
+    """The groups each key counts in: its own, the names `_could_be` links, closed transitively
+    with union-find; and the group of every name it `_fits`, which it does not link.
 
     A group is a safety check, never a figure. No query adds a group's names together, and
     every figure a query reports is for a name exactly as filed. Two names in one group can be
     two people, and the closure over-merges by construction: Rue could be R and R could be
     Roe, so Rue and Roe share a group, and a bare surname joins every giver who has it. That is
-    what makes it safe: every giver's names are in one group, so a group's total is an upper
-    bound for any real giver in it (CLAUDE.md, "One giver filed two ways is flagged, never
-    merged").
+    what makes it safe: a giver's names are all in some group, so that group's total is an upper
+    bound for the giver (CLAUDE.md, "One giver filed two ways is flagged, never merged").
 
-    Names link only within a surname (`_could_be`). A name with no words could be anyone's, so
-    it is in every group, but it links none: bridged through it, every giver on a committee was
-    one group, and a total listed unrelated givers as names that could be the giver's. It gets
-    the group `_ANYONE`, which callers count as a member of each group. Pairs are found through an index, never all against all: a ranking
-    can hold tens of thousands of names. A name can link with one of at least as many words
-    only if that one holds a word `s` they share, a surname of one of them, and for each of its
-    other words: that word or its initial, or for an initial, a word starting with its letter.
-    So each name is tested only against the names holding `s` beside its rarest such word (as
-    a surname, where `s` is not its own), and only while the two are apart. Keying every word
-    by its first letter instead made each initial a candidate for every name sharing the
-    letter: 4 million tests on 30,000 synthetic names.
+    Names link only within a surname (`_could_be`). A name that could be another's without one
+    in common ('R'/'' for 'Quillon'/'Rue') counts in the other's group but links nothing, like
+    the name with no words, which could be anyone's and counts in every group. Linked through
+    either, every giver on a committee was one group, and a total listed unrelated givers as
+    names that could be the giver's. Names with no words share a group of their own too.
+
+    Pairs are found through an index, never all against all: a ranking can hold tens of
+    thousands of names. A name can link with one of at least as many words only if that one
+    holds a word `s` they share, a surname of one of them, and for each of its other words: that
+    word or its initial, or for an initial, a word starting with its letter. So each name is
+    tested only against the names holding `s` beside its rarest such word (as a surname, where
+    `s` is not its own), and only while the two are apart. Keying every word by its first letter
+    instead made each initial a candidate for every name sharing the letter: 4 million tests on
+    30,000 synthetic names. A name `_fits` only names holding each word it spells out, beside
+    each of its other words, or for a name of initials alone, a word with each of its letters.
 
     The groups do not depend on the order names come in, only their numbers do, and callers
     compare numbers only with each other.
@@ -861,7 +899,7 @@ def _groups(names: dict[Any, _Name]) -> dict[Any, int]:
     by_name: dict[_Name, list[Any]] = {}
     for k, n in names.items():
         by_name.setdefault(n, []).append(k)
-    order = list(by_name)
+    order = [v for v in by_name if v.words]
     parent = {v: v for v in order}
 
     def find(v: _Name) -> _Name:
@@ -879,6 +917,8 @@ def _groups(names: dict[Any, _Name]) -> dict[Any, int]:
     # any of them) -> the names holding both: as any word, and as a surname.
     holding: dict[tuple[str, str], list[_Name]] = {}
     as_surname: dict[tuple[str, str], list[_Name]] = {}
+    # a first letter -> the names holding a word starting with it
+    lettered: dict[str, list[_Name]] = {}
     for v in order:
         beside = ["", *(w for w in v.words), *{f"^{w[0]}" for w in v.words}]
         for s in v.spelled:
@@ -886,6 +926,8 @@ def _groups(names: dict[Any, _Name]) -> dict[Any, int]:
                 for x in beside:
                     if x != s:
                         index.setdefault((s, x), []).append(v)
+        for c in {w[0] for w in v.words}:
+            lettered.setdefault(c, []).append(v)
 
     def partners(index: dict[tuple[str, str], list[_Name]], s: str,
                  x: str) -> list[list[_Name]]:
@@ -909,12 +951,46 @@ def _groups(names: dict[Any, _Name]) -> dict[Any, int]:
                         join(v, u)
 
     ids: dict[_Name, int] = {}
-    return {k: _ANYONE if not v.words else ids.setdefault(find(v), len(ids))
-            for v in order for k in by_name[v]}
-
-
-# The group of a name with no words (`_groups`): it could be in any group.
-_ANYONE = -1
+    for v in order:
+        ids.setdefault(find(v), len(ids))
+    own = {v: ids[find(v)] for v in order}
+    # The groups holding a word, or a word with a first letter: a name of one word fits every
+    # name holding it, so it is placed by group, not tested name by name. And the names holding
+    # two words with these first letters, for a name of initials alone.
+    word_groups: dict[str, set[int]] = {}
+    letter_groups: dict[str, set[int]] = {}
+    letter_pairs: dict[tuple[str, str], list[_Name]] = {}
+    for v in order:
+        for w in v.spelled:
+            word_groups.setdefault(w, set()).add(own[v])
+        firsts = sorted(w[0] for w in v.words)
+        for c in set(firsts):
+            letter_groups.setdefault(c, set()).add(own[v])
+        for pair in set(itertools.combinations(firsts, 2)):
+            letter_pairs.setdefault(pair, []).append(v)
+    also: dict[_Name, set[int]] = {v: set() for v in order}
+    for v in order:
+        loose = _loose(v)
+        if len(loose) == 1:
+            (w,) = loose
+            held = letter_groups.get(w[0], set()) if _initial(w) else word_groups.get(w, set())
+            also[v] = held - {own[v]}
+            continue
+        spelled = [w for w in loose if not _initial(w)]
+        if spelled:
+            # the names holding a word it spells out beside each of its other words (an
+            # initial beside its letter)
+            options = [holding.get((s, f"^{x[0]}" if _initial(x) else x), [])
+                       for s in spelled for x in loose if x != s]
+        else:
+            options = [letter_pairs.get(tuple(sorted((a[0], b[0]))), [])
+                       for a, b in itertools.combinations(sorted(loose), 2)]
+        for u in min(options, key=len):
+            if own[u] != own[v] and own[u] not in also[v] and _fits(v, u):
+                also[v].add(own[u])
+    anyone = frozenset(ids.values()) | {len(ids)}   # every group, and the nameless one
+    return {k: (frozenset({own[v]} | also[v]) if v.words else anyone)
+            for v, ks in by_name.items() for k in ks}
 
 
 # A name's key, as `_givers` groups it: last and first name, each through `_name_key`.
@@ -1243,12 +1319,13 @@ def _contributor_figure(con: Any, filer_id: str, contributor: str, contributor_f
         # The group of the names the figure counts, or of the name asked for when it counts
         # none. Not the asked-for name beside counted ones: a surname alone would join every
         # giver who has it, and another Quillon's whole name is not a name of this Rue's.
+        # Every group those names count in, and every name counting in one of them: a name
+        # that could be theirs without a surname in common ('R'/'') is in theirs, and theirs
+        # can be in the group of a fuller name.
         words = {k: w for part in parts for k, w in part.items()}
         of = _groups(words)
-        seeds = {of[k] for k in (counted or asked)} | {_ANYONE}
-        if _ANYONE in {of[k] for k in (counted or asked)}:
-            seeds = set(of.values())   # a name with no words could be anyone's
-        return [k for k in words if of[k] in seeds and k not in counted and k not in asked]
+        seeds = frozenset().union(*(of[k] for k in (counted or asked)))
+        return [k for k in words if of[k] & seeds and k not in counted and k not in asked]
 
     seed = {} if counted else asked
     # The name check groups the names on the schedule alone. A late entry that links this name
@@ -1291,16 +1368,16 @@ def _contributor_figure(con: Any, filer_id: str, contributor: str, contributor_f
     if not first:
         # Summing several people under one surname is how a nonexistent contributor appeared.
         # Whatever the gates: the names it counts, and the late givers who could be the name
-        # asked for. Asked pairwise, never through `_groups`: a closure over-merges, which
-        # bounds a figure safely and counts people short. A bare 'Quillon' links Rue and Tom,
-        # and they are still two.
+        # asked for. Asked pairwise (`_one_giver`), never through `_groups`: a closure
+        # over-merges, which bounds a figure safely and counts people short. A bare 'Quillon'
+        # links Rue and Tom, and they are still two.
         spans = {on_schedule[k]: _filed(*filed_as[k]) for k in counted}
         spans.update({late_names[k]: f"{_filed(e['naml'], e['namf'])} (late)"
                       for k, e in zip(late_names, late)
-                      if _could_be(late_names[k], asked[("asked",)])})
+                      if _one_giver(late_names[k], asked[("asked",)])})
         firsts = sorted({k[2]: str(filed_as[k][1] or "").strip() for k in counted}.values(),
                         key=lambda f: (_name_key(f), f))
-        if any(not _could_be(a, b) for a, b in itertools.combinations(spans, 2)):
+        if any(not _one_giver(a, b) for a, b in itertools.combinations(spans, 2)):
             return QueryResult(
                 value=None, rows=gifts, found=False,
                 detail=f"{gifts} itemized {label} gift(s) across DIFFERENT first names, which "
@@ -1521,7 +1598,7 @@ def _ranking(con: Any, filer_id: str, form_type: str, gated: bool,
     # Each check runs once: with no late entry, the late and the names-only checks are one.
     # So does each grouping: the late check and the one with both group the same names.
     checks: dict[tuple[bool, bool], list[_Contender]] = {}
-    grouped: dict[bool, dict[Any, int]] = {}
+    grouped: dict[bool, dict[Any, frozenset[int]]] = {}
 
     def check(use_late: bool, use_names: bool) -> list[_Contender]:
         key = (use_late and bool(late), use_names)
@@ -1649,24 +1726,25 @@ def _late_range(entries: Any) -> tuple[float, float]:
 
 def _could_change_ranking(groups: list[Any], tied: list[Any], top: float,
                           late: list[dict[str, Any]], *, use_names: bool,
-                          grouped: dict[Any, int] | None = None) -> list[_Contender]:
+                          grouped: dict[Any, frozenset[int]] | None = None) -> list[_Contender]:
     """Who could be at the top instead of the leaders, or a leader who could move: highest
     reach first. Empty if the ranking stands.
 
     Names are grouped by `_groups`, over the names on the ranking and the pending late entries
-    in `late`. A group is never a figure, only a bound on one. What each could reach:
+    in `late`, and a name counts in every group `_groups` puts it in. A group is never a
+    figure, only a bound on one. What each could reach:
     - `use_names`: a group. Its bound is every positive gift in it, since any of its names
       could be one giver's and a name's gifts could be split between two givers, plus every
-      positive late amount in it. A gift nobody stated an amount for makes it unbounded: a blank
-      is not zero. (`_ranking` names no largest contributor while one exists, so this is the
-      check's own guard, not one it relies on its caller for.) A group holding one name ranks as that name, its own total plus its group's
-      late amounts, and its late entries under another name could be a giver of their own. A
-      leader's group has to hold no other name on the ranking; if it does, it is a contender
-      whatever its bound, since another giver in it could pass the leader.
-    - otherwise each name as filed, its own total plus every late amount in its group, and the
-      late entries filed under none of its names, as a giver of their own.
-    Each late entry counts once per giver, never once per name it could be, so a chain of names
-    cannot sum it twice.
+      positive late amount in it. A gift nobody stated an amount for makes it unbounded: a
+      blank is not zero. (`_ranking` names no largest contributor while one exists, so this is
+      the check's own guard, not one it leans on its caller for.) A group holding one name
+      ranks as that name, and its late entries under another name could be a giver of their
+      own. A leader in a group with another name on the ranking is a contender whatever the
+      bound, since another giver in it could pass the leader.
+    - otherwise each name as filed, its own total plus every late amount in any of its groups,
+      and the late entries filed under none of a group's names, as a giver of their own.
+    Each late entry counts once per giver, never once per name or group it could be in, so a
+    chain of names cannot sum it twice.
 
     The answer stands if nobody outside the leaders could come within a cent of the lowest a
     leader could fall to, and no leader of a tie could move. Everything uncertain only widens a
@@ -1681,37 +1759,37 @@ def _could_change_ranking(groups: list[Any], tied: list[Any], top: float,
     of = grouped if grouped is not None else _groups(words)
     members: dict[int, list[Any]] = {}
     for k in words:
-        members.setdefault(of[k], []).append(k)
-    # A name with no words could be in any group, so it is counted in each.
-    anyone = members.pop(_ANYONE, [])
-    members = {gid: ks + anyone for gid, ks in members.items()}
-    leaders = dict.fromkeys(("name", r["kl"], r["kf"]) for r in tied)
+        for gid in sorted(of[k]):
+            members.setdefault(gid, []).append(k)
+    owed_in = {gid: tuple(late[k[1]] for k in ks if k[0] == "late")
+               for gid, ks in members.items()}
+    # A name's late entries: every one in any group it counts in, each once.
+    owed = {k: tuple({id(e): e for gid in sorted(of[k]) for e in owed_in[gid]}.values())
+            for k in ranked}
     lo: dict[Any, float] = {}
     hi: dict[Any, float] = {}
-    owed_by: dict[int, tuple[dict[str, Any], ...]] = {}
+    for k, g in ranked.items():
+        up, down = _late_range(owed[k])
+        lo[k], hi[k] = float(g["amt"] or 0) + down, float(g["amt"] or 0) + up
+    leaders = dict.fromkeys(("name", r["kl"], r["kf"]) for r in tied)
     units: list[_Contender] = []
     forced: list[_Contender] = []
     stuck: set[Any] = set()     # leaders in a group with another name
-    home = {k: gid for gid, ks in members.items() for k in ks if words[k].words}
     for gid, ks in members.items():
         names = [k for k in ks if k[0] == "name"]
-        owed = owed_by[gid] = tuple(late[k[1]] for k in ks if k[0] == "late")
-        up, down = _late_range(owed)
-        for k in names:
-            total = float(ranked[k]["amt"] or 0)
-            lo[k], hi[k] = total + down, total + up
         if use_names and len(names) > 1:
             rows = tuple(ranked[k] for k in names)
             bound = (_INF if any(g["unread"] for g in rows)
-                     else sum(float(g["pos"] or 0) for g in rows)) + up
-            unit = _Contender(bound, "group", rows, owed, _shown(rows[0]["nf"], rows[0]["nm"]))
+                     else sum(float(g["pos"] or 0) for g in rows)) + _late_range(owed_in[gid])[0]
+            unit = _Contender(bound, "group", rows, owed_in[gid],
+                              _shown(rows[0]["nf"], rows[0]["nm"]))
             if lead := [k for k in names if k in leaders]:
                 forced.append(unit)
                 stuck.update(lead)
             else:
                 units.append(unit)
             continue
-        units += [_Contender(hi[k], "name", (ranked[k],), owed,
+        units += [_Contender(hi[k], "name", (ranked[k],), owed[k],
                              _shown(ranked[k]["nf"], ranked[k]["nm"]))
                   for k in names if k not in leaders]
         filed = {words[k].words for k in names}
@@ -1720,21 +1798,23 @@ def _could_change_ranking(groups: list[Any], tied: list[Any], top: float,
         if strangers:
             units.append(_Contender(_late_range(strangers)[0], "late", (), strangers,
                                     _late_names(strangers)))
-    # A name with no words is in every group, so it made a unit in each: keep its highest.
+    # A name in several groups made a unit in each: keep one, its highest.
     best: dict[Any, _Contender] = {}
-    for u in units:
+    for u in units + forced:
         key = (u.kind, tuple((g["kl"], g["kf"]) for g in u.ranked),
                tuple(id(e) for e in u.late) if u.kind == "late" else ())
         if key not in best or u.reach > best[key].reach:
             best[key] = u
-    units = list(best.values())
+    kept = set(map(id, best.values()))
+    forced = [u for u in forced if id(u) in kept]
+    units = [u for u in units if id(u) in kept]
     floor = min(lo[k] for k in leaders)
     could = forced + [u for u in units if u.reach > floor - TOLERANCE]
     free = [k for k in leaders if k not in stuck]
 
     def leader(k: Any) -> _Contender:
         g = ranked[k]
-        return _Contender(hi[k], "name", (g,), owed_by[home[k]], _shown(g["nf"], g["nm"]))
+        return _Contender(hi[k], "name", (g,), owed[k], _shown(g["nf"], g["nm"]))
 
     if len(leaders) > 1:
         could += [leader(k) for k in free if lo[k] <= top - TOLERANCE or hi[k] >= top + TOLERANCE]
@@ -1971,9 +2051,11 @@ REGISTRY: dict[str, Query] = {
     # it.
     # v7 of contributor_total and v8 of top_contributor: names are grouped by the transitive
     # closure of `_could_be` (`_groups`), which reads an initial as short for a word either way
-    # round, after accents are folded. A figure is a miss while its name's group holds another
-    # name on the schedule, and a ranking while the leader's does or another group's upper
-    # bound reaches the top (names=as_filed lifts that gate alone). Late entries are held
+    # round, after accents are folded, and a name that fits another with no surname in common
+    # ('R'/'' for 'Quillon'/'Rue', `_fits`) counts in its group without linking it. A figure is
+    # a miss while its name's group holds another name on the schedule, and a ranking while the
+    # leader's does or another group's upper bound reaches the top (names=as_filed lifts that
+    # gate alone). Late entries are held
     # against a figure by the same groups, not pairwise, and a Form 496 Part 3 row under another
     # name is held as that name. Two tied names that show alike are listed as filed. A value
     # names=as_filed gives is held for a person while another name could change it
