@@ -93,8 +93,8 @@ def test_a_mixed_total_sums_only_the_stated_amounts_and_says_how_many_it_left_ou
     quill = queries.run("calaccess.contributor_total",
                         {"filer_id": MIXED, "contributor": "Quill PAC"}, root)
     assert quill.found and quill.value == 500.0 and quill.rows == 1
-    assert quill.note == ("1 itemized gift(s); 1 more gift(s) with no readable amount, "
-                          "not counted")
+    assert quill.note == ("1 itemized schedule-A gift(s); 1 more gift(s) with no readable "
+                          "amount, not counted")
 
     total = queries.run("calaccess.filer_total", {"filer_id": MIXED}, root)
     assert total.found and total.value == 800.0 and total.rows == 2
@@ -136,9 +136,9 @@ def test_no_largest_contributor_is_named_while_a_gift_has_no_amount(tmp_path, un
 
     top = queries.run("calaccess.top_contributor", {"filer_id": MIXED}, root)
     assert top.value is None and not top.found, top
-    assert top.note.startswith("Quill PAC leads the stated amounts at $750, but no largest "
-                               "contributor can be named; 1 more gift(s) to this filer with no "
-                               "readable amount, not counted")
+    assert top.note.startswith("Quill PAC leads the stated amounts at $750 in schedule-A gifts, "
+                               "but no largest contributor can be named; 1 more gift(s) to this "
+                               "filer with no readable amount, not counted")
     for expected in ("Quill PAC", "Tess Marlow"):
         assert not _verifies(root, "calaccess.top_contributor", {"filer_id": MIXED}, expected)
 
@@ -176,14 +176,15 @@ def test_top_contributor_counts_unreadable_gifts_beyond_the_ranked_few(tmp_path)
 
     top = queries.run("calaccess.top_contributor", {"filer_id": MIXED}, root)
     assert not top.found, top
-    assert top.detail == ("Quill PAC leads the stated amounts at $750, but no largest "
-                          "contributor can be named; 6 more gift(s) to this filer with no "
-                          "readable amount, not counted")
+    assert top.detail == ("Quill PAC leads the stated amounts at $750 in schedule-A gifts, "
+                          "but no largest contributor can be named; 6 more gift(s) to this "
+                          "filer with no readable amount, not counted")
 
     # with every amount readable, the largest is named as before
     _set(root, "DELETE FROM RCPT_CD WHERE TRAN_ID LIKE 'U%'")
     top = queries.run("calaccess.top_contributor", {"filer_id": MIXED}, root)
-    assert top.found and top.value == "Quill PAC" and top.detail == "$750 across 2 gift(s)"
+    assert top.found and top.value == "Quill PAC"
+    assert top.detail == "$750 across 2 schedule-A gift(s)"
 
 
 def test_a_readable_gift_is_never_merged_into_an_unreadable_restatement(tmp_path):
@@ -197,11 +198,17 @@ def test_a_readable_gift_is_never_merged_into_an_unreadable_restatement(tmp_path
          " CTRIB_NAMF, RCPT_DATE, AMOUNT, FORM_TYPE) VALUES ('8100001', '0', 'F496P3-T3', '4',"
          " 'Marlow', 'Tess', '1/7/2026 12:00:00 AM', '300,000', 'F496P3')")
 
+    # Only every schedule reaches the dedup: the schedule-A default leaves the Form 496 Part 3
+    # row out before it (#66), and counts the $300 alone.
+    tess = queries.run("calaccess.contributor_total",
+                       {"filer_id": MIXED, "contributor": "Marlow", "contributor_first": "Tess",
+                        "form_type": ""}, root)
+    assert tess.found and tess.value == 300.0 and tess.rows == 1, tess
+    assert "1 more gift(s) with no readable amount" in tess.note
     tess = queries.run("calaccess.contributor_total",
                        {"filer_id": MIXED, "contributor": "Marlow", "contributor_first": "Tess"},
                        root)
-    assert tess.found and tess.value == 300.0 and tess.rows == 1, tess
-    assert "1 more gift(s) with no readable amount" in tess.note
+    assert tess.found and tess.value == 300.0 and tess.note == "1 itemized schedule-A gift(s)"
 
     listed = [c for c in calaccess.contributions_to(root, MIXED) if c.contributor == "Tess Marlow"]
     assert sorted((c.amount is None, c.amount_filed) for c in listed) == [
