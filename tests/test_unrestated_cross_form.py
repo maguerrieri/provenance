@@ -246,3 +246,43 @@ def test_the_gift_test_counts_exactly_what_the_row_filter_did(tmp_path):
                 assert gifts > 0, f"no {who} gifts on {form_type!r}: nothing proved there"
     finally:
         con.close()
+
+
+def test_a_gift_left_out_on_its_schedule_is_flagged_though_another_report_counts(tmp_path):
+    """#92's left-out check groups the same way, and tests the schedule per report too. Here a
+    460's later amendment has rows on schedule C and none on A, so its schedule-A report of a
+    gift is left out, while the same gift's Form 496 report is counted. No schedule-A figure
+    counts the gift, so it is left out of one; over every schedule the 496 report counts it.
+    Tested on the grouped rows as a whole, the schedule-A report would have made the gift read
+    as counted, in no figure and flagged by none."""
+    left_460, counted_496 = "7770106", "7770107"
+    gift = "\tQuenby Hollis Fund\t\t\t\t2/10/2026 12:00:00 AM\t7000\t"
+    receipts = (RECEIPTS.splitlines(keepends=True)[0]
+                + f"{left_460}\t0\tA-600001\t1{gift}A\n"
+                + f"{left_460}\t1\tC-600002\t1\tQuenby Hollis Fund\t\t\t\t2/12/2026 12:00:00 AM"
+                  "\t300\tC\n"
+                + f"{counted_496}\t0\tF496P3-600001\t1{gift}F496P3\n")
+    filings = (FILINGS.splitlines(keepends=True)[0]
+               + f"{FILER}\t{left_460}\tF460\t3/1/2026 12:00:00 AM\n"
+               + f"{FILER}\t{counted_496}\tF496\t2/11/2026 12:00:00 AM\n")
+    # the 460 covers February, so the 496 report is not a pending late report (#66)
+    covers = (COVERS.splitlines(keepends=True)[0]
+              + "".join(f"{left_460}\t{a}\t{FILER}\tCommittee for Example\t\t\t\tF460"
+                        "\t2/1/2026 12:00:00 AM\t2/28/2026 12:00:00 AM\n" for a in ("0", "1"))
+              + f"{counted_496}\t0\t{FILER}\tCommittee for Example\t\t\t\tF496\t\t\n")
+    root = _build(tmp_path, receipts, filings, covers)
+
+    who = {"contributor": "Quenby Hollis Fund"}
+    for name, extra in (("calaccess.contributor_total", who), ("calaccess.filer_total", {})):
+        for schedule in FORM_TYPES[:2]:
+            params = _params(extra, schedule)
+            result = queries.run(name, params, root)
+            assert result.value is None, (name, schedule, result.value)
+            assert [(u.filing_id, u.schedule, u.amount) for u in result.omitted] == [
+                (left_460, "A", 7000.0)], (name, schedule)
+            v = verify_source(cited(name, params, "7000"), root).verification
+            assert v.status == "human_review" and left_460 in v.reason, (name, schedule)
+
+    every = queries.run("calaccess.contributor_total",
+                        {"filer_id": FILER, **who, "form_type": ""}, root)
+    assert every.value == 7300.0 and every.omitted == [], "the 496 report counts it"

@@ -1474,10 +1474,11 @@ per filing, through the `FILING_ID` indexes, and only for the filings a result t
   report never reached the group, and a gift whose only unrestated report was that one
   verified green under the default and under `form_type=A`, while `""` sent the same figure to
   human review (#131).
-  Now `_schedule()` is a test on the *gift*, `DEDUPED_RECEIPTS`' `{counted}`, applied as a
-  `HAVING` after the grouping. A gift counts when any of its reports is on the schedule, which
-  counts exactly the gifts the row filter did, and `FILING_IDS` holds every filing it was
-  reported on. `{extra}` still filters rows before the grouping, but only on a group key (the
+  Now `_schedule()` is a test on the *gift*: `{counted}`, which `_RECEIPT_GIFTS` applies in
+  its `HAVING` after the grouping. `DEDUPED_RECEIPTS` counts a gift when any of its reports is
+  on the schedule, which counts exactly the gifts the row filter did, and `FILING_IDS` holds
+  every filing it was reported on. #92's left-out check tests the schedule per report the same
+  way (below). `{extra}` still filters rows before the grouping, but only on a group key (the
   contributor's name), which removes whole gifts. The reach is the dedup's own: two reports it
   does not recognize as one gift (date text, amount or name filed differently) stay two gifts,
   and under schedule A the Form 496 one is neither counted nor consulted.
