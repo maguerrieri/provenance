@@ -273,14 +273,27 @@ def test_the_commands_refuse_a_url_whose_host_cant_be_parsed_without_repeating_i
 
 
 def test_every_url_from_a_paste_or_a_recipe_is_split_where_its_error_is_replaced():
-    """A split anywhere else raises the stdlib's error, which quotes the netloc (#158).
-    `_norm_host` reads a host a person typed, or a URL `parse_curl` has already split."""
-    tree = ast.parse(Path(access.__file__).read_text())
-    splits = [(f.name, node.func.id) for f in ast.walk(tree) if isinstance(f, ast.FunctionDef)
-              for node in ast.walk(f)
-              if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-              and node.func.id in ("urlsplit", "urlparse")]
-    assert sorted(splits) == [("_norm_host", "urlsplit"), ("_split", "urlsplit")]
+    """A split anywhere else raises the stdlib's error, which quotes the netloc (#158). Every
+    reference to a function that splits counts, called or not, bare or as an attribute, and
+    so does an import that renames one. `_norm_host` reads a command's host argument, which
+    #161 is to guard."""
+    splitters = {"urlsplit", "urlparse", "urljoin", "urldefrag"}
+    found = []
+
+    def visit(node, where):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+            where = getattr(node, "name", "<lambda>")
+        if isinstance(node, ast.Name) and node.id in splitters:
+            found.append((where, node.id))
+        elif isinstance(node, ast.Attribute) and node.attr in splitters:
+            found.append((where, node.attr))
+        elif isinstance(node, ast.alias) and node.name in splitters and node.asname:
+            found.append((where, f"{node.name} as {node.asname}"))
+        for child in ast.iter_child_nodes(node):
+            visit(child, where)
+
+    visit(ast.parse(Path(access.__file__).read_text()), "<module>")
+    assert sorted(found) == [("_norm_host", "urlsplit"), ("_split", "urlsplit")]
 
 
 def test_run_allows_a_hand_added_header_that_is_not_a_credential(monkeypatch):
