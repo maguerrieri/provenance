@@ -130,6 +130,9 @@ Do not summarize the source rules for them — the agent definition carries them
    or years the answer states that none of its snippets do. Hand that line back to a
    researcher: quote the span that carries the figure, or correct the answer. `vg
    check-claim` does not catch this yet (#82), so a clean exit there does not rule it out.
+   A claim held by a contradiction a retry dropped is also `human_review` with every source
+   green, but its conflict line names a source id and a verifier's verdict, not figures: that
+   one is the human's (above), not a retry.
 4. `uv run vg archive` — saves a fresh snapshot of every cited URL, checks each one
    actually holds the cited page (a bot check or a capture missing the snippet is
    `archive_unusable`), then re-checks any paywalled snippet against its snapshot and
