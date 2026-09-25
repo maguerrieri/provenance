@@ -155,6 +155,13 @@ def tran_base_sql(col: str) -> str:
 # the way the sum does.
 # One grouping for every receipts figure and listing: DEDUPED_RECEIPTS fills {rows} with
 # RCPT_LATEST, and left_out_gifts() adds the rows of a schedule a later amendment left out.
+# Two filters, on two sides of the grouping. {extra} narrows ROWS, before it, and may only test
+# a group key (the contributor's name): that removes whole gifts, and keeps the grouping small.
+# The schedule picks GIFTS, after it, in {having}: {counted} is SQL true for a row on the
+# schedule a figure counts (`_schedule`), and DEDUPED_RECEIPTS counts a gift when any of its
+# reports is. A schedule filter on the rows dropped a gift's Form 496 Part 3 report before the
+# two were grouped, so FILING_IDS lacked that filing, and a gift whose only unrestated report
+# it was verified green under schedule A (#131).
 _RECEIPT_GIFTS = f"""
     SELECT MAX(x.AMOUNT) AS AMOUNT, x.AMT, x.CTRIB_NAML, x.CTRIB_NAMF, x.RCPT_DATE,
            -- The group's provenance. A collapsed row still has to name a filing a human can
@@ -172,22 +179,27 @@ _RECEIPT_GIFTS = f"""
           WHERE f.FILER_ID = ?{{extra}}) x
     GROUP BY x.tbase, vg_name_key(x.CTRIB_NAML), vg_name_key(x.CTRIB_NAMF),
              x.RCPT_DATE, x.AMT
+    HAVING {{having}}
 """
-DEDUPED_RECEIPTS = _RECEIPT_GIFTS.replace("{rows}", "RCPT_LATEST").replace("{columns}", "")
+DEDUPED_RECEIPTS = (_RECEIPT_GIFTS.replace("{rows}", "RCPT_LATEST").replace("{columns}", "")
+                    .replace("{having}", "MAX({counted})"))
 
 
-def left_out_gifts(con, filer_id: str, *, extra: str) -> tuple[list, str]:
+def left_out_gifts(con, filer_id: str, *, extra: str, counted: str) -> tuple[list, str]:
     """A filer's schedules a later amendment of their filing left out
-    (`calaccess.unrestated_schedules()`), and its gifts as DEDUPED_RECEIPTS groups them under
-    `extra`, over its RCPT_LATEST rows and those schedules' rows; ([], "") when it has none.
-    The one route from a filer to what its figures leave out, so the figures and the listing
-    agree about it.
+    (`calaccess.unrestated_schedules()`), and the gifts a figure leaves out because of them:
+    grouped as DEDUPED_RECEIPTS groups them, under `extra` and `counted`, over the filer's
+    RCPT_LATEST rows and those schedules' rows; ([], "") when it has none. The one route from a
+    filer to what its figures leave out, so the figures and the listing agree about it.
 
     Grouped together, so a left-out row reporting a gift a counted row also reports (the same
-    gift on a Form 496 and a Schedule A) joins that gift, which a figure counts either way.
-    Adds OMITTED, 1 for a gift made only of left-out rows, which no figure counts, and GAPS,
-    the indexes in the schedules of those it came from. The SQL takes the filer id twice,
-    then `extra`'s arguments.
+    gift on a Form 496 and a Schedule A) joins that gift. A gift is left out when one of its
+    left-out reports is on the schedule `counted` tests and none of its counted reports is:
+    DEDUPED_RECEIPTS counts it otherwise. Tested per report, not per row before the grouping
+    (#131): a gift whose Form 496 report is counted and whose schedule-A report was left out
+    is in no schedule-A figure. Adds GAPS, the indexes in the schedules of the left-out reports
+    it came from. The SQL takes the filer id twice, then `extra`'s arguments, then `counted`'s
+    twice.
     """
     from . import calaccess
 
@@ -199,10 +211,13 @@ def left_out_gifts(con, filer_id: str, *, extra: str) -> tuple[list, str]:
     rows = ("(SELECT l.*, NULL AS gap FROM RCPT_LATEST l JOIN FILER_FILING g"
             " ON g.FILING_ID = l.FILING_ID WHERE g.FILER_ID = ?"
             f' UNION ALL SELECT * FROM temp."{staged}")')
+    # IFNULL: a counted report with no schedule compares as NULL, which is not "on it"
+    left_out = ("MAX(x.gap IS NOT NULL AND ({counted}))"
+                " AND NOT IFNULL(MAX(x.gap IS NULL AND ({counted})), 0)")
     return schedules, (_RECEIPT_GIFTS.replace("{rows}", rows)
-                       .replace("{columns}", ", MIN(x.gap IS NOT NULL) AS OMITTED,"
-                                             " GROUP_CONCAT(DISTINCT x.gap) AS GAPS")
-                       .format(extra=extra))
+                       .replace("{columns}", ", GROUP_CONCAT(DISTINCT x.gap) AS GAPS")
+                       .replace("{having}", left_out)
+                       .format(extra=extra, counted=counted))
 
 
 def _unread(n: int, whose: str = "") -> str:
@@ -244,29 +259,32 @@ def _receipt_shares(con, inner: str, args: list, filing_ids: str | None) -> list
             FROM ({inner}) d WHERE d.AMT IS NOT NULL GROUP BY d.FILING_IDS""", args)], gaps)
 
 
-def _left_out_receipts(con, filer_id: str, extra: str, extra_args: list) -> list:
+def _left_out_receipts(con, filer_id: str, schedule: str, schedule_args: list,
+                       who: str = "", who_args: list | None = None) -> list:
     """The schedules a receipts figure leaves out because a later amendment of their filing
     has rows on other schedules and none on them (`calaccess.UnrestatedSchedule`), with what
-    the figure leaves out from each. `extra` and `extra_args` are the figure's own filter, so
-    only rows it would have counted are named.
+    the figure leaves out from each. `schedule` and `who` are the figure's own filters
+    (`_schedule`, and the contributor's name as a condition on `r`), so only gifts it would
+    have counted are named.
 
-    A gift a counted row also reports is not left out: it is in the figure either way. Nor is
-    one with no readable amount (`amount_sql()`), which the figure would leave out anyway, as
-    `_receipt_shares()` gives it no share. The usual filer has no such schedule, and costs a
-    lookup of its filings and their amendments. Asked of a miss too: a name whose every
-    readable gift was left out is not a name with no gifts.
+    A gift a counted report of which is on the schedule is not left out: it is in the figure
+    either way. Nor is one with no readable amount (`amount_sql()`), which the figure would
+    leave out anyway, as `_receipt_shares()` gives it no share. The usual filer has no such
+    schedule, and costs a lookup of its filings and their amendments. Asked of a miss too: a
+    name whose every readable gift was left out is not a name with no gifts.
     """
     from . import calaccess
 
-    schedules, gifts = left_out_gifts(con, filer_id, extra=extra)
+    schedules, gifts = left_out_gifts(con, filer_id, extra=who, counted=schedule)
     if not schedules:
         return []
     return calaccess.unrestated_shares(con, "RCPT_CD", [
         ([int(g) for g in r["gaps"].split(",")], float(r["amt"]), int(r["n"]))
         for r in con.execute(f"""
             SELECT d.GAPS gaps, SUM(d.AMT) amt, COUNT(*) n
-            FROM ({gifts}) d WHERE d.OMITTED AND d.AMT IS NOT NULL GROUP BY d.GAPS""",
-                             [filer_id, filer_id] + list(extra_args))],
+            FROM ({gifts}) d WHERE d.AMT IS NOT NULL GROUP BY d.GAPS""",
+                             [filer_id, filer_id, *(who_args or []), *schedule_args,
+                              *schedule_args])],
         dict(enumerate(schedules)))
 
 
@@ -472,8 +490,13 @@ def late_text(r: LateReport) -> str:
 
 
 def _schedule(form_type: str) -> tuple[str, list[str], str]:
-    """The receipt-schedule filter every contribution query applies (a condition on `r`), its
-    args, and the label for the detail (`_schedule_label`).
+    """The receipt-schedule test every contribution query applies: SQL true for a receipt row
+    `x` on the schedule counted ("1" for every schedule), its args, and the label for the
+    detail (`_schedule_label`).
+
+    It goes in DEDUPED_RECEIPTS' {counted}, which picks gifts after the cross-form grouping,
+    never in {extra}, which drops rows before it: a gift's other reports still decide whether a
+    later amendment dropped it (#131).
 
     One helper for all three, not a copy in each: filer_total kept an unguarded copy after the
     other two were fixed. It ran form_type=" " (truthy) as a filter for the receipts with no
@@ -484,8 +507,8 @@ def _schedule(form_type: str) -> tuple[str, list[str], str]:
                          f"not {form_type!r}")
     label = _schedule_label(form_type)
     if not form_type:
-        return "", [], label
-    return " AND UPPER(TRIM(r.FORM_TYPE)) = UPPER(TRIM(?))", [form_type], label
+        return "1", [], label
+    return "UPPER(TRIM(x.FORM_TYPE)) = UPPER(TRIM(?))", [form_type], label
 
 
 def _schedule_label(form_type: str) -> str:
@@ -1019,13 +1042,13 @@ def _name_key(part: Any) -> str:
     return unicodedata.normalize("NFKC", text.casefold())
 
 
-def _named(keys: list[tuple[str, str]]) -> Any:
-    """(SQL keeping the receipts `r` filed under `keys`, its args), in chunks: each name is two
+def _named(keys: list[tuple[str, str]], t: str = "r") -> Any:
+    """(SQL keeping the receipts `t` filed under `keys`, its args), in chunks: each name is two
     SQL variables, and SQLite before 3.32 takes 999 in all."""
     keys = list(dict.fromkeys(keys))
     for i in range(0, len(keys), 400):
         chunk = keys[i:i + 400]
-        yield (f" AND ({_KL.format(t='r')}, {_KF.format(t='r')}) IN "
+        yield (f" AND ({_KL.format(t=t)}, {_KF.format(t=t)}) IN "
                f"(VALUES {', '.join(['(?, ?)'] * len(chunk))})",
                [part for key in chunk for part in key])
 
@@ -1044,13 +1067,15 @@ def _givers(con: Any, filer_id: str, form_type: str,
     schedule, schedule_args, _ = _schedule(form_type)
     if only is not None:
         found = [g for extra, args in _named(only)
-                 for g in _ranked(con, filer_id, schedule + extra, [*schedule_args, *args])]
+                 for g in _ranked(con, filer_id, extra, args, schedule, schedule_args)]
         return sorted(found, key=lambda g: (-float(g["amt"] or 0), g["kl"], g["kf"]))
-    return _ranked(con, filer_id, schedule, schedule_args)
+    return _ranked(con, filer_id, "", [], schedule, schedule_args)
 
 
-def _ranked(con: Any, filer_id: str, extra: str, args: list[Any]) -> list[Any]:
-    """`_givers`, for the receipts `extra` keeps."""
+def _ranked(con: Any, filer_id: str, extra: str, args: list[Any], counted: str,
+            counted_args: list[Any]) -> list[Any]:
+    """`_givers`, for the receipts `extra` keeps (a name), and the gifts `counted` picks
+    (`_schedule`)."""
     # MIN, not a bare column: a group's rows can spell its name in another case or with padding,
     # and a bare column is whichever row SQLite reads, so the value's spelling could change
     # with the order the rows were loaded in. Amounts are read as the sums read them
@@ -1061,10 +1086,10 @@ def _ranked(con: Any, filer_id: str, extra: str, args: list[Any]) -> list[Any]:
                {_KL.format(t='d')} kl, {_KF.format(t='d')} kf,
                SUM(CASE WHEN d.AMT > 0 THEN d.AMT ELSE 0 END) pos,
                COUNT(*) - COUNT(d.AMT) unread
-        FROM ({DEDUPED_RECEIPTS.format(extra=extra)}) d
+        FROM ({DEDUPED_RECEIPTS.format(extra=extra, counted=counted)}) d
         GROUP BY {_KL.format(t='d')}, {_KF.format(t='d')}
         ORDER BY amt DESC, kl, kf
-    """, [str(filer_id), *args]).fetchall()
+    """, [str(filer_id), *args, *counted_args]).fetchall()
 
 
 def _name_sql(alias: str, first: bool) -> str:
@@ -1098,16 +1123,16 @@ def _identity(con: Any, filer_id: str, form_type: str,
     cols = {r[1] for r in con.execute('PRAGMA main.table_info("RCPT_CD")')}
 
     def col(name: str) -> str:
-        return f"TRIM(COALESCE(r.{name}, ''))" if name in cols else "''"
+        return f"TRIM(COALESCE(x.{name}, ''))" if name in cols else "''"
 
     schedule, schedule_args, _ = _schedule(form_type)
     seen: dict[tuple[str, str], tuple[list[str], list[str]]] = {}
-    for extra, args in _named(keys):
+    for extra, args in _named(keys, "x"):
         for r in con.execute(f"""
-            SELECT DISTINCT {_KL.format(t='r')} kl, {_KF.format(t='r')} kf,
+            SELECT DISTINCT {_KL.format(t='x')} kl, {_KF.format(t='x')} kf,
                    {col('CTRIB_CITY')} city, {col('CTRIB_ZIP4')} zip, {col('CTRIB_EMP')} emp
-            FROM RCPT_LATEST r JOIN FILER_FILING f ON f.FILING_ID = r.FILING_ID
-            WHERE f.FILER_ID = ?{schedule}{extra}
+            FROM RCPT_LATEST x JOIN FILER_FILING f ON f.FILING_ID = x.FILING_ID
+            WHERE f.FILER_ID = ? AND {schedule}{extra}
         """, [str(filer_id), *schedule_args, *args]):
             places, employers = seen.setdefault((r["kl"], r["kf"]), ([], []))
             places.append(f"{r['city']} {r['zip']}".strip())
@@ -1297,7 +1322,7 @@ def _contributor_figure(con: Any, filer_id: str, contributor: str, contributor_f
     who_args: list[Any] = [contributor] + ([contributor_first] if first else [])
     schedule, schedule_args, label = _schedule(form_type)
     args: list[Any] = [str(filer_id)] + who_args + schedule_args
-    inner = DEDUPED_RECEIPTS.format(extra=who + schedule)
+    inner = DEDUPED_RECEIPTS.format(extra=who, counted=schedule)
     row = con.execute(f"""
         SELECT SUM(d.AMT) amt, COUNT(d.AMT) n, COUNT(*) gifts,
                GROUP_CONCAT(DISTINCT CASE WHEN d.AMT IS NOT NULL THEN d.FILING_IDS END) ids
@@ -1309,10 +1334,10 @@ def _contributor_figure(con: Any, filer_id: str, contributor: str, contributor_f
     # counts it. Listed before anything is summed: summing every name first took ten times as
     # long as the figure itself, on a synthetic committee of 60,000 gifts.
     listed = con.execute(f"""
-        SELECT {_KL.format(t='r')} kl, {_KF.format(t='r')} kf, MAX({_name_sql('r', first)}) mine,
-               MIN(r.CTRIB_NAML) nm, MIN(r.CTRIB_NAMF) nf
-        FROM RCPT_LATEST r JOIN FILER_FILING f ON f.FILING_ID = r.FILING_ID
-        WHERE f.FILER_ID = ?{schedule}
+        SELECT {_KL.format(t='x')} kl, {_KF.format(t='x')} kf, MAX({_name_sql('x', first)}) mine,
+               MIN(x.CTRIB_NAML) nm, MIN(x.CTRIB_NAMF) nf
+        FROM RCPT_LATEST x JOIN FILER_FILING f ON f.FILING_ID = x.FILING_ID
+        WHERE f.FILER_ID = ? AND {schedule}
         GROUP BY kl, kf
     """, [*who_args, str(filer_id), *schedule_args]).fetchall()
     counted = {("name", r["kl"], r["kf"]) for r in listed if r["mine"]}
@@ -1355,9 +1380,9 @@ def _contributor_figure(con: Any, filer_id: str, contributor: str, contributor_f
         # Never let a miss masquerade as a finding. Names come from the schedule searched: a
         # near-match on another one is a receipt, not the contributor that was meant.
         near = [" ".join(x for x in (r["nf"], r["nm"]) if x) for r in con.execute(f"""
-            SELECT DISTINCT r.CTRIB_NAML nm, r.CTRIB_NAMF nf FROM RCPT_LATEST r
-            JOIN FILER_FILING f ON f.FILING_ID = r.FILING_ID
-            WHERE f.FILER_ID = ? AND UPPER(r.CTRIB_NAML) LIKE UPPER(?){schedule}
+            SELECT DISTINCT x.CTRIB_NAML nm, x.CTRIB_NAMF nf FROM RCPT_LATEST x
+            JOIN FILER_FILING f ON f.FILING_ID = x.FILING_ID
+            WHERE f.FILER_ID = ? AND UPPER(x.CTRIB_NAML) LIKE UPPER(?) AND {schedule}
             LIMIT 6
         """, [str(filer_id), f"%{contributor.split()[0]}%" if contributor.split() else "%"]
              + schedule_args)]
@@ -1368,7 +1393,7 @@ def _contributor_figure(con: Any, filer_id: str, contributor: str, contributor_f
             note += f"; {names_note}"
         if late_note := _late_note(theirs):
             note += f"; {late_note}"
-        omitted = _left_out_receipts(con, str(filer_id), who + schedule, args[1:])
+        omitted = _left_out_receipts(con, str(filer_id), schedule, schedule_args, who, who_args)
         return QueryResult(value=None, rows=0, found=False, suggestions=hint + near,
                            detail=f"0 itemized {label} gift(s){note}", omitted=omitted)
 
@@ -1401,7 +1426,7 @@ def _contributor_figure(con: Any, filer_id: str, contributor: str, contributor_f
                        f"({', '.join(repr(f) for f in firsts)}) — not one contributor as filed; "
                        "pass contributor_first")
     left_out = _unread(gifts - n)
-    omitted = _left_out_receipts(con, str(filer_id), who + schedule, args[1:])
+    omitted = _left_out_receipts(con, str(filer_id), schedule, schedule_args, who, who_args)
     rows, where = other_names() if others else ([], {})
     if n == 0:
         # The name matched, but no gift states an amount: unknown money, never "$0.00". A
@@ -1463,7 +1488,7 @@ def _filer_total(root: Path, *, filer_id: str, form_type: str | None = None) -> 
     schedule, schedule_args, label = _schedule(form_type)
     con = calaccess.connect_citable(root)
     late = _late_reports(con, filer_id, form_type)
-    inner = DEDUPED_RECEIPTS.format(extra=schedule)
+    inner = DEDUPED_RECEIPTS.format(extra="", counted=schedule)
     args: list[Any] = [str(filer_id)] + schedule_args
     row = con.execute(f"""
         SELECT SUM(d.AMT) amt, COUNT(d.AMT) n, COUNT(*) gifts,
@@ -1679,7 +1704,7 @@ def _ranking(con: Any, filer_id: str, form_type: str, gated: bool,
     # gift a later amendment dropped can put someone at the top, or keep someone off it. So can
     # a gift the ranking leaves out, on a schedule a later amendment did not restate. Neither is
     # asked while a gift has no amount, or a late gift or a name holds the ranking (above).
-    inner = DEDUPED_RECEIPTS.format(extra=schedule)
+    inner = DEDUPED_RECEIPTS.format(extra="", counted=schedule)
     args: list[Any] = [str(filer_id)] + schedule_args
     ids = con.execute(f"""
         SELECT GROUP_CONCAT(DISTINCT d.FILING_IDS) ids FROM ({inner}) d
@@ -2087,20 +2112,26 @@ REGISTRY: dict[str, Query] = {
     # earlier versions answered from it: the receipt queries as if every filing were settled,
     # and ie_total, which joins the covers, with a miss. The flag for a counted filing with no
     # cover record changes no value: verification acts on it.
+    # v9 of contributor_total and filer_total, v10 of top_contributor: the schedule picks which
+    # gifts count after the cross-form dedup, not which rows reach it (_RECEIPT_GIFTS'
+    # {counted}). Every value is the same, but a gift counted from schedule A is now made of its
+    # Form 496 Part 3 report too, so its unrestated flag covers that filing, where the earlier
+    # versions verified the figure green; and a gift is left out (`omitted`) only when no
+    # counted report of it is on the schedule (#131).
     "calaccess.contributor_total": Query(
         _contributor_total, ("filer_id", "contributor"),
         "contributions from one contributor (add contributor_first for an individual; "
         "schedule A unless form_type says otherwise; a miss while a late gift is pending, or "
-        "while another name could be the giver's, unless names=as_filed)", 8),
+        "while another name could be the giver's, unless names=as_filed)", 9),
     "calaccess.filer_total": Query(
         _filer_total, ("filer_id",),
         "total itemized contributions received by a filer (schedule A unless form_type says "
-        "otherwise; a miss while a late gift is pending)", 8),
+        "otherwise; a miss while a late gift is pending)", 9),
     "calaccess.top_contributor": Query(
         _top_contributor, ("filer_id",),
         "the largest contributor to a filer, by itemized total (schedule A unless form_type "
         "says otherwise; a miss while a pending late gift, or names that could be one giver's, "
-        "could change it, unless names=as_filed)", 9),
+        "could change it, unless names=as_filed)", 10),
     "calaccess.ie_total": Query(
         _ie_total, ("candidate_last", "first"),
         "late independent expenditures naming a candidate; pass stance and since/until", 3),

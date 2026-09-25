@@ -6497,11 +6497,12 @@ _NOT_A_DEFINITION = {
 
 # name -> (version, fingerprint). See test_a_query_definition_cannot_change_unnoticed.
 QUERY_DEFINITIONS = {
-    # bumped from #129's versions: an empty cover table is refused where these answered from
-    # it (#141)
-    "calaccess.contributor_total": (8, "e0f3f854bd45"),
-    "calaccess.filer_total": (8, "4e9d7e2128f4"),
-    "calaccess.top_contributor": (9, "f069867a228a"),
+    # v9, v9 and v10: the schedule picks gifts after the cross-form dedup, so a counted gift's
+    # flag covers every filing it was reported on, and a left-out gift is one no counted report
+    # of which is on the schedule (#131)
+    "calaccess.contributor_total": (9, "e61a788b56db"),
+    "calaccess.filer_total": (9, "c2fbc1c245b1"),
+    "calaccess.top_contributor": (10, "9e54eadf0ab9"),
     # moved without a bump: amount_sql() is ie_total's own amount expression, extracted
     # unchanged, and DEDUPED_RECEIPTS, which it does not read, changed beside it; then the
     # unsettled-amendment flag and its shared helpers, which change no value it returns; then
@@ -6512,8 +6513,10 @@ QUERY_DEFINITIONS = {
     # later cover reattributed (`reattributed`), which verification acts on and which changes
     # no value, on a total and on a miss; then the name grouping and the name key the receipt
     # queries match and dedup by, which it does not use: it matches a candidate with
-    # name_match_sql(). Bumped: an empty cover table is refused where it found nothing (#141)
-    "calaccess.ie_total": (3, "6d40837b7923"),
+    # name_match_sql(). Bumped: an empty cover table is refused where it found nothing (#141);
+    # then moved without a bump: the receipt queries' schedule filter moving after the dedup's
+    # grouping (#131)
+    "calaccess.ie_total": (3, "c316a3fac7a2"),
 }
 
 

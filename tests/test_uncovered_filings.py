@@ -124,8 +124,9 @@ def test_a_total_resting_on_a_filing_with_no_cover_goes_to_human_review_naming_i
     """The acceptance case: the number reproduces, and used to render green."""
     result = queries.run("calaccess.contributor_total", BRAMBLEWORTH, root)
     assert result.value == 3700.0, "the flag must never change the number"
+    # the Form 496 copy too: schedule A picks the gift after the cross-form dedup (#131)
     assert [(u.filing_id, u.amount, u.rows) for u in result.unrestated] == [
-        (UNCOVERED_460, 1200.0, 1)]
+        (UNCOVERED_496, 2500.0, 1), (UNCOVERED_460, 1200.0, 1)]
 
     v = verify_source(cited("calaccess.contributor_total", BRAMBLEWORTH, "3700"),
                       root).verification

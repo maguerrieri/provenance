@@ -246,12 +246,12 @@ def test_staging_twice_on_one_connection_keeps_each_grouping_its_own(root):
     and `gap` indexes after a second call."""
     con = calaccess.connect(root)
     try:
-        first, a = queries.left_out_gifts(con, FILER, extra=" AND UPPER(TRIM(r.FORM_TYPE)) = 'A'")
-        queries.left_out_gifts(con, FILER, extra="")
+        first, a = queries.left_out_gifts(con, FILER, extra="",
+                                          counted="UPPER(TRIM(x.FORM_TYPE)) = 'A'")
+        queries.left_out_gifts(con, FILER, extra="", counted="1")
         staged = con.execute("SELECT name FROM sqlite_temp_master WHERE type = 'table'")
         assert len(staged.fetchall()) == 2, "the second call must not replace the first's rows"
-        got = [r["GAPS"] for r in con.execute(f"SELECT d.GAPS FROM ({a}) d WHERE d.OMITTED",
-                                               [FILER, FILER])]
+        got = [r["GAPS"] for r in con.execute(f"SELECT d.GAPS FROM ({a}) d", [FILER, FILER])]
         assert sorted(first[int(g)].schedule for g in got) == ["A", "A"]
     finally:
         con.close()

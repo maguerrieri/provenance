@@ -690,8 +690,8 @@ def stage_unrestated(con: sqlite3.Connection, table: str,
     """Copy the rows `schedules` leave out of `table` into a TEMP table, and return its name.
 
     Each row carries `gap`, the index in `schedules` of the one it came from. A figure groups
-    these rows with the rows it counts (`queries.left_out_gifts()`), so a gift a counted row
-    also reports is in the figure either way, and only the rest are what it leaves out.
+    these rows with the rows it counts (`queries.left_out_gifts()`), so a gift one of its
+    counted reports already puts in the figure is not what it leaves out.
     A new table per call, so SQL built on an earlier one keeps reading its own rows and `gap`
     indexes. Commits nothing: the insert leaves the connection in a transaction, and the
     table goes when it closes.
@@ -962,8 +962,9 @@ def contributions_to(root: Path, filer_id: str, *, top: int = 25,
     # A gift on a schedule a later amendment left out is in no figure. Listed anyway, and
     # marked: a finding aid that hid it would hide the filing to open. A database that cannot
     # check still lists, and its rows read as not checked (None), as for `unrestated`.
+    # Every schedule ("1"): the listing does not filter by one.
     try:
-        left_out, with_left_out = left_out_gifts(con, str(filer_id), extra="")
+        left_out, with_left_out = left_out_gifts(con, str(filer_id), extra="", counted="1")
     except DegradedDatabase:
         left_out = None
     listed = """
@@ -974,14 +975,15 @@ def contributions_to(root: Path, filer_id: str, *, top: int = 25,
             FROM ({inner}) d"""
     date = iso_date_sql("d.RCPT_DATE")
     rows = listed.format(date=date, marks="0 AS OMITTED, NULL AS GAPS",
-                         inner=DEDUPED_RECEIPTS.format(extra=""))
+                         inner=DEDUPED_RECEIPTS.format(extra="", counted="1"))
     args = [str(filer_id)] * 2
     if left_out:
         # Their own arm, grouped with the counted rows so a gift a counted row also reports is
-        # not listed twice. Counted gifts come from the arm above, exactly as the figures count
-        # them: here a left-out filing could become the one a counted gift cites.
-        rows += " UNION ALL " + listed.format(date=date, marks="d.OMITTED, d.GAPS",
-                                              inner=with_left_out) + " WHERE d.OMITTED"
+        # not listed twice; left_out_gifts() returns only the gifts no figure counts. Counted
+        # gifts come from the arm above, exactly as the figures count them: here a left-out
+        # filing could become the one a counted gift cites.
+        rows += " UNION ALL " + listed.format(date=date, marks="1 AS OMITTED, d.GAPS",
+                                              inner=with_left_out)
         args += [str(filer_id)] * 3
     # RCPT_DATE is "M/D/YYYY 12:00:00 AM" text: compared as-is, 10/14/2025 sorts before
     # 2025-01-01 and 3/1/2010 after it. Normalize and filter in SQL, BEFORE the LIMIT --
