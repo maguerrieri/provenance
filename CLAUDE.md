@@ -1239,6 +1239,16 @@ padding, and `__VIEWSTATE` is kilobytes of it, whose letters sooner or later spe
 that is neither JSON nor form-encoded is refused, because its fields can't be read: a multipart
 form carries its CSRF token in a part.
 
+**A `try` that falls back holds only the step whose failure means "fall back".** JSON that
+doesn't parse raises `ValueError`, and so, on purpose, does a value holding a URL that can't be
+parsed. `_body_param_names()` put the parse and the reading of the parsed body in one `except
+ValueError`, meant for a body that isn't JSON. So the refusal read as "not JSON" and took the
+keys already read with it. The form reading then found no `=` in a JSON object, and a body
+holding `api_key` beside such a URL imported, and ran (#155). Every parse now goes through
+`_parsed_json()`, whose `try` holds `json.loads()` alone, and `_value_names()` holds only the
+split of a URL in its `try`, so a refusal raised deeper keeps its own message. When a refusal
+is an exception, check every `except` it passes through.
+
 **Parameter names need their own rule, and a word counts only if it has no ordinary
 public-records meaning.** The header pattern matches parts of words. In a parameter name those
 parts mean other things:
