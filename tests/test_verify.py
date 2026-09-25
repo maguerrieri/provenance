@@ -6474,8 +6474,8 @@ def _definition_fingerprint(name):
 _NOT_A_DEFINITION = {
     "vgpipe.queries": {"AS_FILED", "LATE_SHOWN", "LEFT_OUT", "LateReport", "NOT_COMPLETE",
                        "Query", "QueryResult", "REGISTRY", "SPLIT", "UNSETTLED_SHOWN",
-                       "_contender_line", "_elsewhere", "_identity", "_late_note", "_late_part",
-                       "_listed", "_name_line", "_names_note", "_other_schedules",
+                       "_contender_line", "_elsewhere", "_identity", "_late_names", "_late_note",
+                       "_late_part", "_listed", "_name_line", "_names_note", "_other_schedules",
                        "_schedule_label", "_unread", "_whereabouts", "dataset",
                        "describe_export", "export_date", "human_command", "late_text",
                        "left_out_text", "matches", "share_text"},
@@ -6492,9 +6492,9 @@ _NOT_A_DEFINITION = {
 
 # name -> (version, fingerprint). See test_a_query_definition_cannot_change_unnoticed.
 QUERY_DEFINITIONS = {
-    "calaccess.contributor_total": (7, "442a070a4b16"),
-    "calaccess.filer_total": (7, "a1307100dbf7"),
-    "calaccess.top_contributor": (8, "d3143e49a329"),
+    "calaccess.contributor_total": (7, "01a8f6484bc8"),
+    "calaccess.filer_total": (7, "e925346baaf7"),
+    "calaccess.top_contributor": (8, "97630340499d"),
     # moved without a bump: amount_sql() is ie_total's own amount expression, extracted
     # unchanged, and DEDUPED_RECEIPTS, which it does not read, changed beside it; then the
     # unsettled-amendment flag and its shared helpers, which change no value it returns; then
@@ -6506,7 +6506,7 @@ QUERY_DEFINITIONS = {
     # no value, on a total and on a miss; then the name grouping and the name key the receipt
     # queries match and dedup by, which it does not use: it matches a candidate with
     # name_match_sql()
-    "calaccess.ie_total": (2, "8893bb207ae9"),
+    "calaccess.ie_total": (2, "6d904da854ea"),
 }
 
 

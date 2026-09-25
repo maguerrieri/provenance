@@ -1689,7 +1689,7 @@ large tie is listed whole, not refused: the whole set is true and reproduces, an
 already says it is no single largest contributor.
 
 Wherever a query picks "the top", select on the value, not a row count, and order equal values
-by something stable. Three orders that look stable are not:
+by something stable. Four orders that look stable are not:
 - **A bare column in a `GROUP BY`** is whichever of the group's rows SQLite reads, so a name's
   spelling (its case, a padded part) changed with the order rows were loaded in. Pick it with
   an aggregate (`MIN`) and trim it.
@@ -1699,6 +1699,11 @@ by something stable. Three orders that look stable are not:
   $6,000.01 + $0.02 is 6000.030000000001, above $6,000.03. The name tie-break never ran, and a
   refusal listed the second name first. Round to the cent before sorting on an amount, as
   `matches()` compares one within half a cent.
+- **The first row read**, wherever rows merge in Python. One late gift reported on two filings
+  under one key in two spellings (`Quennell`/`Ada`, `QUENNELL`/`ADA`) kept the spelling of the
+  row read first, so a refusal named the giver one way or the other with the load order. Keep
+  the least spelling, as `MIN` does, and name a late giver filed several ways by every name
+  (`_late_names()`), not by whichever entry sorts first.
 
 ## A receipt is not a contribution
 
@@ -1926,13 +1931,17 @@ which let their surname-only total through. That question is asked pairwise.
   into the next word by its point (`R.Quillon`) is split off, and `Ø`, `Æ`, `Ð` and `Þ`, which
   NFKD leaves whole, are spelled out. Each of those split one giver into two ranked names.
 
-**A name's key is trimmed as its display is.** The ranking grouped on SQLite's `TRIM` and
-`UPPER`, which know only ASCII spaces and letters, and displayed with Python's `strip()`. A
-surname filed with a non-breaking space was a name of its own that read exactly like the plain
-one. The key is now one Python function `calaccess.connect` registers (`_name_key`), so the SQL
-that groups and the Python that displays agree. The cross-form dedup keys names with it too:
-left on the ASCII rules while the queries moved, a gift's two copies filed `Élise` and `élise`
-stayed apart and were summed under one name. **A giver filed with no name is never the
+**A name's key is one function, for grouping and for display.** The ranking grouped on SQLite's
+`TRIM` and `UPPER`, which know only ASCII spaces and letters, and displayed with Python's
+`strip()`. A surname filed with a non-breaking space was a name of its own that read exactly
+like the plain one, and `José` and `JOSÉ` were two givers, each short of a leader they pass
+together. The key is now one Python function `calaccess.connect` registers (`_name_key`):
+Unicode-normalized (NFKC), trimmed and case-folded, so an accent written as a combining mark is
+the accent written whole. The SQL that groups, the cross-form dedup, the late-report
+restatement key, and the Python that orders and compares shown names all use it. Left on the
+ASCII rules while the queries moved, the dedup kept a gift's two copies filed `Élise` and
+`élise` apart and summed them under one name. A key is for comparing: a name is shown as filed,
+in its least spelling. **A giver filed with no name is never the
 answer:** its value was `""`, which matches `""` and verified, so a leader or tie holding one is
 a miss whatever the gates.
 
