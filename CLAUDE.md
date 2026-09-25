@@ -1638,7 +1638,8 @@ The queries **flag, and never count**, a late entry that no schedule A restates 
   is any pending gift. For `top_contributor`, it is one that could reach the top or break a tie;
   a gift too small to matter is named, and the ranking stands.
 - **A schedule asked for by name:** `form_type=A` gives the schedule-A figure, and `""` every
-  receipt schedule (which holds Form 496 Part 3, but not Form 497). While a pending late entry
+  receipt schedule (which holds Form 496 Part 3, but not Form 497; for one contributor, only
+  the Form 496 Part 3 rows filed under the name the sum matches). While a pending late entry
   could change it, the value comes back with each late report attached (`QueryResult.late`:
   the filing, its amendment and form, what it holds, where to open it). `vg verify` and
   `vg build` send the row to `human_review`, naming five in the reason (any with an amount
@@ -1680,6 +1681,17 @@ false match here only makes a query refuse, and a missed one lets a short figure
 The first version matched exact spellings only, and a "DOE, JANE" late gift became a new giver
 holding just its own amount, so the ranking stood. What it still can't catch is a name spelled
 *differently* (a typo). That one fails toward green.
+
+Two more places the width has to reach, both found late:
+- **Late givers among themselves.** A late name on nobody's schedule is a giver of its own, and
+  every late entry that could be them counts for them too. All such names are found before any
+  entry is counted: counted as they came, an earlier "Ada C" took "Ada" and never met "Ada B",
+  so two $3,000 gifts that could be one giver's $6,000 never passed a $5,000 leader.
+- **What a sum already holds.** Every schedule (`""`) sums the Form 496 Part 3 rows, so the
+  check left those out as counted. But one contributor's total sums only the rows its exact
+  name filter takes, and a row filed another way is a gift it leaves out. So `_late_reports`
+  asks the sum's own filter (contributor_total passes its `WHERE` clause). An exclusion that
+  says "the figure already has this" has to ask the figure's own query, never assume it.
 
 The options that were rejected, and why:
 - **Count `F496P3` in the default and let the cross-form dedup collapse it with its schedule-A
