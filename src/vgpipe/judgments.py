@@ -11,6 +11,10 @@ the citation it was about and lapses on its own when a retry changes the quote. 
 about one question's claim, not about the source alone: two questions citing the same page
 each get their own verdict, and the two can differ — a snippet can support one claim and be
 `topic_only` for another. Nothing here pools verdicts across questions by sid.
+
+A sid covers the quote, not what the claim says about it, so each verdict also names the claim
+it judged (`claim_fingerprint`): a retry that later rewrites that claim's question or answer
+leaves the verdict naming words the claim no longer says.
 """
 
 from __future__ import annotations
@@ -56,6 +60,11 @@ class Judgment:
     # Which page that was, when it is not the cited URL: the snapshot an archive-verified
     # context came from. Empty for the cited page, as on every verdict from before it existed.
     page_url: str = ""
+    # Which claim it judged: `Claim.fingerprint` of the claim `vg judge` was given, its question
+    # and answer. A retry that rewrites either keeps the sid, and so the verdict, while the
+    # words it judged are gone; this is what shows it. Empty on a verdict recorded before it
+    # existed.
+    claim_fingerprint: str = ""
 
 
 class UnreadableJudgments(ValueError):
@@ -125,8 +134,12 @@ def _entry_problems(item, seen: set[str]) -> list[str]:
                  for k, t in _TYPES.items() if k in item and type(item[k]) is not t
                  and not (k == "note" and item[k] is None)]
     sid, verdict = item.get("sid"), item.get("verdict")
-    if isinstance(sid, str) and not _SID.fullmatch(sid):
-        problems.append(f"sid {sid!r} is not a source id (12 lowercase hex characters)")
+    # One shape for both: each is `models.short_id()`. A malformed fingerprint would never match
+    # its claim, and read as a claim rewritten since it was judged. It may be empty (unstamped).
+    for key, what in (("sid", "source id"), ("claim_fingerprint", "claim fingerprint")):
+        value = item.get(key)
+        if isinstance(value, str) and (value or key == "sid") and not _SID.fullmatch(value):
+            problems.append(f"{key} {value!r} is not a {what} (12 lowercase hex characters)")
     if isinstance(verdict, str) and verdict not in VERDICTS:
         problems.append(f"verdict {verdict!r} is not one of {', '.join(VERDICTS)}")
     if isinstance(sid, str) and sid in seen:
@@ -347,7 +360,10 @@ def _load_every(root: Path) -> dict[str, dict[str, Judgment]]:
 # verdict still carries them: older code cannot check it, and refusing says so. `page_url` the
 # same way: `vg judge` sets it only for a snapshot, which older code would check against the
 # paywall stub, and leaves it empty for the cited page, which older code checks right.
-_WRITTEN_WHEN_SET = ("query_version", "export_date", "page_url")
+# `claim_fingerprint` is on every verdict `vg judge` records now, so older code refuses those
+# shards, which is the safe side: it could not tell that the claim was rewritten since. A shard
+# holding only older verdicts stays one older code reads.
+_WRITTEN_WHEN_SET = ("query_version", "export_date", "page_url", "claim_fingerprint")
 
 
 def _entry(j: Judgment) -> dict:
@@ -382,10 +398,16 @@ def _write(p: Path, items) -> None:
 
 def record(root: Path, question_id: str, sid: str, verdict: str, note: str = "",
            page_fetched_at: str = "", extractor_version: int = 0,
-           query_version: int = 0, export_date: str = "", page_url: str = "") -> Judgment:
+           query_version: int = 0, export_date: str = "", page_url: str = "",
+           claim_fingerprint: str = "") -> Judgment:
+    """Write one verdict into `question_id`'s shard, replacing any earlier one for `sid`.
+
+    `claim_fingerprint` is the judged claim's `Claim.fingerprint`. `vg judge` always passes it;
+    left empty, the verdict reads like one recorded before fingerprints existed."""
     j = Judgment(sid=sid, verdict=verdict, note=note,
                  page_fetched_at=page_fetched_at, extractor_version=extractor_version,
                  query_version=query_version, export_date=export_date, page_url=page_url,
+                 claim_fingerprint=claim_fingerprint,
                  judged_at=datetime.now(UTC).isoformat(timespec="seconds"))
     # The writer holds itself to the reader's rule: an entry load() refuses would stop every
     # command that reads this file until someone repaired it by hand.
