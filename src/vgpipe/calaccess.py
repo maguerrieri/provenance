@@ -85,9 +85,10 @@ class Contribution:
     committee: str = ""
     filings: int = 1        # how many filings restated this one gift
     amount_filed: str = ""  # the AMOUNT text as filed, for showing one that did not read
-    # This gift's filings whose latest amendment has no receipt rows (Unrestated); None when
-    # the database cannot check (its covers carry no amendment ids).
-    unrestated: tuple[Unrestated, ...] | None = ()
+    # This gift's filings whose latest amendment has no receipt rows (Unrestated); () when
+    # checked and none, None when not checked -- the default, so a row nobody checked never
+    # reads as settled.
+    unrestated: tuple[Unrestated, ...] | None = None
 
     @property
     def cite_url(self) -> str:
@@ -324,9 +325,19 @@ def connect_citable(root: Path) -> sqlite3.Connection:
     """
     con = connect(root)
     if not covers_by_amendment(con):
+        has_covers = con.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = "
+                                 "'CVR_CAMPAIGN_DISCLOSURE_CD'").fetchone()
         con.close()
-        raise DegradedDatabase(COVER_FALLBACK)
+        # No cover table at all is not the old-build case, and a rebuild from the same zip
+        # would not fix it, so say which it is.
+        raise DegradedDatabase(COVER_FALLBACK if has_covers else NO_COVERS)
     return con
+
+
+NO_COVERS = (
+    "this CAL-ACCESS database has no CVR_CAMPAIGN_DISCLOSURE_CD table, so no figure can be "
+    "checked for rows a filing's later amendment dropped. The export it was built from lacked "
+    "the cover table: download a complete export, then uv run vg calaccess build")
 
 
 @dataclass(frozen=True)
@@ -379,15 +390,18 @@ def unrestated_filings(con: sqlite3.Connection, table: str,
     return out
 
 
-def unrestated_shares(con: sqlite3.Connection, table: str, counted) -> list[Unrestated]:
+def unrestated_shares(con: sqlite3.Connection, table: str, counted,
+                      gaps: dict[str, Unrestated] | None = None) -> list[Unrestated]:
     """What each unrestated filing accounts for in a figure, largest first.
 
     `counted` holds the figure's counted units as (filing ids, amount, rows): one per
     deduplicated gift, which can span filings, or one per filing. A unit counts toward every
-    unrestated filing it touches, so two filings' shares can overlap.
+    unrestated filing it touches, so two filings' shares can overlap. `gaps` is
+    unrestated_filings() over those ids, when the caller already asked.
     """
     counted = [(set(ids), amount, n) for ids, amount, n in counted]
-    gaps = unrestated_filings(con, table, set().union(*(ids for ids, _, _ in counted)))
+    if gaps is None:
+        gaps = unrestated_filings(con, table, set().union(*(ids for ids, _, _ in counted)))
     amounts: dict[str, float] = {}
     rows: dict[str, int] = {}
     for ids, amount, n in counted:

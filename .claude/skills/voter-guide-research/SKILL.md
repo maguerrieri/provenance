@@ -137,9 +137,9 @@ Do not summarize the source rules for them — the agent definition carries them
    to ask for the missing `page`.
 
    **Not a retry either: a query figure a later amendment may have changed.** A `human_review`
-   whose reason says the query reproduces "but it counts rows a later amendment may have
-   withdrawn" is a correct citation of an unsettled record: the export cannot say whether the
-   amendment withdrew those rows. The reason names each filing to open, and a person does.
+   on a query citation whose reason says "it counts rows a later amendment may have
+   withdrawn" (from `vg verify` or `vg build`) is a correct citation of an unsettled record:
+   the export cannot say whether the amendment withdrew those rows. The reason names each filing to open, and a person does.
    Retrying it only invites a researcher to change the parameters or cite a mirror until the
    filing drops out.
 

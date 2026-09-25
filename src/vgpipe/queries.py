@@ -192,14 +192,15 @@ def _receipt_shares(con, inner: str, args: list, filing_ids: str | None) -> list
     """
     from . import calaccess
 
-    if not calaccess.unrestated_filings(
-            con, "RCPT_CD", {f for f in (filing_ids or "").split(",") if f}):
+    gaps = calaccess.unrestated_filings(
+        con, "RCPT_CD", {f for f in (filing_ids or "").split(",") if f})
+    if not gaps:
         return []
     return calaccess.unrestated_shares(con, "RCPT_CD", [
         ([f for f in (r["ids"] or "").split(",") if f], float(r["amt"]), int(r["n"]))
         for r in con.execute(f"""
             SELECT d.FILING_IDS ids, SUM(d.AMT) amt, COUNT(*) n
-            FROM ({inner}) d WHERE d.AMT IS NOT NULL GROUP BY d.FILING_IDS""", args)])
+            FROM ({inner}) d WHERE d.AMT IS NOT NULL GROUP BY d.FILING_IDS""", args)], gaps)
 
 
 @dataclass
@@ -252,9 +253,11 @@ UNSETTLED_SHOWN = 5
 
 
 def share_text(u) -> str:
-    """One unrestated filing's line in `QueryResult.unsettled`: what it is, what it accounts
-    for, and where to open it."""
-    return f"{u.describe()}: ${u.amount:,.2f} in {u.rows} row(s) counted here (open {u.cite_url})"
+    """One unrestated filing's line in `QueryResult.unsettled`: what it is, what the result
+    rests on from it, and where to open it. "Rests on", not "adds up to": for top_contributor
+    the rows are anyone's gifts in the ranking, not the named contributor's total."""
+    return (f"{u.describe()}: ${u.amount:,.2f} in {u.rows} row(s) this result rests on "
+            f"(open {u.cite_url})")
 
 
 def _other_schedules(con: Any, filer_id: str, form_type: str, who: str = "",

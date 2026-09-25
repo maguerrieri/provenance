@@ -1386,7 +1386,11 @@ per filing, through the `FILING_ID` indexes, and only for the filings a result t
   listing it: a finding aid that hid the row would hide the filing to open.
 - **A filing with no cover at all** has nothing to compare, so it is not flagged.
 - **A database without cover amendment ids** cannot check at all. Every citable query refuses
-  it (`connect_citable()`, below), and the listings say they cannot check.
+  it (`connect_citable()`, below), and the listings say they cannot check. So does one with no
+  cover table, with its own message, since a rebuild from the same zip would not help.
+- **Each query computes the flag itself**, so `test_every_citable_query_flags_and_refuses`
+  holds every registered CAL-ACCESS query to both the flag and the refusal. A new query fails
+  it until it has them.
 
 **Whose money a kept row is has the same ambiguity, and the latest cover still decides it.**
 Form 496 rows join `CVR_LATEST`, the filing's latest cover. (Receipts reach their filer
