@@ -482,9 +482,13 @@ literals go in bare.
   an escape, which then reads as another character. `_cut()` counts what is shown and stops
   between escapes.
 - **An escape is text the pipeline inserted.** A snippet copied from `vg fetch` with one in it
-  (`co\xadoperate` for a soft hyphen) is on no page, so `vg fetch` says so under any page text
-  it had to escape. Escaping every invisible character keeps one definition of what
-  `_printable()` shows; the note is what keeps it from costing a real citation.
+  (`co\xadoperate` for a soft hyphen) is on no page, and an `expected` copied from `vg query`
+  with one matches no export. So wherever data is printed to be copied from (page text, a
+  query value, a recipe response, a YAML entry), `cli._say_if_escaped()` says so under any of
+  it that had to be escaped. That note, and not a narrower definition of what to escape, is
+  what keeps a format character from costing a real citation. Print multi-line copied data
+  with `cli._print_copied()`, which also joins a CRLF before cutting, so the cut cannot leave
+  a CR to show as `\x0d`.
 - **Escaping each value is not escaping the message.** `escape()` neutralises only a tag complete
   inside the value it is given. `[/` in one value and `x]` in the next, with plain text between,
   still made the closing tag `[/ x]`: `vg form700 '[/' 'x]'` raised, and so did
@@ -520,7 +524,14 @@ and its `_vg()` fails on any character that acts on a terminal anywhere in the o
 A print that raised leaves its text in rich's buffer, and every later print in the process tries
 to write it again. In the test suite, one surrogate crash failed every CLI test after it, each
 quoting the first one's text. `test_cli_control_chars._vg()` empties `cli.con._buffer` after each
-run, so a regression fails only its own test.
+run, so a regression fails only its own test. It also turns colour off rather than stripping
+rich's SGR codes from the output, since the strip would also remove a leaked `\x1b[8m`
+(conceal).
+
+Write these payloads as escapes in the source, and check the file afterwards. An agent's
+file-writing tool decoded a `\u202e` written into a new test into the character itself, which
+put a raw bidi override into the source, while `\x1b` beside it stayed text. `grep -nP
+'[\x{80}-\x{9f}\x{200b}-\x{200f}\x{2028}-\x{202e}\x{2066}-\x{2069}]'` finds them.
 
 A test that widens the console must not pin it. `cli.con.width = n` sets rich's `_width`, and
 putting back the value read beforehand sets it again, to the width rich computed (80 under
