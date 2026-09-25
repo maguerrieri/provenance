@@ -450,24 +450,49 @@ an unopenable file is not known to be a document at all, and the common case is 
 `con.print()` and `Table.add_row()` treat `[...]` as a style tag. Page text printed raw showed
 `[[page 1]]` as `[]` and dropped `[sic]`, so `vg fetch` hid the page breaks a researcher cites
 by, a snippet copied from its output was not on the page, and `vg check-claim` reported a
-refused marker as "snippet contains [], a page locator". Anything from a page, a claim, or an
-exception goes through `escape()` before it reaches the console, and text a researcher may
-copy (page text, a query value) is printed as `Text` with `soft_wrap=True`, which also stops
-`:ok:` becoming an emoji and an 80-column wrap putting line breaks in a snippet. `vg fetch`,
-`vg check`, `vg check-claim`, `vg handoff`, the `vg verify` / `vg judgments` tables, and the
-`vg source-import-curl` and `vg source-access --run-recipe` errors do; other prints in
-`cli.py` (the `[red]{e}[/]` error lines, `vg archive`'s snapshot notes, the query no-match
-note) still don't.
+refused marker as "snippet contains [], a page locator". And a `[/]` with nothing open raises
+`MarkupError`: one in a verdict note crashed `vg judge` after the verdict was on disk, and one in
+a claim's id turned the "skipped as unreadable" line into a traceback in every command that
+loads claims.
 
-**Escaping each value is not escaping the message.** `escape()` neutralises only a tag complete
-inside the one value it is given. `vg handoff '[/' --data 'x]'` raised MarkupError instead of
-refusing: the id and the path were escaped one at a time, and `[/` from one met `]` from the
-other as a closing tag. Print a message that quotes data as one escaped run, or as `Text`, as
-`cli._refuse()` does for the refusals `vg judge` and `vg handoff` print themselves. And refuse a
-malformed argument before anything prints it: both commands check the question id with
-`judgments.path_for()` first. The shared helpers they call (`load_claims()`'s skip lines,
-`_cache_root()`'s refusals) still escape value by value, so both commands can still raise
-there until #35 lands.
+So nothing the pipeline does not control is ever printed as markup. That covers claims and
+verdict notes, pages and recipe responses, CAL-ACCESS and FPPC rows, race and registry files, the
+arguments an agent passes, paths, and exception text, which quotes any of these. Only numbers,
+the pipeline's own enums (statuses, verdicts), pattern-checked question ids and the code's own
+literals go in bare.
+- **Escaping each value is not escaping the message.** `escape()` neutralises only a tag complete
+  inside the value it is given. `[/` in one value and `x]` in the next, with plain text between,
+  still made the closing tag `[/ x]`: `vg form700 '[/' 'x]'` raised, and so did
+  `vg handoff '[/' --data 'x]'` instead of refusing. In a line, escape a run of data as one
+  string: `escape(f"{first} {last}")`, not `{escape(first)} {escape(last)}`. Or print the whole
+  message as one `Text`, as `cli._refuse()` does for the refusals `vg judge` and `vg handoff`
+  print (through `_printable()`, since an argument can also carry a control character or a lone
+  surrogate).
+- **Refuse a malformed argument before anything prints it.** `vg judge`, `vg handoff` and
+  `vg clear-contradiction` check the question id with `judgments.path_for()` first, so the id
+  they print afterwards is a pattern-checked one.
+- **In a table, a data cell is `Text(value)`.** `escape()` adds a backslash to a value ending in
+  one, and only a tag that follows takes it back, so at the end of a cell it printed. Truncated
+  names end anywhere. The `vg verify` and `vg judgments` tables still use `escape()` cells, and
+  so does an escaped run at the end of a line (#117).
+- **A whole value that is data is printed as `Text` with `soft_wrap=True`.** That covers page
+  text, a query value, a recipe response and a pasted cURL entry. It is what a researcher
+  copies, and an 80-column wrap would put line breaks in a snippet or a YAML line.
+- **`escape()` and `.strip()` take only a `str`.** YAML reads an unquoted
+  `verified: 2026-08-21` as a date, a blank `summary:` as None, and `limits: 60` as a number, so
+  a value from a data file is `str()`'d first.
+- **`escape()` leaves emoji shortcodes alone,** so the console is built with `emoji=False`.
+  Otherwise `:ok:` in a note or a filer name printed as an emoji.
+
+Every print site in `cli.py` follows this, and a new one has to. That settles markup only. A
+lone surrogate still makes a print raise, and ESC or C1 sequences in a `Text` still reach the
+terminal. `_printable()` handles both, but only `vg handoff`, `vg judge` and the shared helpers
+they call (the `load_claims()` skip lines, the cache-root refusals) use it so far (#142).
+
+Test with both kinds of text. Whether a stray tag raises or silently vanishes depends on the tags
+around it. In `[yellow]{x}[/]`, an `x` of `[/] [sic]` closes yellow, opens `[sic]`, and the
+line's own `[/]` closes that: nothing raises, and nothing prints. So assert that the text comes
+out as written, not only that nothing raised (`tests/test_cli_markup.py`).
 
 A test that widens the console must not pin it. `cli.con.width = n` sets rich's `_width`, and
 putting back the value read beforehand sets it again, to the width rich computed (80 under
