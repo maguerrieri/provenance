@@ -13,12 +13,15 @@ import json
 import logging
 import os
 import re
+import shlex
 from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 
 from .models import EXTRACTOR_VERSION, PageCache, RefetchFailure
+from .queries import unprintable
+from .terminal import printable
 
 log = logging.getLogger(__name__)
 
@@ -271,11 +274,20 @@ _warned: set[tuple[str, datetime]] = set()
 
 
 def _warn_kept(page: PageCache) -> None:
+    """Log a page kept after a failed re-fetch, once per run. The URL is one a claim cited or
+    `vg fetch` was given, and the note quotes exception text, so both go through `printable()`:
+    Python's last-resort handler writes the line as it is, and an ESC or C1 sequence in either
+    reached the operator's terminal. The retry command is `shlex.quote`d, and printed only for a
+    URL a pasted copy carries as it is (`unprintable()`, the rule for every command printed for
+    a human): one with an escape, a tab or an invisible character in it names another URL."""
     f = page.refetch_failure
     if f is None or (page.url, f.attempted_at) in _warned:
         return
     _warned.add((page.url, f.attempted_at))
-    log.warning(f"{page.url}: {kept_copy_note(page)}. Retry: vg fetch --refresh '{page.url}'")
+    retry = (f"Retry: vg fetch --refresh {shlex.quote(page.url)}" if not unprintable(page.url)
+             else "Retry with vg fetch --refresh on the URL itself; no command is printed, as "
+                  "the URL holds a control or invisible character a pasted command would not carry")
+    log.warning(f"{printable(page.url)}: {printable(kept_copy_note(page))}. {retry}")
 
 
 def fetch(url: str, root: Path, *, refresh: bool = False, timeout: float = 30.0) -> PageCache:
