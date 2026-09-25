@@ -31,8 +31,10 @@ def _export(root, receipts):
     with zipfile.ZipFile(root / "cache" / "calaccess" / "dbwebexport.zip", "w") as zf:
         zf.writestr("CalAccess/DATA/RCPT_CD.TSV", HEAD + receipts)
         zf.writestr("CalAccess/DATA/FILER_FILINGS_CD.TSV", filings)
-        # an empty cover table: every citable query refuses a database without one
-        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", "FILING_ID\tAMEND_ID\n")
+        # A cover per filing: a filing with rows and none is unsettled, and a table with no
+        # rows is refused. No period columns, so no Form 460 period decides which gifts are late.
+        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV",
+                    "FILING_ID\tAMEND_ID\n9990032\t0\n9990033\t0\n")
     calaccess.build(root)
     return root
 
