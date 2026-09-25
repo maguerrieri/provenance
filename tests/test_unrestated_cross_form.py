@@ -286,3 +286,29 @@ def test_a_gift_left_out_on_its_schedule_is_flagged_though_another_report_counts
     every = queries.run("calaccess.contributor_total",
                         {"filer_id": FILER, **who, "form_type": ""}, root)
     assert every.value == 7300.0 and every.omitted == [], "the 496 report counts it"
+
+
+def test_a_left_out_gift_names_only_the_schedule_the_figure_counts(tmp_path):
+    """A gift reported on schedules A and C of one 460, both left out by a later amendment with
+    rows only on schedule I. A schedule-A figure leaves it out of schedule A; its C report is
+    not what that figure leaves out, and naming it put a $7,000 schedule-C share on a
+    schedule-A figure, the one gift counted twice across the two. Over every schedule, both."""
+    left_460 = "7770108"
+    gift = "\tQuenby Hollis Fund\t\t\t\t2/10/2026 12:00:00 AM\t7000\t"
+    receipts = (RECEIPTS.splitlines(keepends=True)[0]
+                + f"{left_460}\t0\tA-700001\t1{gift}A\n"
+                + f"{left_460}\t0\tC-700001\t2{gift}C\n"
+                + f"{left_460}\t1\tI-700002\t1\tExample Credit Union\t\t\t\t2/12/2026 12:00:00 AM"
+                  "\t40\tI\n")
+    filings = (FILINGS.splitlines(keepends=True)[0]
+               + f"{FILER}\t{left_460}\tF460\t3/1/2026 12:00:00 AM\n")
+    covers = (COVERS.splitlines(keepends=True)[0]
+              + "".join(f"{left_460}\t{a}\t{FILER}\tCommittee for Example\t\t\t\tF460"
+                        "\t2/1/2026 12:00:00 AM\t2/28/2026 12:00:00 AM\n" for a in ("0", "1")))
+    root = _build(tmp_path, receipts, filings, covers)
+
+    for form_type, named in (("A", ["A"]), ("C", ["C"]), ("", ["A", "C"])):
+        result = queries.run("calaccess.filer_total",
+                             {"filer_id": FILER, "form_type": form_type}, root)
+        assert sorted((u.schedule, u.amount) for u in result.omitted) == [
+            (s, 7000.0) for s in named], form_type

@@ -197,9 +197,10 @@ def left_out_gifts(con, filer_id: str, *, extra: str, counted: str) -> tuple[lis
     left-out reports is on the schedule `counted` tests and none of its counted reports is:
     DEDUPED_RECEIPTS counts it otherwise. Tested per report, not per row before the grouping
     (#131): a gift whose Form 496 report is counted and whose schedule-A report was left out
-    is in no schedule-A figure. Adds GAPS, the indexes in the schedules of the left-out reports
-    it came from. The SQL takes the filer id twice, then `extra`'s arguments, then `counted`'s
-    twice.
+    is in no schedule-A figure. Adds GAPS, the indexes in the schedules of its left-out reports
+    on that schedule: one on another schedule is not what the figure leaves out, and naming it
+    put a schedule-C share on a schedule-A figure. The SQL takes `counted`'s arguments (for
+    GAPS), the filer id twice, then `extra`'s arguments, then `counted`'s twice.
     """
     from . import calaccess
 
@@ -215,7 +216,8 @@ def left_out_gifts(con, filer_id: str, *, extra: str, counted: str) -> tuple[lis
     left_out = ("MAX(x.gap IS NOT NULL AND ({counted}))"
                 " AND NOT IFNULL(MAX(x.gap IS NULL AND ({counted})), 0)")
     return schedules, (_RECEIPT_GIFTS.replace("{rows}", rows)
-                       .replace("{columns}", ", GROUP_CONCAT(DISTINCT x.gap) AS GAPS")
+                       .replace("{columns}", ", GROUP_CONCAT(DISTINCT CASE WHEN ({counted})"
+                                             " THEN x.gap END) AS GAPS")
                        .replace("{having}", left_out)
                        .format(extra=extra, counted=counted))
 
@@ -283,8 +285,8 @@ def _left_out_receipts(con, filer_id: str, schedule: str, schedule_args: list,
         for r in con.execute(f"""
             SELECT d.GAPS gaps, SUM(d.AMT) amt, COUNT(*) n
             FROM ({gifts}) d WHERE d.AMT IS NOT NULL GROUP BY d.GAPS""",
-                             [filer_id, filer_id, *(who_args or []), *schedule_args,
-                              *schedule_args])],
+                             [*schedule_args, filer_id, filer_id, *(who_args or []),
+                              *schedule_args, *schedule_args])],
         dict(enumerate(schedules)))
 
 
