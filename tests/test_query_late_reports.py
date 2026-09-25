@@ -591,7 +591,8 @@ def test_a_value_unsettled_two_ways_names_both(tmp_path):
     from types import SimpleNamespace
 
     share = SimpleNamespace(describe=lambda: "filing 9990601 amendment 0", amount=4000.0,
-                            rows=1, cite_url=calaccess.filing_url("9990601"), does="rests on")
+                            rows=1, cite_url=calaccess.filing_url("9990601"), does="rests on",
+                            unread=0)
     report = queries.LateReport(filing_id=int(F497), amend_id="0", forms=frozenset({"F497P1"}),
                                 also=frozenset(), amount=2500.0, gross=2500.0, entries=1,
                                 unread=0)

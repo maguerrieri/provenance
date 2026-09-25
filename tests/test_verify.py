@@ -6499,10 +6499,12 @@ _NOT_A_DEFINITION = {
 QUERY_DEFINITIONS = {
     # v9, v9 and v10: the schedule picks gifts after the cross-form dedup, so a counted gift's
     # flag covers every filing it was reported on, and a left-out gift is one no counted report
-    # of which is on the schedule (#131)
-    "calaccess.contributor_total": (9, "8855acca19f4"),
-    "calaccess.filer_total": (9, "6fbbac8ba709"),
-    "calaccess.top_contributor": (10, "2dfc03c8e8eb"),
+    # of which is on the schedule (#131). Then v11 of top_contributor: it flags a left-out gift
+    # with no readable amount (#156); the two totals moved without a bump, since they do not
+    # ask for such gifts and _left_out_receipts() returns them what it did
+    "calaccess.contributor_total": (9, "0fabec139946"),
+    "calaccess.filer_total": (9, "bffc711593d9"),
+    "calaccess.top_contributor": (11, "c4890910226d"),
     # moved without a bump: amount_sql() is ie_total's own amount expression, extracted
     # unchanged, and DEDUPED_RECEIPTS, which it does not read, changed beside it; then the
     # unsettled-amendment flag and its shared helpers, which change no value it returns; then
@@ -6515,8 +6517,9 @@ QUERY_DEFINITIONS = {
     # queries match and dedup by, which it does not use: it matches a candidate with
     # name_match_sql(). Bumped: an empty cover table is refused where it found nothing (#141);
     # then moved without a bump: the receipt queries' schedule filter moving after the dedup's
-    # grouping (#131)
-    "calaccess.ie_total": (3, "ebc6b1e4d7d1"),
+    # grouping (#131); then top_contributor's flag for a left-out gift with no readable amount
+    # (#156), which it does not run
+    "calaccess.ie_total": (3, "d82f828762db"),
 }
 
 

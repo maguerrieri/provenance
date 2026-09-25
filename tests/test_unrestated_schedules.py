@@ -378,6 +378,125 @@ def test_a_miss_carries_what_a_left_out_readable_gift_would_change(root):
     assert not every.found and every.omitted == []
 
 
+BLANK_FILER = "8884600"
+BLANK_SETTLED = "8884601"  # schedule A at amendment 0: Veldt's $500
+BLANK_GAP = "8884602"      # schedule A at amendment 0, Oyelaran's; amendment 1 has only C
+BLANK_MORE = "8884603"     # schedule A at amendment 0, Hollis's $900; amendment 1 has only C
+
+
+def _blank_export(root: Path, *, amount: str = "", amended: bool = True, settled: bool = True,
+                  more: bool = False) -> Path:
+    """A filer whose one left-out schedule-A gift has `amount` as filed: blank by default.
+    `amended=False` drops the amendment that leaves it out, so it is counted; `settled=False`
+    drops the only counted gift; `more=True` adds a second left-out filing with a readable
+    $900."""
+    gifts = [(BLANK_GAP, 0, "A-600002", "Oyelaran", "Tamsin", "2/5/2026", amount, "A")]
+    if settled:
+        gifts.append((BLANK_SETTLED, 0, "A-600001", "Veldt", "Ansel", "1/5/2026", "500", "A"))
+    if amended:
+        gifts.append((BLANK_GAP, 1, "C-600003", "Oyelaran", "Tamsin", "2/6/2026", "80", "C"))
+    if more:
+        gifts += [(BLANK_MORE, 0, "A-600004", "Hollis", "Wren", "2/9/2026", "900", "A"),
+                  (BLANK_MORE, 1, "C-600005", "Hollis", "Wren", "2/10/2026", "60", "C")]
+    receipts = RECEIPTS.splitlines(keepends=True)[0] + "".join(
+        f"{f}\t{a}\t{t}\t1\t{last}\t{first}\t\t\t{day} 12:00:00 AM\t{amt}\t{form}\n"
+        for f, a, t, last, first, day, amt, form in gifts)
+    filings = {(f, a) for f, a, *_ in gifts}
+    covers = COVERS.splitlines(keepends=True)[0] + "".join(
+        f"{f}\t{a}\t{BLANK_FILER}\tFriends of Example\tF460\t{start}\t{end}\n"
+        for f, a in sorted(filings)
+        for start, end in [JANUARY if f == BLANK_SETTLED else FEBRUARY])
+    (root / "cache" / "calaccess").mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(root / "cache" / "calaccess" / "dbwebexport.zip", "w") as zf:
+        zf.writestr("CalAccess/DATA/RCPT_CD.TSV", receipts)
+        zf.writestr("CalAccess/DATA/FILER_FILINGS_CD.TSV", FILINGS.splitlines(keepends=True)[0]
+                    + "".join(f"{BLANK_FILER}\t{f}\tF460\t3/1/2026 12:00:00 AM\n"
+                              for f in sorted({f for f, _ in filings})))
+        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", covers)
+    calaccess.build(root)
+    return root
+
+
+def unread(found):
+    return [(u.filing_id, u.schedule, u.amount, u.rows, u.unread) for u in found]
+
+
+def test_a_ranking_is_unsettled_by_a_left_out_gift_with_no_readable_amount(tmp_path):
+    """Oyelaran's gift has no amount, and a later amendment left its schedule out. Counted, it
+    would name no largest contributor, since a gift of unknown size could make anyone largest.
+    Left out, the $500 leader stood with nothing flagged, and a citation of it verified green
+    (#156). The ranking now leaves the gift out as it leaves out one with an amount: held for a
+    person, naming the filing."""
+    root = _blank_export(tmp_path)
+    top = {"filer_id": BLANK_FILER}
+    result = queries.run("calaccess.top_contributor", top, root)
+    assert (result.found, result.value) == (True, "Ansel Veldt"), "the flag never moves a value"
+    assert unread(result.omitted) == [(BLANK_GAP, "A", 0.0, 0, 1)]
+    v = verify_source(cited("calaccess.top_contributor", top, "Ansel Veldt"), root).verification
+    assert v.status == "human_review", "a gift of unknown size left out must not verify green"
+    assert PHRASE in v.reason and calaccess.filing_url(BLANK_GAP) in v.reason
+    assert (f"filing {BLANK_GAP}'s schedule A rows are from amendment 0, and its later "
+            "amendment 1 has rows on other schedules but none on that one: 1 row(s) with no "
+            "readable amount this result leaves out") in v.reason
+    assert "$0.00" not in v.reason, "a blank amount is not zero"
+    assert "no largest contributor can be named" in v.reason
+
+    s = cited("calaccess.top_contributor", top, "Ansel Veldt")
+    s.verification = Verification(status="verified")
+    v = revalidate_from_cache(s, root).verification
+    assert v.status == "human_review" and BLANK_GAP in v.reason
+
+    # A total keeps leaving it out unflagged: a blank amount changes no total.
+    total = queries.run("calaccess.filer_total", top, root)
+    assert (total.value, total.omitted) == (500.0, [])
+    assert verify_source(cited("calaccess.filer_total", top, "500"),
+                         root).verification.status == "verified"
+
+
+def test_the_controls_left_out_with_an_amount_and_counted_blank(tmp_path):
+    """With an amount, the same gift was already flagged. Not left out, it is counted, and a
+    ranking holding a gift of unknown size names no leader at all."""
+    top = {"filer_id": BLANK_FILER}
+    stated = _blank_export(tmp_path / "stated", amount="700")
+    result = queries.run("calaccess.top_contributor", top, stated)
+    assert result.value == "Ansel Veldt"
+    assert unread(result.omitted) == [(BLANK_GAP, "A", 700.0, 1, 0)]
+    assert verify_source(cited("calaccess.top_contributor", top, "Ansel Veldt"),
+                         stated).verification.status == "human_review"
+
+    counted = _blank_export(tmp_path / "counted", amended=False)
+    result = queries.run("calaccess.top_contributor", top, counted)
+    assert not result.found and result.omitted == []
+    assert "no largest contributor can be named" in result.detail
+
+
+def test_a_share_with_no_readable_amount_comes_first(tmp_path):
+    """A gift of unknown size could outweigh any stated share, so the reason, which names only
+    the first few, names it before larger stated ones, as a late report with no amount is."""
+    root = _blank_export(tmp_path, more=True)
+    result = queries.run("calaccess.top_contributor", {"filer_id": BLANK_FILER}, root)
+    assert unread(result.omitted) == [(BLANK_GAP, "A", 0.0, 0, 1),
+                                      (BLANK_MORE, "A", 900.0, 1, 0)]
+    both = calaccess.UnrestatedSchedule(BLANK_GAP, "A", 0, 1, amount=900.0, rows=1, unread=2)
+    assert ": $900.00 in 1 row(s), plus 2 row(s) with no readable amount, this result leaves " \
+           "out (open" in queries.share_text(both)
+
+
+def test_a_ranking_with_nothing_counted_says_its_left_out_gift_has_no_amount(tmp_path):
+    """With no counted gift at all, the ranking is a miss, and its only match is the left-out
+    gift with no amount. Not "NO MATCH", which reads as no gifts, nor "every match with a
+    readable amount", which reads as there being one."""
+    root = _blank_export(tmp_path, settled=False)
+    result = queries.run("calaccess.top_contributor", {"filer_id": BLANK_FILER}, root)
+    assert not result.found and unread(result.omitted) == [(BLANK_GAP, "A", 0.0, 0, 1)]
+    assert "NO MATCH" not in result.note and "readable amount is on" not in result.note
+    assert ("every match is on a schedule a later amendment left out, with no readable amount"
+            in result.note)
+    v = verify_source(cited("calaccess.top_contributor", {"filer_id": BLANK_FILER},
+                            "Tamsin Oyelaran"), root).verification
+    assert v.status == "human_review" and BLANK_GAP in v.reason
+
+
 def test_a_left_out_miss_still_names_the_schedules_that_count_the_gift(root):
     """On schedule A, Marrow Creek's only copy is left out, and the Form 496 copy that counts
     the same gift is on another schedule. The miss says both: the left-out filing, and the
