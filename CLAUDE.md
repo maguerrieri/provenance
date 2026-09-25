@@ -1943,13 +1943,18 @@ which let their surname-only total through. That question is asked pairwise.
 like the plain one, and `José` and `JOSÉ` were two givers, each short of a leader they pass
 together. The key is now one Python function `calaccess.connect` registers (`_name_key`):
 Unicode-normalized (NFKC), trimmed and case-folded, so an accent written as a combining mark is
-the accent written whole. The SQL that groups, the cross-form dedup, the late-report
-restatement key, and the Python that orders and compares shown names all use it. Left on the
-ASCII rules while the queries moved, the dedup kept a gift's two copies filed `Élise` and
-`élise` apart and summed them under one name. A key is for comparing: a name is shown as filed,
-in its least spelling. **A giver filed with no name is never the
-answer:** its value was `""`, which matches `""` and verified, so a leader or tie holding one is
-a miss whatever the gates.
+the accent written whole. The SQL that groups, the cross-form dedup, the late-report restatement
+key, and the Python that orders and compares shown names all use it. Left on the ASCII rules
+while the queries moved, the dedup kept a gift's two copies filed `Élise` and `élise` apart and
+summed them under one name. A key is for comparing: a name is shown as filed, in its least
+spelling, each field Unicode-normalized as the key is, and `matches()` compares a text value by
+the key. Otherwise one key holding a spelling with a non-breaking space and one without showed
+whichever sorted first, and a later export adding the other moved the value off its recorded
+`expected`. **A giver filed with no name is never the answer:** its value was `""`, which
+matches `""` and verified, so a leader or tie holding one is a miss whatever the gates. "No
+name" means no words, not an empty string: filed as `-`, the leader was named `-` and verified.
+The words are read once per query call, not remembered across calls: a cache of every name read
+held 150 MB for the life of a process.
 
 **The index is part of the rule.** Linking is tested only for pairs an index offers, so a pair
 the index misses is a giver ranked as two. It keys each name by a word it spells out beside each

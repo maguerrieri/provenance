@@ -350,10 +350,10 @@ class QueryResult:
           figure and where its gifts came from.
 
         The first two say "rows a later amendment may have withdrawn", which the research skill
-        matches to leave the row for a person rather than retry it; the third says LEFT_OUT,
-        which it matches too. Each names its UNSETTLED_SHOWN or LATE_SHOWN largest (`_listed`):
-        this becomes a claim file's reason, and a committee's whole history can name dozens.
-        `vg query` prints the rest.
+        matches to leave the row for a person rather than retry it; the third says LEFT_OUT and
+        the last "is for names exactly as filed", which it matches too. Each names its
+        UNSETTLED_SHOWN or LATE_SHOWN largest (`_listed`): this becomes a claim file's reason,
+        and a committee's whole history can name dozens. `vg query` prints the rest.
         """
         why = []
         if self.unrestated:
@@ -618,11 +618,11 @@ def _pending_late(con: Any, filer_id: str) -> list[dict[str, Any]]:
                                      "filing_id": int(r["filing_id"])})
         e["forms"].add(r["form"])
         # One gift filed under one key in two spellings ("Quennell"/"Ada" and "QUENNELL"/"ADA",
-        # on two filings) is shown under the least of them, as the ranking's MIN() does: the
-        # first row read is load order, and a refusal named the giver one way or the other.
-        spelled = (str(r["naml"] or ""), str(r["namf"] or ""))
-        if spelled < (str(e["naml"] or ""), str(e["namf"] or "")):
-            e["naml"], e["namf"] = spelled
+        # on two filings) is shown with each field's least spelling, as the ranking's MIN()
+        # takes it: the first row read is load order, and a refusal named the giver one way or
+        # the other. Per field, not the least pair, so a late giver and a ranked name read alike.
+        e["naml"] = min(str(e["naml"] or ""), str(r["naml"] or ""))
+        e["namf"] = min(str(e["namf"] or ""), str(r["namf"] or ""))
         # which filing and amendment says it, for the reviewer to open
         e["copies"][int(r["filing_id"])] = (r["form"], str(r["amend"] or "0").strip())
         e["filing_id"] = min(e["filing_id"], int(r["filing_id"]))
@@ -727,12 +727,6 @@ def _name(last: Any, first: Any = "") -> _Name:
     The surname is the last-name field's words when both fields are filled. With either one
     blank, the name was filed whole in the other, and any word spelled out in it could be.
     """
-    return _name_of(str(last or ""), str(first or ""))
-
-
-@functools.lru_cache(maxsize=1 << 17)
-def _name_of(last: str, first: str) -> _Name:
-    """`_name`, remembered: a ranking asks for every name on it each time it groups them."""
     given = _tokens(first)
     family = _tokens(last)
     words: set[str] = set()
@@ -751,17 +745,24 @@ def _name_of(last: str, first: str) -> _Name:
 
 
 def _shown(first: Any, last: Any) -> str:
-    """A name as a result shows it: first name first, each part trimmed. A ranking groups on
-    trimmed names, so one group's rows can pad a part ("Rue "), and joining the parts untrimmed
-    put a double space in a value on some builds and not others."""
-    return " ".join(p for p in (str(first or "").strip(), str(last or "").strip()) if p)
+    """A name as a result shows it: first name first, each part trimmed and Unicode-normalized
+    (NFKC), as its key is (`_name_key`). A ranking groups on trimmed names, so one group's rows
+    can pad a part ("Rue "), and joining the parts untrimmed put a double space in a value on
+    some builds and not others. Normalized for the same reason: one key holds 'Rue\xa0Ann' and
+    'Rue Ann', and a later export adding the one spelling moved the value to it."""
+    return " ".join(p for p in (_part(first), _part(last)) if p)
+
+
+def _part(part: Any) -> str:
+    """One field of a name as a result shows it (`_shown`, `_filed`)."""
+    return unicodedata.normalize("NFKC", str(part or "")).strip()
 
 
 def _filed(last: Any, first: Any) -> str:
     """A name as filed, field by field: 'last'/'first'. Two filings that show alike can then be
     told apart: 'Rue Quillon'/'' and 'Quillon'/'Rue' both show as Rue Quillon. Not display only:
     a tie of two such names lists them this way in its value, which a citation records."""
-    return f"{str(last or '').strip()!r}/{str(first or '').strip()!r}"
+    return f"{_part(last)!r}/{_part(first)!r}"
 
 
 def _initial(word: str) -> bool:
@@ -998,6 +999,7 @@ _KL = "vg_name_key({t}.CTRIB_NAML)"
 _KF = "vg_name_key({t}.CTRIB_NAMF)"
 
 
+@functools.lru_cache(maxsize=1 << 16)
 def _name_key(part: Any) -> str:
     """One part of a name's key (`_KL`, `_KF`, the cross-form dedup's and the late-report
     restatement's), and how a result orders and compares the names it shows: Unicode-normalized
@@ -1008,7 +1010,8 @@ def _name_key(part: Any) -> str:
     combining accent from the one written with 'é'. `calaccess.connect` registers it as
     vg_name_key. The dedup has to use the same key as the names: with ASCII rules there and
     these here, a gift's two copies filed 'Élise' and 'élise' stayed apart and were summed under
-    one name. Normalized again after folding, since folding can leave a string unnormalized."""
+    one name. Normalized again after folding, since folding can leave a string unnormalized.
+    Remembered: SQLite asks it of every row, and a committee's rows repeat a few names."""
     text = unicodedata.normalize("NFKC", str(part or "")).strip()
     return unicodedata.normalize("NFKC", text.casefold())
 
@@ -1157,6 +1160,7 @@ def _late_reports(con: Any, filer_id: str, form_type: str) -> list[dict[str, Any
     if schedule not in ("A", ""):
         return []
     if not calaccess.late_reports_loaded(con):
+        con.close()   # filer_total holds its connection outside a try; closing twice is harmless
         raise calaccess.DegradedDatabase(calaccess.LATE_FALLBACK)
     # A stated $0 changes no total and moves no one in a ranking, so it holds nothing.
     late = [e for e in _pending_late(con, filer_id) if e["amt"] != 0]
@@ -1570,13 +1574,14 @@ def _ranking(con: Any, filer_id: str, form_type: str, gated: bool,
     top = float(row["amt"] or 0)
     tied = [r for r in groups if abs(float(r["amt"] or 0) - top) < TOLERANCE]
     shown = [_shown(r["nf"], r["nm"]) for r in tied]
-    if not all(shown):
-        # Its value would be "" (or a tie with an empty part), and "" matches "": a green
-        # citation naming nobody as the largest contributor. Whatever the gates: no name as
-        # filed can be the answer, and there is nobody to hold it for.
+    if nameless := sum(not _name(r["nm"], r["nf"]).words for r in tied):
+        # Its value would be "" or "-" (or a tie with such a part), and "" matches "": a green
+        # citation naming nobody as the largest contributor. A name with no words, not only an
+        # empty one: filed as "-", the leader was named "-" and verified. Whatever the gates: no
+        # name as filed can be the answer, and there is nobody to hold it for.
         return _no_rows(f"{len(tied)} giver(s) at the top of {label} gifts at ${top:,.0f}, and "
-                        f"{len(shown) - len(list(filter(None, shown)))} filed with no name at "
-                        "all — no name to give as the largest contributor; open the filings")
+                        f"{nameless} filed with no name at all — no name to give as the largest "
+                        "contributor; open the filings")
     alike = Counter(_name_key(n) for n in shown)
     shown = [n if alike[_name_key(n)] == 1 else f"{n} (filed {_filed(r['nm'], r['nf'])})"
              for n, r in zip(shown, tied)]
@@ -1597,20 +1602,22 @@ def _ranking(con: Any, filer_id: str, form_type: str, gated: bool,
 
     # Each check runs once: with no late entry, the late and the names-only checks are one.
     # So does each grouping: the late check and the one with both group the same names.
+    # And each name is read once (`_name`), not once per check: a ranking holds tens of
+    # thousands, and remembering every name ever read held 150 MB for the life of a process.
     checks: dict[tuple[bool, bool], list[_Contender]] = {}
     grouped: dict[bool, dict[Any, frozenset[int]]] = {}
+    ranked_words = {("name", g["kl"], g["kf"]): _name(g["kl"], g["kf"]) for g in groups}
+    late_words = {("late", i): _name(e["naml"], e["namf"]) for i, e in enumerate(late)}
 
     def check(use_late: bool, use_names: bool) -> list[_Contender]:
         key = (use_late and bool(late), use_names)
         if key not in checks:
+            words = {**ranked_words, **(late_words if key[0] else {})}
             if key[0] not in grouped and (key[0] or key[1]):
-                names = {("name", g["kl"], g["kf"]): _name(g["kl"], g["kf"]) for g in groups}
-                if key[0]:
-                    names.update({("late", i): _name(e["naml"], e["namf"])
-                                  for i, e in enumerate(late)})
-                grouped[key[0]] = _groups(names)
+                grouped[key[0]] = _groups(words)
             checks[key] = _could_change_ranking(groups, tied, top, late if key[0] else [],
-                                                use_names=key[1], grouped=grouped.get(key[0]))
+                                                use_names=key[1], grouped=grouped.get(key[0]),
+                                                words=words)
         return checks[key]
 
     def blamed(use_late: bool, use_names: bool) -> tuple[bool, bool]:
@@ -1660,6 +1667,11 @@ def _ranking(con: Any, filer_id: str, form_type: str, gated: bool,
     split = check(gated, True) if not names_gated else []
     if not (gated or names_gated or moved or split) and check(True, True):
         moved = split = check(True, True)   # only the two together could: hold both
+    # The mirror: with the late gate in force, the names check weighed the late gifts too, so
+    # names that move the ranking only with them hold those late reports as well. Held by the
+    # names alone, the late report was left out of the value's reason, and the detail said it
+    # "cannot change the ranking" beside a group it pushed past the top.
+    with_late = split if gated and late and split and not check(False, True) else []
     # Every gift, not only the top contributor's: the ranking is made of all of them, and a
     # gift a later amendment dropped can put someone at the top, or keep someone off it. So can
     # a gift the ranking leaves out, on a schedule a later amendment did not restate. Neither is
@@ -1673,7 +1685,7 @@ def _ranking(con: Any, filer_id: str, form_type: str, gated: bool,
     unrestated = _receipt_shares(con, inner, args, ids)
     omitted = _left_out_receipts(con, str(filer_id), schedule, schedule_args)
     note = _late_note(late, ", not counted — they " + (
-        "could change the ranking" if moved else "cannot change the ranking"))
+        "could change the ranking" if moved or with_late else "cannot change the ranking"))
     note = f"; {note}" if note else ""
     if split:
         note += f"; {SPLIT}, not counted as one, could change the ranking: {listing(split)}"
@@ -1681,11 +1693,11 @@ def _ranking(con: Any, filer_id: str, form_type: str, gated: bool,
     # ranking no late gift can move stands, and a report that cannot move it is not the one to
     # open. If no contender holds a late entry of its own, every late report is held, since
     # holding none would let it verify.
-    moving = list({id(e): e for c in moved for e in c.late}.values())
+    moving = list({id(e): e for c in moved + with_late for e in c.late}.values())
     # A late entry can move it by linking names on the schedule into one group: the person
     # checking has to see those names, not only a late report too small to matter alone.
     linked = [c for c in moved if c.kind == "group" and not any(c is d for d in split)]
-    held = {"late": _by_report(moving or late) if moved else [],
+    held = {"late": _by_report(moving or late) if moved or with_late else [],
             "names": lines(split) + (lines(linked) if linked else [])}
     if len(tied) > 1:
         # ORDER BY ... LIMIT 1 makes an arbitrary pick among equals, and a verifier rightly
@@ -1726,7 +1738,8 @@ def _late_range(entries: Any) -> tuple[float, float]:
 
 def _could_change_ranking(groups: list[Any], tied: list[Any], top: float,
                           late: list[dict[str, Any]], *, use_names: bool,
-                          grouped: dict[Any, frozenset[int]] | None = None) -> list[_Contender]:
+                          grouped: dict[Any, frozenset[int]] | None = None,
+                          words: dict[Any, _Name] | None = None) -> list[_Contender]:
     """Who could be at the top instead of the leaders, or a leader who could move: highest
     reach first. Empty if the ranking stands.
 
@@ -1749,13 +1762,14 @@ def _could_change_ranking(groups: list[Any], tied: list[Any], top: float,
     The answer stands if nobody outside the leaders could come within a cent of the lowest a
     leader could fall to, and no leader of a tie could move. Everything uncertain only widens a
     range, which only makes the answer refuse more often. `grouped` is `_groups` of the same
-    names, when the caller has it already.
+    names, and `words` the names as `_name` reads them, when the caller has them already.
     """
     if not (use_names or late):
         return []   # every name as filed, and nothing to add to any: the ranking is the answer
     ranked = {("name", g["kl"], g["kf"]): g for g in groups}
-    words = {k: _name(g["kl"], g["kf"]) for k, g in ranked.items()}
-    words.update({("late", i): _name(e["naml"], e["namf"]) for i, e in enumerate(late)})
+    if words is None:
+        words = {k: _name(g["kl"], g["kf"]) for k, g in ranked.items()}
+        words.update({("late", i): _name(e["naml"], e["namf"]) for i, e in enumerate(late)})
     of = grouped if grouped is not None else _groups(words)
     members: dict[int, list[Any]] = {}
     for k in words:
@@ -2182,14 +2196,16 @@ def matches(expected: Any, got: Any) -> bool:
     - a `float` is a dollar figure and must agree to the cent (TOLERANCE). Every numeric query
       today returns one. A count returned as `float(n)` would get the cent tolerance, and a
       ratio would need a comparison of its own;
-    - anything else (a contributor's name) compares as trimmed, case-folded text.
+    - anything else (a contributor's name) compares as the queries key a name (`_name_key`):
+      Unicode-normalized, trimmed and case-folded, so a value spelled another way under the same
+      key after a new export still reproduces.
     """
     if got is None or expected is None:
         return got == expected
     # Dispatch on what the query returned BEFORE parsing `expected`: a text result that looks
     # numeric ("100.00") must compare as text, or it would get the dollar tolerance.
     if isinstance(got, bool) or not isinstance(got, (int, float)):
-        return str(expected).strip().casefold() == str(got).strip().casefold()
+        return _name_key(expected) == _name_key(got)
     try:
         e = float(str(expected).replace(",", "").lstrip("$"))
     except ValueError:

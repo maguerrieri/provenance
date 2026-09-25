@@ -6492,9 +6492,9 @@ _NOT_A_DEFINITION = {
 
 # name -> (version, fingerprint). See test_a_query_definition_cannot_change_unnoticed.
 QUERY_DEFINITIONS = {
-    "calaccess.contributor_total": (7, "0f6f9fb53ab6"),
-    "calaccess.filer_total": (7, "0d95187e2e70"),
-    "calaccess.top_contributor": (8, "4411b042c95b"),
+    "calaccess.contributor_total": (7, "5e49909dbb3e"),
+    "calaccess.filer_total": (7, "8ec9ce0a3281"),
+    "calaccess.top_contributor": (8, "1757587c9791"),
     # moved without a bump: amount_sql() is ie_total's own amount expression, extracted
     # unchanged, and DEDUPED_RECEIPTS, which it does not read, changed beside it; then the
     # unsettled-amendment flag and its shared helpers, which change no value it returns; then
@@ -6506,7 +6506,7 @@ QUERY_DEFINITIONS = {
     # no value, on a total and on a miss; then the name grouping and the name key the receipt
     # queries match and dedup by, which it does not use: it matches a candidate with
     # name_match_sql()
-    "calaccess.ie_total": (2, "bd40719f4179"),
+    "calaccess.ie_total": (2, "a15f2f41cf52"),
 }
 
 
