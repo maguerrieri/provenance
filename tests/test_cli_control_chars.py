@@ -39,6 +39,9 @@ SNIPPET = "approved the Example Levy on a 4-1 vote"
 # What acts on a terminal or makes a print raise: the categories `_printable()` escapes.
 _ACTING = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
 
+# What a command says under data a reader copies from, once any of it shows as an escape.
+NOTE = "The source holds the character, not the escape, so a copy with one in it matches nothing"
+
 
 def _vg(*args, lines: bool = False):
     """Run `vg`, and return (exit code, output): whitespace-joined, or as its lines. Fails if
@@ -49,19 +52,22 @@ def _vg(*args, lines: bool = False):
 
     # rich folds a long tmp path at 80 columns. Put back `_width` itself, not the width it
     # computed, which would pin it (CLAUDE.md, "Rich reads brackets as markup").
-    width = cli.con._width
+    width, colour = cli.con._width, cli.con._color_system
     cli.con._width = 10_000
+    # No colour, even where the environment forces it (FORCE_COLOR): then rich writes no escape
+    # sequence of its own, and any in the output came from the data. Stripping rich's instead
+    # would strip a leaked `\x1b[8m` (conceal) with them.
+    cli.con._color_system = None
     try:
         res = CliRunner().invoke(cli.app, [str(a) for a in args])
     finally:
-        cli.con._width = width
+        cli.con._width, cli.con._color_system = width, colour
         # A print that raised leaves its text in rich's buffer, and every later print in the
         # process tries to write it again: one regression would fail every test after it.
         del cli.con._buffer[:]
     # The runner catches the exception a surrogate raises in the print: say so plainly.
     assert res.exception is None or isinstance(res.exception, SystemExit), repr(res.exception)
-    # rich's own styling, should a CI force colour; the payloads carry no such sequence.
-    out = re.sub(r"\x1b\[[0-9;]*m", "", res.output)
+    out = res.output
     acting = sorted({f"U+{ord(c):04X}" for c in out
                      if c != "\n" and unicodedata.category(c) in _ACTING})
     assert not acting, f"reached the terminal: {acting} in {out!r}"
@@ -140,6 +146,11 @@ def test_a_recipe_response_prints_its_escapes_and_keeps_its_lines(registry, monk
                       "q=levy", lines=True)
     assert code == 0
     assert f'{{"a": "one{SHOWN}",' in lines and ' "b": "two\\x85"}' in lines, lines
+    assert NOTE in " ".join(lines), lines
+
+    monkeypatch.setattr(access, "run", lambda recipe, params: httpx.Response(200, text="{}\r\n"))
+    code, out = _vg("source-access", "news.example", "--run-recipe", "search")
+    assert code == 0 and NOTE not in out, out
 
     def refused(recipe, params):
         raise ValueError(f"recipe needs{CTRL}")
@@ -286,6 +297,13 @@ def test_query_prints_its_value_and_notes_through_printable(tmp_path, monkeypatc
         value=f"Doe{CTRL}", detail=f"top donor{LONE}", version=1))
     code, out = _vg("query", "calaccess.ie_total", "--param", "last=Doe", "--data", tmp_path)
     assert code == 0 and f"Doe{SHOWN} (top donor\\ud800)" in out, out
+    assert NOTE in out   # a researcher copies the value into `expected` as printed
+
+    monkeypatch.setattr(queries, "run", lambda name, params, root: queries.QueryResult(
+        value=1250.0, detail=f"total{CTRL}", version=1))
+    code, out = _vg("query", "calaccess.ie_total", "--param", "last=Doe", "--data", tmp_path)
+    # Only the note has an escape, and nobody copies the note.
+    assert code == 0 and "1250.0" in out and NOTE not in out, out
 
 
 def test_form700_prints_the_index_through_printable(monkeypatch):
@@ -321,12 +339,16 @@ def test_fetch_and_check_print_page_text_through_printable(tmp_path):
     code, lines = _vg("fetch", URL, "--data", data, lines=True)
     assert code == 0 and TEXT in lines and f"second line{SHOWN}" in lines, lines
     assert any(f"title: Title{SHOWN}" in x for x in lines), lines
-    note = "The page holds the character, not the escape: quote around it, never with it."
-    assert note in " ".join(lines), lines
+    assert NOTE in " ".join(lines), lines
 
     _cache_page(data, f"{URL}/plain", text=f"{TEXT}\r\n{TEXT}")   # a CRLF is a line break
     code, out = _vg("fetch", f"{URL}/plain", "--data", data)
-    assert code == 0 and TEXT in out and note not in out, out
+    assert code == 0 and TEXT in out and NOTE not in out, out
+
+    # A cut at 1200 characters between a CR and its LF left the CR to show as an escape.
+    _cache_page(data, f"{URL}/crlf", text="a" * 1199 + "\r\nb")
+    code, out = _vg("fetch", f"{URL}/crlf", "--data", data)
+    assert code == 0 and "\\x0d" not in out and NOTE not in out, out
 
     code, out = _vg("check", URL, "approved the Example Levy on a 4-1 vote", "--data", data)
     assert code == 0 and "OK — literal and unique." in out, out
@@ -366,6 +388,7 @@ def test_source_import_curl_and_source_note_print_through_printable(tmp_path, re
     assert f"dropped credentials: cookie{SHOWN}" in text
     assert f"dropped headers not known to be safe: x-trace{SHOWN}" in text
     assert "name: portal\\u202e\n" in text   # YAML, a line at a time
+    assert NOTE in " ".join(lines)
 
     code, out = _vg("source-note", f"new{CTRL}.example", "probed; needs a session")
     assert code == 0 and "recorded " in out, out
