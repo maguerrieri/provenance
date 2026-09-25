@@ -797,7 +797,7 @@ def _top_contributor(root: Path, *, filer_id: str,
     between two donors. Pass another schedule to rank by that one, or "" for every schedule.
 
     A tie is every contributor within half a cent (TOLERANCE) of the top, listed whole however
-    many there are, in name order. A large tie is not refused: the whole set is a true answer
+    many there are, sorted by name as displayed (first name first), ignoring case. A large tie is not refused: the whole set is a true answer
     that reproduces, the detail says it is no single largest contributor, and a cap would be an
     arbitrary number turning that answer into a miss.
 
@@ -830,7 +830,7 @@ def _top_contributor(root: Path, *, filer_id: str,
     # Every contributor's total, not the first few: a tie is everyone at the top. Fetched with
     # LIMIT 4, five givers at the contribution limit came back as a four-way tie naming
     # whichever four SQLite picked, and that value reproduced. The names order equal totals, so
-    # the late-report check below reads them in one order too.
+    # the tie and the late-report check below read them in one order.
     groups = con.execute(f"{group} ORDER BY amt DESC, kl, kf", args).fetchall()
     unread = int(groups[0]["unread"] or 0) if groups else 0
     groups = [g for g in groups if g["amt"] is not None]
@@ -845,14 +845,17 @@ def _top_contributor(root: Path, *, filer_id: str,
     top = float(row["amt"] or 0)
     tied = [r for r in groups if abs(float(r["amt"] or 0) - top) < TOLERANCE]
     names = [" ".join(x for x in (r["nf"], r["nm"]) if x).strip() for r in tied]
+    # Sorted as displayed, ignoring case. Each name is spelled as one of its group's rows,
+    # whichever SQLite reads, so a case-sensitive sort put "Rue ABBOT" before "Rue Aaron" or
+    # after it depending on that row, and `matches()` ignores case but not order.
+    listed = " | ".join(sorted(names, key=str.casefold))
     if unread:
         # A total can say "the stated gifts come to X" and name what it left out. A rank
         # cannot: a gift of unknown size could make anyone largest, so while one exists no
         # contributor is established as the largest. The stated leader is named as a lead to
         # check by hand, not a finding.
         con.close()
-        lead = (names[0] if len(tied) == 1
-                else f"a {len(tied)}-way tie ({' | '.join(sorted(names))})")
+        lead = names[0] if len(tied) == 1 else f"a {len(tied)}-way tie ({listed})"
         return _no_rows(f"{lead} leads the stated amounts at ${top:,.0f} in {label} gifts, but "
                         f"no largest contributor can be named{_unread(unread, ' to this filer')}")
     # Past the check above, every contributor has a readable total: none sums to NULL.
@@ -861,9 +864,10 @@ def _top_contributor(root: Path, *, filer_id: str,
         contenders, moving = _could_change_ranking(groups, tied, top, late, label)
     if contenders and gated:
         con.close()
-        return _no_rows(f"{' | '.join(sorted(names))} lead{'s' if len(tied) == 1 else ''} "
+        more = f"; and {len(contenders) - 3} more" if len(contenders) > 3 else ""
+        return _no_rows(f"{listed} lead{'s' if len(tied) == 1 else ''} "
                         f"schedule A at ${top:,.0f}, but {_late_note(late)} could change the "
-                        f"ranking: {'; '.join(contenders[:3])} — not a settled ranking; "
+                        f"ranking: {'; '.join(contenders[:3])}{more} — not a settled ranking; "
                         "form_type=A ranks schedule A alone, for a person to check against "
                         "these late reports", ["form_type=A"])
     # Every gift, not only the top contributor's: the ranking is made of all of them, and a
@@ -885,7 +889,7 @@ def _top_contributor(root: Path, *, filer_id: str,
     if len(tied) > 1:
         # ORDER BY ... LIMIT 1 makes an arbitrary pick among equals, and a verifier rightly
         # rejected a "largest contributor" that was really a two-way tie. Return the tie.
-        return QueryResult(value=" | ".join(sorted(names)), rows=len(tied),
+        return QueryResult(value=listed, rows=len(tied),
                            detail=f"{len(tied)}-WAY TIE at ${top:,.0f} in {label} gifts — not "
                                   "a single largest contributor; do not word this as one"
                                   + note, unrestated=unrestated, late=held)
@@ -939,7 +943,9 @@ def _could_change_ranking(groups: list[Any], tied: list[Any], top: float,
             entries.setdefault(k, []).append(e)
             lo[k] = -float("inf") if a is None else lo[k] + min(a, 0.0)
             hi[k] = float("inf") if a is None else hi[k] + max(a, 0.0)
-    leaders = {(r["kl"], r["kf"]) for r in tied}
+    # Ordered as the tie is, so the leaders who could move list in one order: as a set they
+    # listed by hash, which changes from one process to the next.
+    leaders = dict.fromkeys((r["kl"], r["kf"]) for r in tied)
     floor = min(lo[k] for k in leaders)
     could = [k for k in hi if k not in leaders and hi[k] > floor - TOLERANCE]
     if len(leaders) > 1:
