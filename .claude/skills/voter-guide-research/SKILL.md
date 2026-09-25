@@ -136,6 +136,13 @@ Do not summarize the source rules for them — the agent definition carries them
    that page. Retrying it only invites a researcher to swap in a readable copy. Retry it only
    to ask for the missing `page`.
 
+   **Not a retry either: a query figure a later amendment may have changed.** A `human_review`
+   whose reason says the query reproduces "but it counts rows a later amendment may have
+   withdrawn" is a correct citation of an unsettled record: the export cannot say whether the
+   amendment withdrew those rows. The reason names each filing to open, and a person does.
+   Retrying it only invites a researcher to change the parameters or cite a mirror until the
+   filing drops out.
+
    **A retry with no failing source: an answer whose figures no snippet carries.** The claim
    is `human_review` with every source green, and its conflict line names the dollar figures
    or years the answer states that none of its snippets do. Hand that line back to a

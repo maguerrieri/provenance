@@ -299,5 +299,28 @@ def test_vg_query_warns_before_the_value_is_recorded(root):
                                        "--cache", str(root)], env={"COLUMNS": "250"})
     out = plain(res.output)
     assert res.exit_code == 0, out
-    assert "5500.0" in out and "AMENDMENT UNSETTLED" in out
-    assert "Will not verify" in out and DROPPED_496 in out
+    assert "5500.0" in out and "Will not verify" in out
+    assert out.count(DROPPED_496) == 2, "its explanation and its URL, not again in the note"
+
+
+def test_a_reason_names_the_largest_shares_and_vg_query_lists_the_rest(tmp_path, monkeypatch):
+    """A committee's whole history can name dozens of filings, and the reason is written into
+    the claim file and rendered on the review page. It names the largest few, and `vg query`,
+    which a reviewer re-runs, lists every one."""
+    shares = [calaccess.Unrestated(f"888030{i}", 0, 1, amount=1000.0 - i, rows=1)
+              for i in range(queries.UNSETTLED_SHOWN + 2)]
+    result = queries.QueryResult(value=1.0, unrestated=shares)
+    reason = result.unsettled
+    assert all(u.filing_id in reason for u in shares[:queries.UNSETTLED_SHOWN])
+    assert not any(u.filing_id in reason for u in shares[queries.UNSETTLED_SHOWN:])
+    assert "and 2 more filing(s) with smaller shares, which `vg query` lists" in reason
+    for n in (1, queries.UNSETTLED_SHOWN):    # nothing left over is never "and -4 more"
+        assert "more filing(s)" not in queries.QueryResult(value=1.0,
+                                                           unrestated=shares[:n]).unsettled
+
+    monkeypatch.setattr(queries, "run", lambda name, params, root: result)
+    out = plain(CliRunner().invoke(cli.app, ["query", "calaccess.filer_total", "--param",
+                                             f"filer_id={FILER}", "--cache", str(tmp_path)],
+                                   env={"COLUMNS": "250"}).output)
+    assert all(out.count(f"filing {u.filing_id}'s rows") == 1 for u in shares), (
+        "every filing, each once")
