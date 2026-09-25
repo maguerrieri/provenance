@@ -1358,12 +1358,32 @@ the update's old amount, not the new one. Nothing loaded or loadable separates t
 - Filing types don't either.
 
 So the rule keeps the rows. It never zeroes a filing's rows for want of a restatement,
-while a zero from the cover rule would read as a finding. The rule's own error is silent
-today too; #31 is to flag every figure that includes such a row. None of the known-good
-figures involves one, and each comes out the same under either rule. When two rules fail in
+while a zero from the cover rule would read as a finding. None of the known-good
+figures involves such a row, and each comes out the same under either rule. When two rules fail in
 opposite directions and the data can't say which case you're in, keep the one that doesn't
 manufacture a zero, and flag the case. (Which candidate total a kept row reaches is a separate
 question, below: the update filing's rows reach none.)
+
+**The flag.** The rule's own error used to be silent. `calaccess.unrestated_filings()` now
+finds such a filing: its highest cover `AMEND_ID` is above the highest its table has. It asks
+per filing, through the `FILING_ID` indexes, and only for the filings a result touched:
+- **A citable figure** that counts a row from one carries it (`QueryResult.unrestated`), with
+  what that filing accounts for. `vg verify` and `vg build` send the row to `human_review`,
+  naming each filing to open and its share (`QueryResult.unsettled`). The value is compared
+  as before, so a mismatch is still `snippet_not_found`, and the flag never changes a number.
+  A note alone would still render green.
+- **What counts as counted** differs by query. `ie_total` asks only about the rows its window
+  and amount rules sum, and the receipt queries only about gifts with a readable amount
+  (`amount_sql()`): one without is in no total, so its filing has no share. A deduplicated gift is flagged when *any* filing it came from is
+  unrestated, even when another filing in its group is settled: which report of the gift
+  stands is the same open question. The filing named is the unrestated one, not the earliest
+  filing the listing cites. `top_contributor` is flagged by *any* such gift to the filer. The
+  ranking is made of all of them, and an update can raise a figure as well as withdraw one.
+- **The listings** mark the row (`unrestated`, the "latest amendment" column) and keep
+  listing it: a finding aid that hid the row would hide the filing to open.
+- **A filing with no cover at all** has nothing to compare, so it is not flagged.
+- **A database without cover amendment ids** cannot check at all. Every citable query refuses
+  it (`connect_citable()`, below), and the listings say they cannot check.
 
 **Whose money a kept row is has the same ambiguity, and the latest cover still decides it.**
 Form 496 rows join `CVR_LATEST`, the filing's latest cover. (Receipts reach their filer
@@ -1382,9 +1402,12 @@ I tried joining each row to its own amendment's cover instead, and reverted it. 
 corrected filing's money for the candidate its later cover added, and it turned disowned money
 into findings: filings whose amendments say "filed in error" or "inappropriately filed"
 credited thousands of dollars to candidates. Neither cover is right in
-general. So the latest cover stays, and #31 is to flag a row whose own cover and latest cover
-disagree. Changing which evidence decides an ambiguous case only changes who is wrong; flag
-it instead.
+general. So the latest cover stays, and the case is flagged instead. Changing which evidence
+decides an ambiguous case only changes who is wrong; flag it instead. A row whose own cover and
+latest cover disagree always comes from a filing whose latest amendment has no rows, so any
+total that counts it is flagged, and so is its listing row (the flag, above). The total its
+own cover would have reached is not flagged yet: it never counts the row, and the update
+filing's rows reach no total at all (#89).
 
 Test SQL through `uv run python`, not the `sqlite3` CLI: they are different SQLite builds.
 Python's bundled 3.50 rejects an outer column in a subquery's `ORDER BY` ("no such column"),
@@ -1420,12 +1443,14 @@ another, and 597 Form 496 filings carry more than one cover. Joined to all of
 them, the latest amendment's expenditures count for every candidate any amendment named.
 That put six figures of other candidates' money into one candidate's all-years support.
 `connect()` raises `DegradedDatabaseWarning` whenever it has to fall
-back. `ie_total`, the one citable query over covers, goes further: it refuses
-(`DegradedDatabase`), because a warning printed once to stderr still let that total re-run
-and render green. Until the rebuild, every `ie_total` citation reads as not reproduced. The
-listing (`vg calaccess independent-expenditures`) is a finding aid, and keeps working under the
-warning. The fix is an operator step, `uv run vg calaccess build`, which rebuilds from the
-downloaded zip.
+back. Every citable query goes further: it refuses (`DegradedDatabase`, through
+`connect_citable()`), because a warning printed once to stderr still let a total re-run
+and render green. `ie_total` refused first, for the attribution above. The receipt queries
+refuse too: they never join a cover, but without cover amendment ids nothing can find the rows
+a filing's latest amendment dropped (the flag, above). Until the rebuild, every query citation
+reads as not reproduced. The listings are finding aids, and keep working under the warning.
+The fix is an operator step, `uv run vg calaccess build`, which rebuilds from the downloaded
+zip.
 
 The same mistake reached a test: a fixture modelled a filing "as filed" from its Form 496 rows
 alone and gave it the wrong cover, so the test asserted the misattribution. In Form 496
@@ -1465,7 +1490,11 @@ reproduce exactly — re-judging those verdicts once is the cost, and it is the 
 change landed before versioning did, so v1 is defined over it; the next change like it bumps.
 The first one did: `ie_total` v2 leaves an unreadable amount out of the count, so a window
 holding only such rows is a miss where v1 returned a found `$0.00`. Every recorded figure
-reproduces under v2, and its v1 verdicts are re-judged all the same.
+reproduces under v2, and its v1 verdicts are re-judged all the same. The receipt queries then
+began refusing a database whose covers carry no amendment ids, which their earlier versions
+answered from, so each bumped from the version it had: `contributor_total` and
+`top_contributor` to v4, `filer_total` to v3. The unsettled-amendment flag every query now
+carries bumped nothing: it changes no value, and verification acts on it, not the calculation.
 
 A rule in a comment is one a session can skip, so it has a gate:
 `test_a_query_definition_cannot_change_unnoticed` pins each query's version to a fingerprint

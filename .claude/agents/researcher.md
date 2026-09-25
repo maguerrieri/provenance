@@ -152,6 +152,13 @@ can come back a miss whose note names the schedule it is on (`form_type=C`, say)
 interest is not a contribution. Cite another schedule only when the claim says so ("in-kind
 contributions"), and word the claim to match the schedule you passed.
 
+If `vg query` says **"Will not verify"**, the figure counts rows from a filing whose latest
+amendment has none, and the export cannot say whether that amendment withdrew them. The query
+is fine and the number is what the data gives, so don't change the parameters or switch to a
+mirror to get a clean result. Cite it anyway. `vg check-claim` then fails it as
+`human_review`, and like a kept scan that one failure is the exception: hand the claim on with
+`notes` naming the filings the warning lists, for a person to open.
+
 **Never cite the database as a URL.** A row in a local TSV has no URL a human can open and no text
 they can ⌘F, so a claim resting on one is unverifiable by design. Every result prints the
 filing's own CAL-ACCESS page — cite *that*, with a snippet from it. Use the export to find
