@@ -422,6 +422,7 @@ class Unrestated:
     amount: float = 0.0
     rows: int = 0
     does = "rests on"    # what a figure does with its rows (queries.share_text)
+    unread = 0           # a figure counts no gift with no readable amount (queries.share_text)
 
     @property
     def cite_url(self) -> str:
@@ -624,7 +625,9 @@ class UnrestatedSchedule:
 
     The other side of Unrestated, one level down: there a figure counts rows the cover's
     latest amendment lacks; here it leaves out rows the table's own latest amendment lacks.
-    `amount` and `rows` are what a figure leaves out; a listing leaves them 0.
+    `amount` and `rows` are what a figure leaves out, and `unread` the gifts with no readable
+    amount it leaves out besides, which only a ranking counts (queries._left_out_receipts); a
+    listing leaves them 0.
     """
     filing_id: str
     schedule: str        # its FORM_TYPE, trimmed and upper-cased
@@ -632,6 +635,7 @@ class UnrestatedSchedule:
     table_amend: int     # the filing's latest amendment in the table, with none on it
     amount: float = 0.0
     rows: int = 0
+    unread: int = 0
     does = "leaves out"  # what a figure does with its rows (queries.share_text)
 
     @property

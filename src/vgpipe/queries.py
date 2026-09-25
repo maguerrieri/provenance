@@ -23,7 +23,7 @@ import re
 import shlex
 import unicodedata
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, NamedTuple
 
@@ -262,7 +262,8 @@ def _receipt_shares(con, inner: str, args: list, filing_ids: str | None) -> list
 
 
 def _left_out_receipts(con, filer_id: str, schedule: str, schedule_args: list,
-                       who: str = "", who_args: list | None = None) -> list:
+                       who: str = "", who_args: list | None = None, *,
+                       unread: bool = False) -> list:
     """The schedules a receipts figure leaves out because a later amendment of their filing
     has rows on other schedules and none on them (`calaccess.UnrestatedSchedule`), with what
     the figure leaves out from each. `schedule` and `who` are the figure's own filters
@@ -270,24 +271,39 @@ def _left_out_receipts(con, filer_id: str, schedule: str, schedule_args: list,
     have counted are named.
 
     A gift a counted report of which is on the schedule is not left out: it is in the figure
-    either way. Nor is one with no readable amount (`amount_sql()`), which the figure would
-    leave out anyway, as `_receipt_shares()` gives it no share. The usual filer has no such
-    schedule, and costs a lookup of its filings and their amendments. Asked of a miss too: a
-    name whose every readable gift was left out is not a name with no gifts.
+    either way. Nor, for a total, is one with no readable amount (`amount_sql()`), which the
+    total would leave out anyway, as `_receipt_shares()` gives it no share. A ranking passes
+    `unread`, since there such a gift is not left out anyway: counted, it would name no
+    largest contributor, because a gift of unknown size could make anyone largest. Leaving it
+    out stood a leader green (#156). Each share then counts those gifts apart (`unread`), and
+    a share holding one comes first: its size is unknown, so no stated share outranks it.
+
+    The usual filer has no such schedule, and costs a lookup of its filings and their
+    amendments. Asked of a miss too: a name whose every readable gift was left out is not a
+    name with no gifts.
     """
     from . import calaccess
 
     schedules, gifts = left_out_gifts(con, filer_id, extra=who, counted=schedule)
     if not schedules:
         return []
-    return calaccess.unrestated_shares(con, "RCPT_CD", [
-        ([int(g) for g in r["gaps"].split(",")], float(r["amt"]), int(r["n"]))
-        for r in con.execute(f"""
-            SELECT d.GAPS gaps, SUM(d.AMT) amt, COUNT(*) n
-            FROM ({gifts}) d WHERE d.AMT IS NOT NULL GROUP BY d.GAPS""",
-                             [*schedule_args, filer_id, filer_id, *(who_args or []),
-                              *schedule_args, *schedule_args])],
+    found = [([int(g) for g in r["gaps"].split(",")], r) for r in con.execute(f"""
+        SELECT d.GAPS gaps, SUM(d.AMT) amt, COUNT(d.AMT) n, COUNT(*) - COUNT(d.AMT) unread
+        FROM ({gifts}) d {"" if unread else "WHERE d.AMT IS NOT NULL"} GROUP BY d.GAPS""",
+        [*schedule_args, filer_id, filer_id, *(who_args or []), *schedule_args,
+         *schedule_args])]
+    shares = calaccess.unrestated_shares(
+        con, "RCPT_CD", [(gaps, float(r["amt"] or 0), int(r["n"])) for gaps, r in found],
         dict(enumerate(schedules)))
+    blank: Counter = Counter()
+    for gaps, r in found:
+        for g in set(gaps):
+            u = schedules[g]
+            blank[u.filing_id, u.schedule] += int(r["unread"])
+    # One schedule per filing and FORM_TYPE (`unrestated_schedules`), so that pair is its key.
+    # Stable: past the unread ones first, the shares keep their largest-first order.
+    return sorted((replace(u, unread=blank[u.filing_id, u.schedule]) for u in shares),
+                  key=lambda u: not u.unread)
 
 
 @dataclass
@@ -328,8 +344,12 @@ class QueryResult:
         if not self.found and self.omitted:
             # Not "no match": what matches is on schedules no figure counts (`unsettled`). "With
             # a readable amount": a counted match without one is a miss either way (`_unread`).
+            # A ranking names a left-out gift with none too, and when that is all it names,
+            # "every match with a readable amount" would read as there being one.
             n += (" — every match with a readable amount is on a schedule a later amendment "
-                  "left out")
+                  "left out" if any(u.rows for u in self.omitted) else
+                  " — every match is on a schedule a later amendment left out, with no "
+                  "readable amount")
             if self.suggestions:
                 # Still shown: another schedule that does count the gift is a different figure,
                 # and the claim decides whether it is the one to cite.
@@ -392,7 +412,10 @@ class QueryResult:
             why.append(f"leaves out rows a later amendment may have withdrawn, and the export "
                        f"cannot say whether it did. {each}. If that amendment withdrew them, "
                        f"leaving them out is right; if it only left that schedule unchanged, "
-                       f"they belong in this figure.")
+                       f"they belong in this figure."
+                       + (" A row with no readable amount is a gift of unknown size: if one "
+                          "belongs, no largest contributor can be named."
+                          if any(u.unread for u in self.omitted) else ""))
         if self.reattributed:
             each = _listed(self.reattributed, left_out_text, UNSETTLED_SHOWN,
                            "filing(s) with smaller amounts")
@@ -435,9 +458,13 @@ def share_text(u) -> str:
     """One unrestated filing's or schedule's line in `QueryResult.unsettled`: what it is, what
     the result rests on from it or leaves out, and where to open it. "Rests on", not "adds up
     to": for top_contributor the rows are anyone's gifts in the ranking, not the named
-    contributor's total."""
-    return (f"{u.describe()}: ${u.amount:,.2f} in {u.rows} row(s) this result {u.does} "
-            f"(open {u.cite_url})")
+    contributor's total. Rows with no readable amount, which only a ranking leaves out, are
+    named as such: shown as "$0.00" they would read as a stated zero."""
+    what = f"${u.amount:,.2f} in {u.rows} row(s)"
+    if u.unread:
+        blank = f"{u.unread} row(s) with no readable amount"
+        what = f"{what}, plus {blank}," if u.rows else blank
+    return f"{u.describe()}: {what} this result {u.does} (open {u.cite_url})"
 
 
 # What `vg verify` and `vg build` write for a value with `reattributed` filings, and what the
@@ -1560,6 +1587,10 @@ def _top_contributor(root: Path, *, filer_id: str, form_type: str | None = None,
     the detail, and the ranking stands. form_type=A ranks schedule A alone, and does not verify
     while a late gift could change it (`QueryResult.unsettled`); names=as_filed does not while
     names that could be one giver's could.
+
+    Nor does it verify while it leaves out a gift on its schedule that a later amendment did not
+    restate (`QueryResult.omitted`), one with no readable amount included: counted, that gift
+    would leave no leader to name, so the answer rests on whether the amendment withdrew it.
     """
     from . import calaccess
 
@@ -1591,10 +1622,11 @@ def _ranking(con: Any, filer_id: str, form_type: str, gated: bool,
     row = groups[0] if groups else None
     if row is None:
         note, hint = _elsewhere(con, filer_id, form_type)
-        # With a schedule to rank, every gift on it can be on one a later amendment left out.
-        # Not asked while a gift has no amount: that is a miss whatever the left-out rows hold.
+        # With a schedule to rank, every gift on it can be on one a later amendment left out,
+        # one with no amount included (`unread=True`). Not asked while a counted gift has no
+        # amount: that is a miss whatever the left-out rows hold.
         omitted = [] if unread else _left_out_receipts(con, str(filer_id), schedule,
-                                                       schedule_args)
+                                                       schedule_args, unread=True)
         late_note = _late_note(late)
         miss = _no_rows(f"no {label} contributions {'counted' if unread else 'found'} for "
                         f"filer {filer_id}{_unread(unread)}{note}"
@@ -1704,8 +1736,10 @@ def _ranking(con: Any, filer_id: str, form_type: str, gated: bool,
     with_late = split if gated and late and split and not check(False, True) else []
     # Every gift, not only the top contributor's: the ranking is made of all of them, and a
     # gift a later amendment dropped can put someone at the top, or keep someone off it. So can
-    # a gift the ranking leaves out, on a schedule a later amendment did not restate. Neither is
-    # asked while a gift has no amount, or a late gift or a name holds the ranking (above).
+    # a gift the ranking leaves out, on a schedule a later amendment did not restate, and one
+    # with no amount most of all: counted, it would leave no leader to name (`unread=True`).
+    # Neither is asked while a gift has no amount, or a late gift or a name holds the ranking
+    # (above).
     inner = DEDUPED_RECEIPTS.format(extra="", counted=schedule)
     args: list[Any] = [str(filer_id)] + schedule_args
     ids = con.execute(f"""
@@ -1713,7 +1747,7 @@ def _ranking(con: Any, filer_id: str, form_type: str, gated: bool,
         WHERE d.AMT IS NOT NULL
     """, args).fetchone()["ids"]
     unrestated = _receipt_shares(con, inner, args, ids)
-    omitted = _left_out_receipts(con, str(filer_id), schedule, schedule_args)
+    omitted = _left_out_receipts(con, str(filer_id), schedule, schedule_args, unread=True)
     note = _late_note(late, ", not counted — they " + (
         "could change the ranking" if moved or with_late else "cannot change the ranking"))
     note = f"; {note}" if note else ""
@@ -2120,6 +2154,12 @@ REGISTRY: dict[str, Query] = {
     # Form 496 Part 3 report too, so its unrestated flag covers that filing, where the earlier
     # versions verified the figure green; and a gift is left out (`omitted`) only when no
     # counted report of it is on the schedule (#131).
+    # v11 of top_contributor: a gift on its schedule that a later amendment left out is flagged
+    # (`omitted`) even with no readable amount (#156). v10 left such a gift out unflagged, so a
+    # ranking that one gift of unknown size could overturn verified green. The value is the
+    # same, and flags alone have bumped nothing, but which rankings verify changed for an input
+    # v10 accepted, as with #131, so it is bumped: the rule says to when unsure. The totals do
+    # not ask for such gifts, since a blank amount changes no total, and stay as they are.
     "calaccess.contributor_total": Query(
         _contributor_total, ("filer_id", "contributor"),
         "contributions from one contributor (add contributor_first for an individual; "
@@ -2133,7 +2173,7 @@ REGISTRY: dict[str, Query] = {
         _top_contributor, ("filer_id",),
         "the largest contributor to a filer, by itemized total (schedule A unless form_type "
         "says otherwise; a miss while a pending late gift, or names that could be one giver's, "
-        "could change it, unless names=as_filed)", 10),
+        "could change it, unless names=as_filed)", 11),
     "calaccess.ie_total": Query(
         _ie_total, ("candidate_last", "first"),
         "late independent expenditures naming a candidate; pass stance and since/until", 3),
