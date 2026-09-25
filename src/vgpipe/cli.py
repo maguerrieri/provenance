@@ -1055,8 +1055,8 @@ def calaccess_ie(candidate_last: str, data: Path = DATA, cache: Path = None, fir
 
 
 def _unsettled_rest(result) -> None:
-    """Every filing, schedule or late report past the few a reason names (UNSETTLED_SHOWN,
-    LATE_SHOWN). The reason says `vg query` lists them, so this is where they are."""
+    """Every filing, schedule, late report or other name past the few a reason names
+    (UNSETTLED_SHOWN, LATE_SHOWN). The reason says `vg query` lists them, so this is where they are."""
     from . import queries
 
     for u in (result.unrestated[queries.UNSETTLED_SHOWN:]
@@ -1066,6 +1066,8 @@ def _unsettled_rest(result) -> None:
         con.print(Text(f"  {queries.left_out_text(u)}", style="yellow"), soft_wrap=True)
     for r in result.late[queries.LATE_SHOWN:]:
         con.print(Text(f"  {queries.late_text(r)}", style="yellow"), soft_wrap=True)
+    for line in result.names[queries.LATE_SHOWN:]:
+        con.print(Text(f"  {line}", style="yellow"), soft_wrap=True)
 
 
 @app.command(name="query")

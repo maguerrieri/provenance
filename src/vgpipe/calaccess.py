@@ -38,9 +38,11 @@ WANTED = {
     # every filing, so one contribution appeared 72 times in a single filing and every
     # total came out ~72x too high. Dropping these keys to save disk made the data unusable
     # while still looking plausible — real rows, real amounts, fabricated sums.
+    # CTRIB_CITY and CTRIB_ZIP4 are for people, not figures: a query that flags names which
+    # could be one giver's lists where each one's gifts came from (queries._identity).
     "RCPT_CD": ["FILING_ID", "AMEND_ID", "TRAN_ID", "LINE_ITEM", "CTRIB_NAML", "CTRIB_NAMF",
-                "CTRIB_EMP", "CTRIB_OCC", "RCPT_DATE", "AMOUNT", "FORM_TYPE", "CAND_NAML",
-                "SUP_OPP_CD"],
+                "CTRIB_EMP", "CTRIB_OCC", "CTRIB_CITY", "CTRIB_ZIP4", "RCPT_DATE", "AMOUNT",
+                "FORM_TYPE", "CAND_NAML", "SUP_OPP_CD"],
     # FORM_TYPE tells the schedules apart, in EXPN_CD as in RCPT_CD, and without it nothing can
     # find a schedule a filing's latest amendment left out (unrestated_schedules()).
     "EXPN_CD": ["FILING_ID", "AMEND_ID", "TRAN_ID", "LINE_ITEM", "PAYEE_NAML", "PAYEE_NAMF",
@@ -823,6 +825,10 @@ def connect(root: Path) -> sqlite3.Connection:
     con = sqlite3.connect(dbp)
     con.row_factory = sqlite3.Row
     install_views(con)
+    # A name's key, as the queries group, match and dedup names (queries._name_key).
+    from .queries import _name_key
+
+    con.create_function("vg_name_key", 1, _name_key, deterministic=True)
     return con
 
 

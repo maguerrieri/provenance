@@ -6472,9 +6472,11 @@ def _definition_fingerprint(name):
 # What cannot change a value a query returns: display, messages, listings (finding aids, not
 # citations), the export metadata, and the comparison and command a result is checked with.
 _NOT_A_DEFINITION = {
-    "vgpipe.queries": {"LATE_SHOWN", "LEFT_OUT", "LateReport", "NOT_COMPLETE", "Query",
-                       "QueryResult", "REGISTRY", "UNSETTLED_SHOWN", "_elsewhere", "_late_note",
-                       "_listed", "_other_schedules", "_schedule_label", "_unread", "dataset",
+    "vgpipe.queries": {"AS_FILED", "LATE_SHOWN", "LEFT_OUT", "LateReport", "NOT_COMPLETE",
+                       "Query", "QueryResult", "REGISTRY", "SPLIT", "UNSETTLED_SHOWN",
+                       "_contender_line", "_elsewhere", "_identity", "_late_note", "_late_part",
+                       "_listed", "_name_line", "_names_note", "_other_schedules",
+                       "_schedule_label", "_unread", "_whereabouts", "dataset",
                        "describe_export", "export_date", "human_command", "late_text",
                        "left_out_text", "matches", "share_text"},
     "vgpipe.calaccess": {"COVER_FALLBACK", "Contribution", "DegradedDatabaseWarning",
@@ -6490,13 +6492,9 @@ _NOT_A_DEFINITION = {
 
 # name -> (version, fingerprint). See test_a_query_definition_cannot_change_unnoticed.
 QUERY_DEFINITIONS = {
-    # moved without a bump: the flag for a schedule a later amendment left out, and the
-    # grouping it shares, change no value (DEDUPED_RECEIPTS is the same SQL); then
-    # left_out_sql(), ie_total's helper for rows a later cover reattributed, which they do not
-    # run
-    "calaccess.contributor_total": (6, "2d3d2333a1c1"),
-    "calaccess.filer_total": (6, "6eb8151d2d50"),
-    "calaccess.top_contributor": (7, "f4bbfa0d8254"),
+    "calaccess.contributor_total": (7, "442a070a4b16"),
+    "calaccess.filer_total": (7, "a1307100dbf7"),
+    "calaccess.top_contributor": (8, "d3143e49a329"),
     # moved without a bump: amount_sql() is ie_total's own amount expression, extracted
     # unchanged, and DEDUPED_RECEIPTS, which it does not read, changed beside it; then the
     # unsettled-amendment flag and its shared helpers, which change no value it returns; then
@@ -6505,8 +6503,10 @@ QUERY_DEFINITIONS = {
     # top_contributor shows and orders a ranking's names (_shown, the late-report check), which
     # it does not run; then the left-out-schedule flag beside them; then the flag for rows a
     # later cover reattributed (`reattributed`), which verification acts on and which changes
-    # no value, on a total and on a miss
-    "calaccess.ie_total": (2, "2f9fc985b53d"),
+    # no value, on a total and on a miss; then the name grouping and the name key the receipt
+    # queries match and dedup by, which it does not use: it matches a candidate with
+    # name_match_sql()
+    "calaccess.ie_total": (2, "8893bb207ae9"),
 }
 
 

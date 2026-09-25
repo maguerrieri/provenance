@@ -220,23 +220,30 @@ def test_every_schedule_names_the_form_497_gifts_it_leaves_out(tmp_path):
 def test_every_schedule_holds_a_form_496_row_her_total_did_not_sum(tmp_path):
     """Every schedule sums the Form 496 Part 3 rows, but one contributor's total sums only
     those filed under the name it matches. Her $9,000 gift with the whole name in the
-    last-name field was dropped as "already summed", and her $3,000 verified green."""
+    last-name field was dropped as "already summed", and her $3,000 verified green.
+
+    It is held as the name it was filed under: that name is on every schedule, in her group,
+    so the name check holds it (`_groups`), one rule with no second check for Form 496 rows."""
     root = build(tmp_path, ON_SCHEDULE_A
                  + rcpt("F496P3-8", "Odile Marwick", "", "9000", "F496P3", filing=F496,
                         date="9/18/2026")
                  + rcpt("F496P3-9", "Marwick", "Odile", "400", "F496P3", filing=F496,
                         date="9/19/2026"))
 
-    her = run(root, "contributor_total", contributor="Marwick", contributor_first="Odile",
-              form_type="")
-    assert her.value == 3400.0, her.note
-    # held for the row filed another way; the one filed as the sum matches it is in the figure
-    assert [(r.filing_id, r.amount) for r in her.late] == [(int(F496), 9000.0)], her.unsettled
+    every = dict(contributor="Marwick", contributor_first="Odile", form_type="")
+    her = run(root, "contributor_total", **every)
+    assert not her.found and "'Odile Marwick'/'' $9,000.00 in 1 gift(s)" in her.note, her.note
+    assert her.suggestions == ["names=as_filed"], her.suggestions
+    as_filed = run(root, "contributor_total", names="as_filed", **every)
+    # the row filed as the sum matches it is in the figure; the other is held for a person
+    assert as_filed.value == 3400.0, as_filed.note
+    assert [n.split(" $")[0] for n in as_filed.names] == ["'Odile Marwick'/''"], as_filed.names
+    assert "'Odile Marwick'/'' $9,000.00" in as_filed.unsettled, as_filed.unsettled
     assert not run(root, "contributor_total", contributor="Marwick",
                    contributor_first="Odile").found
     # a filer's figure sums both rows, so neither is held
-    every = run(root, "filer_total", form_type="")
-    assert every.value == 17400.0 and not every.late, every.unsettled
+    total = run(root, "filer_total", form_type="")
+    assert total.value == 17400.0 and not total.late, total.unsettled
 
 
 def test_a_blank_late_amount_is_not_restated_by_a_zero(tmp_path):
@@ -312,7 +319,8 @@ def test_a_late_giver_filed_two_ways_is_held_as_one(tmp_path, also):
 
     got = run(root, "top_contributor")
     assert not got.found, got.note
-    assert "Ada B Quennell ($0 on schedule-A, $6,000 late)" in got.note, got.note
+    # One group of late names, held as one giver: every late entry in it, each once.
+    assert f"$0 on schedule-A, ${'6,100' if also else '6,000'} late)" in got.note, got.note
     named = run(root, "top_contributor", form_type="A")
     assert named.value == "Fernhollow Growers PAC" and named.unsettled, named.note
 
