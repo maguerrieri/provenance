@@ -469,12 +469,22 @@ literals go in bare.
   an undecodable byte in argv arrives as one, so a refusal quoting its argument died with a
   traceback and the wrong exit code. `cli._printable()` shows each of these as an escape
   (`\x1b`, `\ud800`). A URL needs it too: `_http_only()` refuses C0 controls and whitespace,
-  not a C1 control or a bidi override. `repr()` already escapes the same characters, so a
-  `{x!r}` needs neither.
+  not a C1 control or a bidi override. `repr()` already escapes the same characters, so
+  `escape(repr(x))` needs no `_printable()`. It still needs `escape()`: `repr()` leaves `[/]`
+  as it is.
 - **Multi-line data keeps its lines: `_printable(x, lines=True)`.** `_printable()` shows a line
   break as `\x0a`, so text is printed on the line it is given. Page text, a response body and a
-  YAML entry are copied from, and pydantic's message has line breaks of its own, so those go
-  line by line: `\n` (or `\r\n`) stays a break, and any other (a lone CR, NEL, U+2028) shows.
+  YAML entry are copied from, and exception text has line breaks of its own (pydantic's
+  message; a missing export's download command; an HTTP error's link), so those go line by
+  line: `\n` (or `\r\n`) stays a break, and any other (a lone CR, NEL, U+2028) shows.
+- **Cut a cell with `_cut(x, n)`, not `_printable(x[:n])`.** A cut before escaping lets a cell
+  of control bytes show four times as wide and fold the table; a cut after it can end inside
+  an escape, which then reads as another character. `_cut()` counts what is shown and stops
+  between escapes.
+- **An escape is text the pipeline inserted.** A snippet copied from `vg fetch` with one in it
+  (`co\xadoperate` for a soft hyphen) is on no page, so `vg fetch` says so under any page text
+  it had to escape. Escaping every invisible character keeps one definition of what
+  `_printable()` shows; the note is what keeps it from costing a real citation.
 - **Escaping each value is not escaping the message.** `escape()` neutralises only a tag complete
   inside the value it is given. `[/` in one value and `x]` in the next, with plain text between,
   still made the closing tag `[/ x]`: `vg form700 '[/' 'x]'` raised, and so did
