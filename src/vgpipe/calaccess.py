@@ -363,14 +363,32 @@ def cover_problem(con: sqlite3.Connection) -> str | None:
     reads as unsettled (`unrestated_filings()`), which on an empty table would name every
     filing in every figure: a broken database, not records to open, so it is refused here.
     """
-    cols = {r[1] for r in con.execute('PRAGMA main.table_info("CVR_CAMPAIGN_DISCLOSURE_CD")')}
-    if not cols:
+    if not con.execute("SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = "
+                       "'CVR_CAMPAIGN_DISCLOSURE_CD'").fetchone():
         return NO_COVERS
     if con.execute('SELECT 1 FROM main."CVR_CAMPAIGN_DISCLOSURE_CD" LIMIT 1').fetchone() is None:
         return EMPTY_COVERS
-    if "AMEND_ID" not in cols:
+    # the test install_views() picks the cover view by, so the view and the refusal agree
+    if not covers_by_amendment(con):
         return COVER_FALLBACK
     return None
+
+
+def cover_problem_at(root: Path) -> str | None:
+    """cover_problem() for the database under `root`, opened read-only and without the views,
+    for a listing's footer to say which case it is. The listings return None marks without
+    saying why, and an empty listing has no marks at all: over an empty cover table, the
+    expenditure listing finds nothing, which would read as "no expenditures".
+
+    None when there is no database: the listing that reads it has refused already."""
+    dbp = db_path(root)
+    if not dbp.exists():
+        return None
+    con = sqlite3.connect(f"{dbp.resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        return cover_problem(con)
+    finally:
+        con.close()
 
 
 NO_COVERS = (
@@ -411,8 +429,9 @@ class Unrestated:
 
     def describe(self) -> str:
         if self.cover_amend is None:
-            return (f"filing {self.filing_id}'s rows are from amendment {self.rows_amend}, and it "
-                    f"has no cover record to say whether a later amendment dropped them")
+            return (f"filing {self.filing_id}'s rows are from amendment {self.rows_amend}, and "
+                    f"this export has no cover record for it, so nothing here shows whether a "
+                    f"later amendment dropped them")
         return (f"filing {self.filing_id}'s rows are from amendment {self.rows_amend}, and its "
                 f"latest amendment ({self.cover_amend}) has none")
 
