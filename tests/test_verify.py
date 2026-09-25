@@ -1703,8 +1703,9 @@ def test_an_amendment_that_restates_no_receipts_does_not_erase_them(tmp_path):
     got = calaccess.contributions_to(root, "9990015")
     assert sorted(c.amount for c in got) == [11875.0, 26450.0], (
         "an amendment that only fixed an address erased the filing's receipts")
+    # Form 401's payments received are not Form 460 schedule A, the default, so name them
     total = queries.run("calaccess.contributor_total",
-                        {"filer_id": "9990015",
+                        {"filer_id": "9990015", "form_type": "F401A",
                          "contributor": "Neighbors for Clean Water, Yes on Measure A"}, root)
     assert total.found and total.value == 26450.0
 
@@ -6427,7 +6428,8 @@ def _definition_fingerprint(name):
 # What cannot change a value a query returns: display, messages, listings (finding aids, not
 # citations), the export metadata, and the comparison and command a result is checked with.
 _NOT_A_DEFINITION = {
-    "vgpipe.queries": {"Query", "QueryResult", "REGISTRY", "_unread", "dataset",
+    "vgpipe.queries": {"Query", "QueryResult", "REGISTRY", "_other_schedules", "_unread",
+                       "dataset",
                        "describe_export", "export_date", "human_command", "matches"},
     "vgpipe.calaccess": {"COVER_FALLBACK", "Contribution", "DegradedDatabaseWarning",
                          "EXPORT_META", "EXPORT_URL", "_UNUSABLE", "_export_date",
@@ -6440,9 +6442,9 @@ _NOT_A_DEFINITION = {
 
 # name -> (version, fingerprint). See test_a_query_definition_cannot_change_unnoticed.
 QUERY_DEFINITIONS = {
-    "calaccess.contributor_total": (2, "03343db683a4"),
+    "calaccess.contributor_total": (3, "1c3f9363e3c7"),
     "calaccess.filer_total": (2, "bf8b0264379e"),
-    "calaccess.top_contributor": (2, "c588ae4ecba3"),
+    "calaccess.top_contributor": (3, "dd81012ee38f"),
     # moved without a bump: amount_sql() is ie_total's own amount expression, extracted
     # unchanged, and DEDUPED_RECEIPTS, which it does not read, changed beside it
     "calaccess.ie_total": (2, "dc70b31ada75"),
