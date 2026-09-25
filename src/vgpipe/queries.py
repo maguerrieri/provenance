@@ -263,7 +263,7 @@ def _receipt_shares(con, inner: str, args: list, filing_ids: str | None) -> list
 
 def _left_out_receipts(con, filer_id: str, schedule: str, schedule_args: list,
                        who: str = "", who_args: list | None = None, *,
-                       unread: bool = False) -> list:
+                       with_unread: bool = False) -> list:
     """The schedules a receipts figure leaves out because a later amendment of their filing
     has rows on other schedules and none on them (`calaccess.UnrestatedSchedule`), with what
     the figure leaves out from each. `schedule` and `who` are the figure's own filters
@@ -272,11 +272,12 @@ def _left_out_receipts(con, filer_id: str, schedule: str, schedule_args: list,
 
     A gift a counted report of which is on the schedule is not left out: it is in the figure
     either way. Nor, for a total, is one with no readable amount (`amount_sql()`), which the
-    total would leave out anyway, as `_receipt_shares()` gives it no share. A ranking passes
-    `unread`, since there such a gift is not left out anyway: counted, it would name no
-    largest contributor, because a gift of unknown size could make anyone largest. Leaving it
-    out stood a leader green (#156). Each share then counts those gifts apart (`unread`), and
-    a share holding one comes first: its size is unknown, so no stated share outranks it.
+    total would leave out anyway, as `_receipt_shares()` gives it no share. A ranking that
+    names a leader passes `with_unread`, since there such a gift is not left out anyway:
+    counted, it would name no largest contributor, because a gift of unknown size could make
+    anyone largest. Leaving it out stood a leader green (#156). Each share then counts those
+    gifts apart (`UnrestatedSchedule.unread`), and a share holding one comes first: its size
+    is unknown, so no stated share outranks it.
 
     The usual filer has no such schedule, and costs a lookup of its filings and their
     amendments. Asked of a miss too: a name whose every readable gift was left out is not a
@@ -289,21 +290,19 @@ def _left_out_receipts(con, filer_id: str, schedule: str, schedule_args: list,
         return []
     found = [([int(g) for g in r["gaps"].split(",")], r) for r in con.execute(f"""
         SELECT d.GAPS gaps, SUM(d.AMT) amt, COUNT(d.AMT) n, COUNT(*) - COUNT(d.AMT) unread
-        FROM ({gifts}) d {"" if unread else "WHERE d.AMT IS NOT NULL"} GROUP BY d.GAPS""",
+        FROM ({gifts}) d {"" if with_unread else "WHERE d.AMT IS NOT NULL"} GROUP BY d.GAPS""",
         [*schedule_args, filer_id, filer_id, *(who_args or []), *schedule_args,
          *schedule_args])]
-    shares = calaccess.unrestated_shares(
-        con, "RCPT_CD", [(gaps, float(r["amt"] or 0), int(r["n"])) for gaps, r in found],
-        dict(enumerate(schedules)))
+    # Keyed by index in `schedules`, as the shares are: each keeps the count its gifts carry.
     blank: Counter = Counter()
     for gaps, r in found:
         for g in set(gaps):
-            u = schedules[g]
-            blank[u.filing_id, u.schedule] += int(r["unread"])
-    # One schedule per filing and FORM_TYPE (`unrestated_schedules`), so that pair is its key.
-    # Stable: past the unread ones first, the shares keep their largest-first order.
-    return sorted((replace(u, unread=blank[u.filing_id, u.schedule]) for u in shares),
-                  key=lambda u: not u.unread)
+            blank[g] += int(r["unread"])
+    shares = calaccess.unrestated_shares(
+        con, "RCPT_CD", [(gaps, r["amt"], int(r["n"])) for gaps, r in found],
+        {g: replace(u, unread=blank[g]) for g, u in enumerate(schedules)})
+    # Stable: the shares come largest first, and one holding a gift of unknown size goes first.
+    return sorted(shares, key=lambda u: not u.unread)
 
 
 @dataclass
@@ -344,12 +343,8 @@ class QueryResult:
         if not self.found and self.omitted:
             # Not "no match": what matches is on schedules no figure counts (`unsettled`). "With
             # a readable amount": a counted match without one is a miss either way (`_unread`).
-            # A ranking names a left-out gift with none too, and when that is all it names,
-            # "every match with a readable amount" would read as there being one.
             n += (" — every match with a readable amount is on a schedule a later amendment "
-                  "left out" if any(u.rows for u in self.omitted) else
-                  " — every match is on a schedule a later amendment left out, with no "
-                  "readable amount")
+                  "left out")
             if self.suggestions:
                 # Still shown: another schedule that does count the gift is a different figure,
                 # and the claim decides whether it is the one to cite.
@@ -1622,11 +1617,11 @@ def _ranking(con: Any, filer_id: str, form_type: str, gated: bool,
     row = groups[0] if groups else None
     if row is None:
         note, hint = _elsewhere(con, filer_id, form_type)
-        # With a schedule to rank, every gift on it can be on one a later amendment left out,
-        # one with no amount included (`unread=True`). Not asked while a counted gift has no
-        # amount: that is a miss whatever the left-out rows hold.
+        # With a schedule to rank, every gift on it can be on one a later amendment left out.
+        # Not asked while a gift has no amount: that is a miss whatever the left-out rows hold.
+        # Nor is a left-out gift with none (`with_unread`, below): kept, it too names no leader.
         omitted = [] if unread else _left_out_receipts(con, str(filer_id), schedule,
-                                                       schedule_args, unread=True)
+                                                       schedule_args)
         late_note = _late_note(late)
         miss = _no_rows(f"no {label} contributions {'counted' if unread else 'found'} for "
                         f"filer {filer_id}{_unread(unread)}{note}"
@@ -1737,7 +1732,7 @@ def _ranking(con: Any, filer_id: str, form_type: str, gated: bool,
     # Every gift, not only the top contributor's: the ranking is made of all of them, and a
     # gift a later amendment dropped can put someone at the top, or keep someone off it. So can
     # a gift the ranking leaves out, on a schedule a later amendment did not restate, and one
-    # with no amount most of all: counted, it would leave no leader to name (`unread=True`).
+    # with no amount most of all: counted, it would leave no leader to name (`with_unread`).
     # Neither is asked while a gift has no amount, or a late gift or a name holds the ranking
     # (above).
     inner = DEDUPED_RECEIPTS.format(extra="", counted=schedule)
@@ -1747,7 +1742,7 @@ def _ranking(con: Any, filer_id: str, form_type: str, gated: bool,
         WHERE d.AMT IS NOT NULL
     """, args).fetchone()["ids"]
     unrestated = _receipt_shares(con, inner, args, ids)
-    omitted = _left_out_receipts(con, str(filer_id), schedule, schedule_args, unread=True)
+    omitted = _left_out_receipts(con, str(filer_id), schedule, schedule_args, with_unread=True)
     note = _late_note(late, ", not counted — they " + (
         "could change the ranking" if moved or with_late else "cannot change the ranking"))
     note = f"; {note}" if note else ""

@@ -1314,8 +1314,9 @@ Related traps in the same data:
   late-report check. A total sums the stated amounts and names what it left out. A rank cannot,
   because a gift of unknown size could make anyone largest: while any gift on the schedule it
   ranks has no amount, `top_contributor` names no largest contributor, only the stated leader
-  as a lead to check. That holds for a gift a later amendment may have left out too: the
-  ranking goes to a person, naming the filing (#156, under "CAL-ACCESS double-counts").
+  as a lead to check. That holds for a gift a later amendment may have left out too: a
+  ranking that names a leader goes to a person, naming the filing (#156, under "CAL-ACCESS
+  double-counts").
   `vg calaccess contributions`
   reads amounts the same way. It prints a blank as `blank` and any other unreadable amount as
   filed, and it gives such gifts their own `--top` slots after the ranked ones, since those
@@ -1578,7 +1579,9 @@ flagged too, as the mirror image of the one above:
   included (#156). There such a gift is not left out anyway: counted, it would make the
   ranking a miss, since a gift of unknown size could make anyone largest. Filtered out as for
   a total, it left a ranking one such gift could overturn verifying green. The reason names
-  it as a row with no readable amount, never as `$0.00`, and lists its share first. The totals'
+  it as a row with no readable amount, never as `$0.00`, and lists its share first. A ranking
+  that names nobody is not held for one: kept or withdrawn, such a gift leaves it naming
+  nobody, so the filing is not one a person need open, and the miss stays one to retry. The totals'
   rule came in when #92 was restacked onto #34, and it was applied to the ranking too. A rule
   written for one kind of figure has to be checked against every figure that calls it.
 - **The contributions listing now shows a left-out gift**, marked "not counted" in the "latest

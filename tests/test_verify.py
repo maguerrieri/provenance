@@ -6502,9 +6502,9 @@ QUERY_DEFINITIONS = {
     # of which is on the schedule (#131). Then v11 of top_contributor: it flags a left-out gift
     # with no readable amount (#156); the two totals moved without a bump, since they do not
     # ask for such gifts and _left_out_receipts() returns them what it did
-    "calaccess.contributor_total": (9, "0fabec139946"),
-    "calaccess.filer_total": (9, "bffc711593d9"),
-    "calaccess.top_contributor": (11, "c4890910226d"),
+    "calaccess.contributor_total": (9, "a16366ed486e"),
+    "calaccess.filer_total": (9, "411d321fb861"),
+    "calaccess.top_contributor": (11, "eaaed4bf07f8"),
     # moved without a bump: amount_sql() is ie_total's own amount expression, extracted
     # unchanged, and DEDUPED_RECEIPTS, which it does not read, changed beside it; then the
     # unsettled-amendment flag and its shared helpers, which change no value it returns; then
@@ -6519,7 +6519,7 @@ QUERY_DEFINITIONS = {
     # then moved without a bump: the receipt queries' schedule filter moving after the dedup's
     # grouping (#131); then top_contributor's flag for a left-out gift with no readable amount
     # (#156), which it does not run
-    "calaccess.ie_total": (3, "d82f828762db"),
+    "calaccess.ie_total": (3, "33ae5cb184c3"),
 }
 
 
