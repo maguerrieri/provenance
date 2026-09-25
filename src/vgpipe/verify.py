@@ -122,6 +122,15 @@ def verify_query_source(src: Source, root: Path) -> Source:
                     f"{queries.human_command(q.name, dict(q.params), run.cache_root)}")
         src.verification = v
         return src
+    if why := result.unsettled:
+        # The number reproduces, but it counts rows a later amendment may have withdrawn.
+        # Only the filing says which, so a person opens it; stamped as for a mismatch.
+        v.query_run = run
+        v.status = "human_review"
+        v.reason = (f"the query reproduces {result.value!r}, but {why} Re-run: "
+                    f"{queries.human_command(q.name, dict(q.params), run.cache_root)}")
+        src.verification = v
+        return src
 
     _mark_query_verified(v, q, result, run)
     src.verification = v
@@ -787,6 +796,13 @@ def revalidate_from_cache(src: Source, root: Path, *,
             _discard(f"claimed {claimed!r} but re-running the query gives {result.value!r} "
                      f"({result.note}), not {src.query.expected!r}")
             v.query_run = run   # what this re-run read: build's own run, so it can vouch for it
+            return src
+        if why := result.unsettled:
+            # verify_query_source()'s rule, applied here too: a row verified before a filing's
+            # later amendment reached the export, or by a version that did not ask, is not green
+            _discard(f"claimed {claimed!r}; re-running the query gives {result.value!r}, but "
+                     f"{why}")
+            v.query_run = run
             return src
         # A query that reproduces vouches for its number, not for whatever status, excerpt or
         # reason the claim file paired with it: rebuild them exactly as `vg verify` would.

@@ -22,7 +22,7 @@ import sqlite3
 import sys
 import warnings
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 EXPORT_URL = "https://campaignfinance.cdn.sos.ca.gov/dbwebexport.zip"
@@ -85,6 +85,9 @@ class Contribution:
     committee: str = ""
     filings: int = 1        # how many filings restated this one gift
     amount_filed: str = ""  # the AMOUNT text as filed, for showing one that did not read
+    # This gift's filings whose latest amendment has no receipt rows (Unrestated); None when
+    # the database cannot check (its covers carry no amendment ids).
+    unrestated: tuple[Unrestated, ...] | None = ()
 
     @property
     def cite_url(self) -> str:
@@ -271,7 +274,8 @@ FILER_FILING_SQL = """
 # amendment with a cover and no rows in this table is sometimes a withdrawal and sometimes an
 # amendment that did not restate the schedule ("A missing address was added"), and the export
 # cannot tell them apart. The cover's maximum would turn the second kind into a silent
-# undercount, so this keeps the rows. The measurements are in CLAUDE.md, under "CAL-ACCESS
+# undercount, so this keeps the rows, and `unrestated_filings()` flags every figure and
+# listing row that counts one. The measurements are in CLAUDE.md, under "CAL-ACCESS
 # double-counts four ways, and all are silent".
 LATEST_SQL = """
     CREATE {temp}VIEW IF NOT EXISTS {view} AS
@@ -305,7 +309,93 @@ COVER_FALLBACK = (
     "this CAL-ACCESS database has no CVR_CAMPAIGN_DISCLOSURE_CD.AMEND_ID (it was built before "
     "that column was loaded), so cover records cannot be narrowed to the latest amendment. "
     "An independent expenditure can be attributed to a candidate or stance that a later "
-    "amendment replaced. Rebuild the database: uv run vg calaccess build")
+    "amendment replaced, and no figure can be checked for rows a later amendment dropped. "
+    "Rebuild the database: uv run vg calaccess build")
+
+
+def connect_citable(root: Path) -> sqlite3.Connection:
+    """connect() for a citable query: refuses (DegradedDatabase) a database whose covers carry
+    no amendment ids.
+
+    Without them nothing can find a filing's latest amendment, so no figure can be checked
+    for rows that amendment dropped (`unrestated_filings()`), and an independent expenditure
+    can be credited to a candidate a later amendment replaced. A total that renders green is a
+    finding, and a warning printed once to stderr still let one re-run and render green.
+    """
+    con = connect(root)
+    if not covers_by_amendment(con):
+        con.close()
+        raise DegradedDatabase(COVER_FALLBACK)
+    return con
+
+
+@dataclass(frozen=True)
+class Unrestated:
+    """A filing whose latest amendment, by its cover, has no rows in a fact table where an
+    earlier amendment has some. LATEST_SQL keeps the earlier amendment's rows, and the export
+    cannot say whether that is right: the later amendment withdrew them, or did not restate
+    that schedule (a fixed address, a signature). Only the filing settles it.
+
+    `amount` and `rows` are what a figure took from the filing; a listing leaves them 0.
+    """
+    filing_id: str
+    rows_amend: int      # the latest amendment with rows in the table: the rows counted
+    cover_amend: int     # the filing's latest amendment, which has none there
+    amount: float = 0.0
+    rows: int = 0
+
+    @property
+    def cite_url(self) -> str:
+        return filing_url(self.filing_id)
+
+    def describe(self) -> str:
+        return (f"filing {self.filing_id}'s rows are from amendment {self.rows_amend}, and its "
+                f"latest amendment ({self.cover_amend}) has none")
+
+
+def unrestated_filings(con: sqlite3.Connection, table: str,
+                       filing_ids) -> dict[str, Unrestated]:
+    """The filings among `filing_ids` whose highest cover AMEND_ID is greater than the highest
+    AMEND_ID `table` has for them, by filing id.
+
+    Asked per filing, through the FILING_ID indexes, not over the whole table: only the
+    filings a result touched matter. A filing with no cover at all has nothing to compare, so
+    it is not reported. Needs covers_by_amendment(con); a caller without it says it cannot
+    check (connect_citable() refuses).
+    """
+    ids = sorted({str(f) for f in filing_ids})
+    out: dict[str, Unrestated] = {}
+    for i in range(0, len(ids), 500):     # under every SQLite build's limit on parameters
+        chunk = ids[i:i + 500]
+        for r in con.execute(f"""
+            SELECT t.FILING_ID fid, MAX(CAST(t.AMEND_ID AS INTEGER)) rows_a,
+                   (SELECT MAX(CAST(c.AMEND_ID AS INTEGER)) FROM CVR_CAMPAIGN_DISCLOSURE_CD c
+                    WHERE c.FILING_ID = t.FILING_ID) cover_a
+            FROM "{table}" t WHERE t.FILING_ID IN ({", ".join("?" * len(chunk))})
+            GROUP BY t.FILING_ID
+        """, chunk):
+            if r["cover_a"] is not None and r["cover_a"] > r["rows_a"]:
+                out[str(r["fid"])] = Unrestated(str(r["fid"]), r["rows_a"], r["cover_a"])
+    return out
+
+
+def unrestated_shares(con: sqlite3.Connection, table: str, counted) -> list[Unrestated]:
+    """What each unrestated filing accounts for in a figure, largest first.
+
+    `counted` holds the figure's counted units as (filing ids, amount, rows): one per
+    deduplicated gift, which can span filings, or one per filing. A unit counts toward every
+    unrestated filing it touches, so two filings' shares can overlap.
+    """
+    counted = [(set(ids), amount, n) for ids, amount, n in counted]
+    gaps = unrestated_filings(con, table, set().union(*(ids for ids, _, _ in counted)))
+    amounts: dict[str, float] = {}
+    rows: dict[str, int] = {}
+    for ids, amount, n in counted:
+        for f in ids & gaps.keys():
+            amounts[f] = amounts.get(f, 0.0) + (amount or 0.0)
+            rows[f] = rows.get(f, 0) + n
+    return sorted((replace(gaps[f], amount=amounts[f], rows=rows[f])
+                   for f in amounts), key=lambda u: (-u.amount, u.filing_id))
 
 
 def install_views(con: sqlite3.Connection, *, temp: bool = True) -> None:
@@ -572,7 +662,7 @@ def contributions_to(root: Path, filer_id: str, *, top: int = 25,
                 SELECT d.FILING_ID, ? AS FILER_ID, d.CTRIB_NAML, d.CTRIB_NAMF, d.CTRIB_EMP,
                        d.CTRIB_OCC, d.AMOUNT, d.AMT, {iso_date_sql("d.RCPT_DATE")} AS CTRIB_DATE,
                        TRIM(COALESCE(d.RCPT_DATE, '')) AS FILED_DATE,
-                       d.FILINGS
+                       d.FILINGS, d.FILING_IDS
                 FROM ({inner}) d)
             {where})
         SELECT * FROM (SELECT * FROM g WHERE AMT IS NOT NULL ORDER BY AMT DESC LIMIT ?)
@@ -580,8 +670,13 @@ def contributions_to(root: Path, filer_id: str, *, top: int = 25,
         SELECT * FROM (SELECT * FROM g WHERE AMT IS NULL ORDER BY CTRIB_DATE DESC LIMIT ?)
         ORDER BY AMT DESC, CTRIB_DATE DESC
     """
+    found = con.execute(q, args + [top, top]).fetchall()
+    ids = [set((r["FILING_IDS"] or "").split(",")) - {""} for r in found]
+    # Marked, and still listed: a finding aid that hid the row would hide the filing to open.
+    gaps = (unrestated_filings(con, "RCPT_CD", set().union(*ids))
+            if covers_by_amendment(con) else None)
     out = []
-    for r in con.execute(q, args + [top, top]):
+    for r, filings in zip(found, ids):
         name = " ".join(x for x in (r["CTRIB_NAMF"], r["CTRIB_NAML"]) if x).strip()
         # A blank here was listed as $0, which reads as a stated zero.
         out.append(Contribution(filing_id=str(r["FILING_ID"]),
@@ -590,7 +685,9 @@ def contributions_to(root: Path, filer_id: str, *, top: int = 25,
                                 occupation=r["CTRIB_OCC"] or "",
                                 amount=None if r["AMT"] is None else float(r["AMT"]),
                                 amount_filed=(r["AMOUNT"] or "").strip(),
-                                date=shown_date(r["CTRIB_DATE"], r["FILED_DATE"])))
+                                date=shown_date(r["CTRIB_DATE"], r["FILED_DATE"]),
+                                unrestated=None if gaps is None else tuple(
+                                    gaps[f] for f in sorted(filings) if f in gaps)))
     con.close()
     return out
 
@@ -630,8 +727,14 @@ def independent_expenditures(root: Path, candidate_last: str, *, first: str = ""
     """
     args = name_arglist + [top]
     rows = [dict(r) for r in con.execute(q, args)]
+    # Marked, and still listed: a finding aid that hid the row would hide the filing to open.
+    gaps = (unrestated_filings(con, "S496_CD", {r["FILING_ID"] for r in rows})
+            if covers_by_amendment(con) else None)
     con.close()
     for r in rows:
+        # None when the database cannot check, as for Contribution
+        fid = str(r["FILING_ID"])
+        r["unrestated"] = None if gaps is None else tuple([gaps[fid]] if fid in gaps else [])
         # ISO, as contributions_to() gives it. Slicing the raw text printed "9/1/2026 1".
         r["EXP_DATE"] = shown_date(r["EXP_DATE"], r["FILED_DATE"])
         r["cite_url"] = filing_url(r["FILING_ID"])

@@ -936,7 +936,7 @@ def calaccess_contributions(filer_id: str, data: Path = DATA, cache: Path = None
         con.print(f"[red]{e}[/]")
         raise typer.Exit(1) from None
     t = Table("amount", "contributor", "employer", "date", "restated", "cite this URL",
-              box=None)
+              "latest amendment", box=None)
     for c in rows:
         # An amount that did not read is not "$0". A blank says so, and anything else is shown
         # as filed: escaped, since rich would read "[/]" as markup; a control character made
@@ -944,7 +944,8 @@ def calaccess_contributions(filer_id: str, data: Path = DATA, cache: Path = None
         filed = c.amount_filed if c.amount_filed.isprintable() else repr(c.amount_filed)[1:-1]
         amt = f"${c.amount:,.0f}" if c.amount is not None else (escape(filed[:14]) or "blank")
         t.add_row(amt, c.contributor[:30], c.occupation[:18] or c.employer[:18],
-                  c.date, (f"{c.filings}x" if c.filings > 1 else ""), c.cite_url)
+                  c.date, (f"{c.filings}x" if c.filings > 1 else ""), c.cite_url,
+                  _amendment_cell(c.unrestated))
     con.print(t)
     unread = sum(c.amount is None for c in rows)
     con.print(f"\n[yellow]{len(rows)} rows. Cite the filing page, not this table — a row here "
@@ -953,6 +954,27 @@ def calaccess_contributions(filer_id: str, data: Path = DATA, cache: Path = None
         con.print(f"[yellow]The last {unread} have no readable amount, so no query total counts "
                   "them" + ("; there may be more: raise --top" if unread >= top else "")
                   + ".[/]")
+    _amendment_footer([c.unrestated for c in rows])
+
+
+def _amendment_cell(unrestated) -> str:
+    """A listing row's 'latest amendment' cell: each of its filings whose latest amendment has
+    no such rows (calaccess.Unrestated), or nothing. Escaped: filing ids are export text."""
+    return escape("; ".join(f"{u.filing_id}: a{u.cover_amend} has none"
+                            for u in unrestated or ()))
+
+
+def _amendment_footer(marks: list) -> None:
+    """Say what a marked row means, or that this database cannot mark any."""
+    if any(m is None for m in marks):
+        con.print("[yellow]This database cannot tell whether a filing's latest amendment "
+                  "dropped any of these rows: its covers carry no amendment ids. Rebuild it: "
+                  "uv run vg calaccess build[/]")
+    elif flagged := sum(1 for m in marks if m):
+        con.print(f"[yellow]{flagged} row(s) come from an amendment a later one did not restate "
+                  f"(the 'latest amendment' column). That later amendment withdrew them, or "
+                  f"left the schedule unchanged, and only the filing says which: open it before "
+                  f"using the row. A figure counting one goes to human_review.[/]")
 
 
 @calaccess_app.command("independent-expenditures")
@@ -972,7 +994,8 @@ def calaccess_ie(candidate_last: str, data: Path = DATA, cache: Path = None, fir
     except FileNotFoundError as e:
         con.print(f"[red]{e}[/]")
         raise typer.Exit(1) from None
-    t = Table("amount", "stance", "spender", "candidate", "date", "cite this URL", box=None)
+    t = Table("amount", "stance", "spender", "candidate", "date", "cite this URL",
+              "latest amendment", box=None)
     for r in rows:
         # A blank amount is money nobody stated: printed "$0" it read as a stated zero, which
         # ie_total refuses to report. Anything else that is not a number is shown as filed,
@@ -984,8 +1007,9 @@ def calaccess_ie(candidate_last: str, data: Path = DATA, cache: Path = None, fir
             amt = escape(raw)
         t.add_row(amt, r["stance"], (r.get("FILER_NAML") or "")[:28],
                   " ".join(x for x in (r.get("CAND_NAMF"), r.get("CAND_NAML")) if x)[:22],
-                  r.get("EXP_DATE") or "", r["cite_url"])
+                  r.get("EXP_DATE") or "", r["cite_url"], _amendment_cell(r["unrestated"]))
     con.print(t)
+    _amendment_footer([r["unrestated"] for r in rows])
 
 
 @app.command(name="query")
@@ -1025,6 +1049,9 @@ def run_query(name: str = typer.Argument(""), param: list[str] = None, data: Pat
     # columns when stdout is not a terminal (an agent's shell).
     con.print(Text(str(result.value), style="bold"), Text(f"({result.note})", style="dim"),
               sep="  ", soft_wrap=True)
+    if result.unsettled:
+        # Before a researcher records it: this value goes to human_review however it is cited.
+        con.print(Text(f"Will not verify: {result.unsettled}", style="yellow"), soft_wrap=True)
     # What the review page prints beside the command, so a reviewer can see they reproduced
     # the figure under the same definition and against the same export — or that they didn't.
     where = f"{_export_line(root)}, " if queries.dataset(name) == "CAL-ACCESS" else ""
