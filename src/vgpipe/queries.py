@@ -23,7 +23,7 @@ import re
 import shlex
 import unicodedata
 from collections import Counter
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, NamedTuple
 
@@ -288,21 +288,15 @@ def _left_out_receipts(con, filer_id: str, schedule: str, schedule_args: list,
     schedules, gifts = left_out_gifts(con, filer_id, extra=who, counted=schedule)
     if not schedules:
         return []
-    found = [([int(g) for g in r["gaps"].split(",")], r) for r in con.execute(f"""
-        SELECT d.GAPS gaps, SUM(d.AMT) amt, COUNT(d.AMT) n, COUNT(*) - COUNT(d.AMT) unread
-        FROM ({gifts}) d {"" if with_unread else "WHERE d.AMT IS NOT NULL"} GROUP BY d.GAPS""",
-        [*schedule_args, filer_id, filer_id, *(who_args or []), *schedule_args,
-         *schedule_args])]
-    # Keyed by index in `schedules`, as the shares are: each keeps the count its gifts carry.
-    blank: Counter = Counter()
-    for gaps, r in found:
-        for g in set(gaps):
-            blank[g] += int(r["unread"])
-    shares = calaccess.unrestated_shares(
-        con, "RCPT_CD", [(gaps, r["amt"], int(r["n"])) for gaps, r in found],
-        {g: replace(u, unread=blank[g]) for g, u in enumerate(schedules)})
-    # Stable: the shares come largest first, and one holding a gift of unknown size goes first.
-    return sorted(shares, key=lambda u: not u.unread)
+    return calaccess.unrestated_shares(con, "RCPT_CD", [
+        ([int(g) for g in r["gaps"].split(",")], r["amt"], int(r["n"]), int(r["unread"]))
+        for r in con.execute(f"""
+            SELECT d.GAPS gaps, SUM(d.AMT) amt, COUNT(d.AMT) n, COUNT(*) - COUNT(d.AMT) unread
+            FROM ({gifts}) d {"" if with_unread else "WHERE d.AMT IS NOT NULL"}
+            GROUP BY d.GAPS""",
+                             [*schedule_args, filer_id, filer_id, *(who_args or []),
+                              *schedule_args, *schedule_args])],
+        dict(enumerate(schedules)))
 
 
 @dataclass
@@ -402,8 +396,11 @@ class QueryResult:
                        f"rows, this value is wrong; if it kept them, or only left that schedule "
                        f"unchanged, the value stands.")
         if self.omitted:
+            # A share with a gift of unknown size is listed first, so one cut off after it can
+            # hold more stated money than it: "smaller" only while none is listed that way.
             each = _listed(self.omitted, share_text, UNSETTLED_SHOWN,
-                           "schedule(s) with smaller shares")
+                           "schedule(s)" if any(u.unread for u in self.omitted)
+                           else "schedule(s) with smaller shares")
             why.append(f"leaves out rows a later amendment may have withdrawn, and the export "
                        f"cannot say whether it did. {each}. If that amendment withdrew them, "
                        f"leaving them out is right; if it only left that schedule unchanged, "
@@ -1619,9 +1616,13 @@ def _ranking(con: Any, filer_id: str, form_type: str, gated: bool,
         note, hint = _elsewhere(con, filer_id, form_type)
         # With a schedule to rank, every gift on it can be on one a later amendment left out.
         # Not asked while a gift has no amount: that is a miss whatever the left-out rows hold.
-        # Nor is a left-out gift with none (`with_unread`, below): kept, it too names no leader.
+        # A left-out gift with none is named only beside one with an amount. Alone, kept or
+        # withdrawn, it leaves the ranking naming nobody, so its filing changes nothing. Beside
+        # one, it can overturn the leader a person restores from the other filing.
         omitted = [] if unread else _left_out_receipts(con, str(filer_id), schedule,
-                                                       schedule_args)
+                                                       schedule_args, with_unread=True)
+        if not any(u.rows for u in omitted):
+            omitted = []
         late_note = _late_note(late)
         miss = _no_rows(f"no {label} contributions {'counted' if unread else 'found'} for "
                         f"filer {filer_id}{_unread(unread)}{note}"

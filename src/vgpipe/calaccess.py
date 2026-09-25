@@ -415,14 +415,15 @@ class Unrestated:
     never read as settled: a check that cannot compare answers "not checked", never "fresh".
 
     `amount` and `rows` are what a figure took from the filing; a listing leaves them 0.
+    `unread` stays 0: a figure counts no gift with no readable amount (`unrestated_shares`).
     """
     filing_id: str
     rows_amend: int      # the latest amendment with rows in the table: the rows counted
     cover_amend: int | None  # the filing's latest amendment, with none there; None: no cover
     amount: float = 0.0
     rows: int = 0
+    unread: int = 0
     does = "rests on"    # what a figure does with its rows (queries.share_text)
-    unread = 0           # a figure counts no gift with no readable amount (queries.share_text)
 
     @property
     def cite_url(self) -> str:
@@ -557,24 +558,29 @@ def left_out_sql(asked) -> str:
 
 def unrestated_shares(con: sqlite3.Connection, table: str, counted,
                       gaps: dict[str, Unrestated] | None = None) -> list[Unrestated]:
-    """What each unrestated filing accounts for in a figure, largest first.
+    """What each unrestated filing accounts for in a figure, largest first, and before those
+    any holding a gift with no readable amount, whose size is unknown.
 
     `counted` holds the figure's counted units as (filing ids, amount, rows): one per
-    deduplicated gift, which can span filings, or one per filing. A unit counts toward every
-    unrestated filing it touches, so two filings' shares can overlap. `gaps` is
-    unrestated_filings() over those ids, when the caller already asked.
+    deduplicated gift, which can span filings, or one per filing. A unit may carry a fourth
+    count, of gifts in it with no readable amount (`unread`), which only a ranking asks for
+    (`queries._left_out_receipts`). A unit counts toward every unrestated filing it touches,
+    so two filings' shares can overlap. `gaps` is unrestated_filings() over those ids, when
+    the caller already asked.
     """
-    counted = [(set(ids), amount, n) for ids, amount, n in counted]
+    counted = [(set(ids), amount, n, sum(unread)) for ids, amount, n, *unread in counted]
     if gaps is None:
-        gaps = unrestated_filings(con, table, set().union(*(ids for ids, _, _ in counted)))
+        gaps = unrestated_filings(con, table, set().union(*(ids for ids, *_ in counted)))
     amounts: dict[str, float] = {}
     rows: dict[str, int] = {}
-    for ids, amount, n in counted:
+    unread: dict[str, int] = {}
+    for ids, amount, n, blank in counted:
         for f in ids & gaps.keys():
             amounts[f] = amounts.get(f, 0.0) + (amount or 0.0)
             rows[f] = rows.get(f, 0) + n
-    return sorted((replace(gaps[f], amount=amounts[f], rows=rows[f])
-                   for f in amounts), key=lambda u: (-u.amount, u.filing_id))
+            unread[f] = unread.get(f, 0) + blank
+    return sorted((replace(gaps[f], amount=amounts[f], rows=rows[f], unread=unread[f])
+                   for f in amounts), key=lambda u: (not u.unread, -u.amount, u.filing_id))
 
 
 LATE_FALLBACK = (
