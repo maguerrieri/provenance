@@ -126,10 +126,10 @@ Each of these is load-bearing:
   empty reason. It checks the claim again after the person answers, since a retry can cite the
   source again while the prompt waits, and refuses a verdict judged again since it was shown:
   the reason was given for the one the person read. When another claim cites the source, it
-  names that claim before asking. Clearing touches that one shard. A verdict records only its
-  source (#30), so which claim it judged rests on the shard it sits in, and clearing one that
-  judged another claim costs that claim nothing: it is judged by the verdicts in its own shard,
-  or waits for a verifier.
+  names that claim before asking. Clearing touches that one shard. A verdict names its source
+  and a hash of the claim's words, never the claim's id (#30), so which claim it judged rests on
+  the shard it sits in, and clearing one that judged another claim costs that claim nothing: it
+  is judged by the verdicts in its own shard, or waits for a verifier.
 - **Only a person can clear one, and that is a step that fails, not a sentence.** The command
   is named wherever the contradiction is, including `vg judgments`, which agents run, and the
   whole point of the command is to release a claim from review: the thing an agent is steered
@@ -263,11 +263,12 @@ other verdict, and could render a `supports` green on the claim a verifier judge
 Nothing may pool verdicts across questions by sid; `load_every()` returns them per question.
 
 **A sid match is not proof of ownership.** When two claims cite one source, "this claim cites
-the source" is true of the wrong claim as often as the right one. A verdict records only the
-source, so which claim it judged rests on the shard it sits in: asserted, never proven (#30).
-That is why nothing moves a claim, or its verdicts, between shards (see "Question ids are
-stable and never reused"). Every re-home had to guess ownership from a sid or trust an operator's
-mapping, and both put verdicts on claims they never judged.
+the source" is true of the wrong claim as often as the right one. A verdict names its source
+and a hash of the claim's words (`claim_fingerprint`, #30; see "A verdict is about a source as
+cached at judgment time"), never the claim's id, so which claim it judged rests on the shard it
+sits in: asserted, never proven. That is why nothing moves a claim, or its verdicts, between
+shards (see "Question ids are stable and never reused"). Every re-home had to guess ownership
+from a sid or trust an operator's mapping, and both put verdicts on claims they never judged.
 
 `record()` holds an `flock` on `judgments/` across its read and write, and readers take it
 shared. Verifier agents record in parallel, so a `vg judge` landing between another's read and
@@ -461,6 +462,28 @@ shipping.
 Direction matters less than silence. That instance made the pipeline harsher than the evidence
 warranted, costing good citations. The reverse — a `supports` surviving a re-fetch that removed
 the supporting text — ships a green row nobody checked, by the same mechanism.
+
+**A verdict also names the claim it judged (#30).** A sid covers the quote, not what the claim
+says about it, so a retry that rewrites the answer and keeps the quote kept the verdict too.
+`vg judge` now stamps `claim_fingerprint` on every verdict: `Claim.fingerprint`, a short hash of
+the claim's question and answer. A verdict whose stamp no longer matches its claim judged words
+the claim no longer says; reading that as stale is #74's. Why that identity:
+- **The answer and the question.** A verdict judges one answer to one question, and answers
+  repeat: "Yes." to two questions is two claims.
+- **Exact text, not normalized.** Which edits keep a claim's meaning is a judgment ("$40k" to
+  "$4k" is one character), and a spurious change costs a re-judgment, never a false green.
+- **Not the sources.** A verdict judges one of them, and adding another must not lapse it.
+
+Rejected: an id minted when the claim is first written. Claim files are agent-authored and
+rewritten by `vg verify`, and an id that survives a retry says nothing about whether the answer
+changed, which is the whole question. The fingerprint is recomputed from what the claim says, by
+the pipeline, and `vg judge` takes no flag for it.
+
+Where it stops. Verdicts from before stamping carry none, and nothing backfills one. Older
+checkouts refuse a shard holding a stamped verdict (an unknown key), the safe side. And the
+stamp is the claim as `vg judge` reads it, not the text the verifier was handed: a rewrite
+between hand-off and recording is the hand-off token's to catch (#36), and one after recording
+is this stamp's.
 
 **The stamp and the check must read the same cache.** They didn't. `vg judge` stamped from the
 shared cache (`_cache_root()`, so `data/cache`), while `apply_to()` looked the page up under
@@ -800,9 +823,10 @@ nothing.
 
 What the gate can't see is a reused id once the new question's research has replaced the old
 claim. The claim then matches the set, and the shard's old verdicts apply to it wherever it cites
-the same source. They render green on a claim no verifier judged, because a verdict names only
-its source (#30). The gate catches the reuse only while the old claim is still in `claims/`, so
-move a reworded or replaced question to a new id before anyone researches it.
+the same source. They render green on a claim no verifier judged, because a verdict applies by
+its source alone: nothing compares its claim stamp (#30) with the claim. The gate catches the
+reuse only while the old claim is still in `claims/`, so move a reworded or replaced question to
+a new id before anyone researches it.
 
 This rule replaced `vg remap`, which re-filed claims onto a renumbered question set (declared
 as `maps_from` in `questions.json`) and re-homed their verdicts, and `vg judgments --repair`,
