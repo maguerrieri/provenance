@@ -70,13 +70,15 @@ JOINS_COVERS = {"calaccess.ie_total": IE_PARAMS}
 PHRASE = "it counts rows a later amendment may have withdrawn"
 
 
-def _export(root: Path, covers: str = COVERS) -> Path:
+def _export(root: Path, covers: str | None = COVERS) -> Path:
+    """The export above; `covers` None leaves the cover table out of it altogether."""
     (root / "cache" / "calaccess").mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(calaccess.zip_path(root), "w") as zf:
         zf.writestr("CalAccess/DATA/RCPT_CD.TSV", RECEIPTS)
         zf.writestr("CalAccess/DATA/FILER_FILINGS_CD.TSV", FILINGS)
         zf.writestr("CalAccess/DATA/S496_CD.TSV", IES)
-        zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", covers)
+        if covers is not None:
+            zf.writestr("CalAccess/DATA/CVR_CAMPAIGN_DISCLOSURE_CD.TSV", covers)
     calaccess.build(root)
     return root
 
@@ -231,3 +233,16 @@ def test_the_listing_marks_a_gift_from_a_filing_with_no_cover(root, monkeypatch)
     assert f"{UNCOVERED_460}: no cover" in out and f"{UNCOVERED_496}: no cover" in out
     assert "2 row(s) come from a filing with no cover record" in out
     assert "did not restate" not in out, "no row here comes from an unrestated amendment"
+
+
+def test_the_expenditure_listing_names_a_missing_cover_table(tmp_path, monkeypatch):
+    """It finds each candidate on a cover, so with no cover table it has nothing to list. It
+    used to fail on the missing view instead, and never reached the footer that says why."""
+    root = _export(tmp_path, covers=None)
+    assert calaccess.independent_expenditures(root, "Fairlowe", first="Liesel") == []
+    monkeypatch.setattr(cli.con, "_width", 250)
+    res = CliRunner().invoke(cli.app, ["calaccess", "independent-expenditures", "Fairlowe",
+                                       "--first", "Liesel", "--cache", str(root)],
+                             env={"COLUMNS": "250"})
+    assert res.exit_code == 0, res.output
+    assert "has no CVR_CAMPAIGN_DISCLOSURE_CD table" in plain(res.output)

@@ -1041,6 +1041,12 @@ def independent_expenditures(root: Path, candidate_last: str, *, first: str = ""
     you intend a substring search and will check each hit.
     """
     con = connect(root)
+    problem = cover_problem(con)
+    if problem == NO_COVERS:
+        # No cover table, so no CVR_LATEST to find a candidate on, and nothing to list: the
+        # join below failed with "no such table". The CLI's footer names the case.
+        con.close()
+        return []
     # S496_CD is amounts only; who spent it and for/against whom is on the cover record.
     # Match every spelling a filer might use. Requiring (last, first) separately hid every
     # expenditure from a committee that put the candidate's whole name in the last-name field.
@@ -1053,7 +1059,7 @@ def independent_expenditures(root: Path, candidate_last: str, *, first: str = ""
         return name_match_sql(f"{cover}.CAND_NAML", f"{cover}.CAND_NAMF", first)
 
     name_arglist = [f"%{candidate_last}%"] if loose else _nargs(candidate_last, first)
-    checkable = cover_problem(con) is None
+    checkable = problem is None
 
     def exp(s: str) -> str:
         return f"""{s}.AMOUNT, {iso_date_sql(f"{s}.EXP_DATE")} AS EXP_DATE,
