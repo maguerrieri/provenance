@@ -147,7 +147,7 @@ UNPARSEABLE_NEXT = '{"api_key":"SECRET","next":"http://[bad"}'
 def test_a_json_body_holding_a_url_that_cant_be_parsed_is_refused(content_type):
     header = f" -H 'Content-Type: {content_type}'" if content_type else ""
     curl = f"curl 'https://example.gov/api'{header} --data-raw '{UNPARSEABLE_NEXT}'"
-    with pytest.raises(ValueError, match="URL that can't be parsed") as e:
+    with pytest.raises(ValueError, match="a URL in a parameter can't be parsed") as e:
         parse_curl(curl)
     assert "SECRET" not in str(e.value)
     # The same body without the URL is refused for the credential it names.
@@ -165,7 +165,7 @@ def test_a_json_body_holding_a_url_that_cant_be_parsed_is_refused(content_type):
     f"curl '{URL}?api_key={FAKE}&next=/cb?u=http://[bad'",
 ])
 def test_a_url_that_cant_be_parsed_is_refused_wherever_it_sits(curl):
-    _refused(curl, "URL that can't be parsed")
+    _refused(curl, "a URL in a parameter can't be parsed")
 
 
 @pytest.mark.parametrize("headers", [{}, {"Content-Type": "application/x-www-form-urlencoded"},
@@ -174,7 +174,7 @@ def test_run_refuses_a_json_body_holding_a_url_that_cant_be_parsed(headers, monk
     sent = _sent(monkeypatch)
     r = Recipe(id="bad", method="POST", url="https://example.gov/api", headers=headers,
                body=UNPARSEABLE_NEXT)
-    with pytest.raises(ValueError, match="URL that can't be parsed") as e:
+    with pytest.raises(ValueError, match="a URL in a parameter can't be parsed") as e:
         run(r, {})
     assert "SECRET" not in str(e.value) and not sent
 
