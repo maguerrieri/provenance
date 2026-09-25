@@ -879,13 +879,22 @@ Lessons from it that still apply:
 - **On a case-insensitive disk, remove before you write.** On macOS's default volume, `q1.json`
   *is* `Q1.json`, and `os.replace(tmp, "q1.json")` over it keeps the name `Q1.json`. Writing the
   new name and then unlinking the old one deleted what had just been written. For the same
-  reason, names inside one directory must differ in more than case. CI's disk is case-sensitive,
-  so the case-insensitive path never runs there: pin it with a test that patches the disk's
-  answer (`judgments._same_file()`), as
+  reason, names inside one directory must differ in more than case. A question id is a file
+  name in `claims/` and `judgments/`, so it is unique only if it is unique casefolded.
+  `questions.load()` refuses a set holding two such ids, and `load_claims()` refuses two claims
+  holding them, naming both files. `load_claims()` used to compare ids exactly, so claims `Q1`
+  and `q1` both loaded and shared one shard on a Mac. It refuses on every disk, not only where
+  the disk folds case: a run is shared through the repo, and a pair a case-sensitive checkout
+  holds breaks on the first Mac to clone it. CI's disk is case-sensitive, so the
+  case-insensitive path never runs there: pin it with a test that patches the disk's answer
+  (`judgments._same_file()`), as
   `test_vg_judgments_counts_a_shard_a_case_folding_disk_opens_as_the_claims` does. When a change
   touches names, run the suite on both kinds of disk: a Mac's default volume, and
   `pytest --basetemp=<dir>` on a case-sensitive one. A case-sensitive APFS disk image
-  (`hdiutil create -fs "Case-sensitive APFS"`) gives a Mac one.
+  (`hdiutil create -fs "Case-sensitive APFS"`) gives a Mac one. If a test there fails on a
+  phrase its output split across two lines, rerun with `COLUMNS=400`: tests that call a command
+  directly read rich's output at 80 columns, so where a line wraps depends on how long the tmp
+  path is (#63).
 
 ## A real citation to the wrong document passes every check
 
