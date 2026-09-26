@@ -179,7 +179,7 @@ _AUTHORITY = re.compile(r"//([^/?#\s\"'<>`\\]*)")
 # `name:secret@host` with no scheme: a proxy setting, curl's `-u` value pasted whole. Only the
 # redactor reads text for it. Going in, search text reads the same (`from:alice@example.org`),
 # so a scheme-less login is refused only where a host is expected (`_norm_host()`).
-_BARE_LOGIN = re.compile(r"(?<![^\s\"'<>`(=,;&?])(?!mailto:)[^\s/?#@\"'<>`:=&;]+:"
+_BARE_LOGIN = re.compile(r"(?<![^\s\"'<>`(=,;&?/])(?!mailto:)[^\s/?#@\"'<>`:=&;]+:"
                          r"[^\s/?#@\"'<>`]*@[^\s/?#@\"'<>`]", re.IGNORECASE)
 
 
@@ -539,8 +539,9 @@ def _norm_host(host_or_url: str) -> str:
     or without a scheme: `user:x@host` has no `://` for `.hostname` to drop it from, and
     `provenance source-note` wrote it into the registry's file name and `host:` field (#161)."""
     h = host_or_url.strip()
-    authority = (_split(h, "the host").netloc if "://" in h
-                 else re.split(r"[/?#]", h, maxsplit=1)[0])
+    # With no scheme, the whole argument: nothing marks where its authority would end, and a
+    # host holds no `@` anywhere (`/tmp/user:x@host`).
+    authority = _split(h, "the host").netloc if "://" in h else h
     if any("@" in r for r in _readings(authority)):
         raise Refused("the host holds a username or password; name the host alone")
     # A port is dropped, as `.hostname` drops it from a URL: the registry is kept by host.
@@ -562,6 +563,13 @@ def _registry_host(host_or_url: str) -> str:
     return h
 
 
+def _unless_null(value, default):
+    """`value`, or `default` if it is absent or YAML's `null`. Not `value or default`: that read
+    a `false`, `0`, `""` or `[]` where a mapping or list belongs as empty, so it passed the check
+    as nothing, and was rewritten as nothing, which is a delete."""
+    return default if value is None else value
+
+
 def _field(path: str, name) -> str:
     """A field's path for a message (`recipes.notes`): each name if it reads like one a person
     wrote, else a stand-in, since a name can hold a value."""
@@ -571,14 +579,16 @@ def _field(path: str, name) -> str:
 
 def _check_text(text: str, where: str) -> None:
     """Prose is read for the URLs in it: any login, and the parameters of any URL a reader
-    would open (one with a scheme, or `//`). A relative link is not read for parameters,
-    since documentation names a parameter that way (`/DownloadPdf?key=<hex>`)."""
+    would open (one with a scheme, or `//`), in every reading of it, as a login is: a URL
+    percent-encoded whole has no `//` until it is decoded. A relative link is not read for
+    parameters, since documentation names a parameter that way (`/DownloadPdf?key=<hex>`)."""
     if _login_in(text):
         raise Refused(f"{where} holds a username or password in a URL or host")
-    for url in re.findall(r"(?:[A-Za-z][A-Za-z0-9+.-]*:)?//[^\s\"'<>`]+", text):
-        if found := _credential_params(url, {}, None):
-            raise Refused(f"{where} holds a URL carrying what look like credentials in "
-                          f"{'; '.join(found)}")
+    for r in _readings(text):
+        for url in re.findall(r"(?:[A-Za-z][A-Za-z0-9+.-]*:)?//[^\s\"'<>`]+", r):
+            if found := _credential_params(url, {}, None):
+                raise Refused(f"{where} holds a URL carrying what look like credentials in "
+                              f"{'; '.join(found)}")
 
 
 def _check_fields(value, path: str = "") -> None:
@@ -612,7 +622,9 @@ def check_entry(entry, host: str | None = None) -> None:
              ([host] if host is not None else []) + ([entry["host"]] if "host" in entry else [])}
     if len(hosts) > 1:
         raise Refused("its host field names another host than the file it is in")
-    recipes = entry.get("recipes") or []
+    # Only an absent or empty (`null`) field is no recipes: `recipes: false` is a field that
+    # can't be read, and read as none, `source-note` rewrote the file without it.
+    recipes = _unless_null(entry.get("recipes"), [])
     if not isinstance(recipes, list):
         raise Refused("its recipes are not a list")
     for n, r in enumerate(recipes, 1):
@@ -636,10 +648,10 @@ def _check_recipe(r: dict, where: str) -> None:
     Never `name: reason`: to the redactor that reads as a field and its value, and a recipe
     called `token` lost its reason."""
     try:
-        headers = r.get("headers") or {}
+        headers = _unless_null(r.get("headers"), {})
         if not isinstance(headers, dict):
             raise Refused("its headers are not a mapping")
-        params = r.get("params") or []
+        params = _unless_null(r.get("params"), [])
         params = [str(p) for p in (params if isinstance(params, list) else [params])]
         if bad := [p for p in params if credential_param(p)]:
             raise Refused(f"it asks for what look like credentials ({_names_shown(bad)})")
@@ -703,7 +715,7 @@ def _read_entry(path: Path) -> dict:
     the problem, cut to fit (`https://user:secr ... `), so a login in them can be cut before
     its `@`, where no redactor can find it. Only where the problem is, and what it is."""
     try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        raw = _unless_null(yaml.safe_load(path.read_text(encoding="utf-8")), {})
     except yaml.YAMLError as e:
         mark = getattr(e, "problem_mark", None)
         at = f" at line {mark.line + 1}, column {mark.column + 1}" if mark else ""
