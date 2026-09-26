@@ -128,6 +128,15 @@ def test_a_project_file_it_cannot_load_still_says_which_directories_are_runs(run
     assert code == 1 and "unknown key(s) 'typo'" in out, out
     assert _left(other) == {report.REVIEW_HTML}, "no run of the project, as far as it can say"
 
+    # Named by --subject, the same: the listed subject's render goes, and nothing else's. A
+    # subject that can be no directory name names no run at all, even one that resolves to it.
+    for subject, cleared in (("cand", True), ("site", False), ("../data/cand", False)):
+        (listed / "out" / report.REVIEW_HTML).write_text("an earlier page")
+        code, out = _provenance("build", "--subject", subject, "--project", run)
+        assert code == 1 and "unknown key(s) 'typo'" in out, out
+        assert (_left(listed) == set()) == cleared, (subject, out)
+        assert _left(other) == {report.REVIEW_HTML}, (subject, out)
+
 
 def test_a_directory_that_is_no_run_keeps_its_out(run, tmp_path):
     """Only a run's render is removed. A directory the project doesn't declare is no run, and

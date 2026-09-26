@@ -31,8 +31,11 @@ KEYS = ("name", "title", "sources", "cache", "subjects", "context", "completenes
 SUBJECT_KEYS = ("id", "name")
 
 # The heading that opened a race file's completeness check. Pasted into `context` with the rest
-# of a race file's body, it would carry the known answers into every researcher's prompt.
-_CHECK_HEADING = re.compile(r"^#+[ \t]*completeness check\b", re.IGNORECASE | re.MULTILINE)
+# of a race file's body, it would carry the known answers into every researcher's prompt. Any
+# line that starts with the words counts, as a heading of any kind (`#`, bold, setext) or not:
+# the race loader matched the words as a prefix, so "# Completeness checks" was one too.
+_CHECK_HEADING = re.compile(r"^[ \t]*(?:#+|\*\*|__)?[ \t]*completeness[ \t]+check",
+                            re.IGNORECASE | re.MULTILINE)
 
 # A subject is a directory name under the project root: no separator, no leading dot, so it
 # is always a direct child. The names a run keeps inside itself are refused, since a subject
@@ -370,6 +373,19 @@ def _declared_by_parent(root: Path) -> Path | None:
     return parent if at is not None and _subject_at(parent, _raw_subjects(parent), at) else None
 
 
+def named_run(root: Path, run: Path | None, subject: str | None) -> Path | None:
+    """The run a command's `--data` or `--subject` names in the project in `root`, as given and
+    before any check that the project declares it: `run`, else the subject's directory, else
+    the root. None for a subject that can be no directory name. The one rule for it: `resolve()`
+    takes a subject's run from here, and so does `provenance build` for a project file it can't
+    load."""
+    if run is not None:
+        return run
+    if subject is None:
+        return root
+    return root / subject if re.fullmatch(SUBJECT_PATTERN, subject) else None
+
+
 def resolve(run: Path | None, project: Path | None, cwd: Path | None = None,
             subject: str | None = None) -> tuple[Project, Path]:
     """(project, run directory) for a command's `--data`, `--subject` and `--project`.
@@ -412,7 +428,7 @@ def resolve(run: Path | None, project: Path | None, cwd: Path | None = None,
             raise ProjectError(f"--subject {subject} is not one of the subjects of the project "
                                f"in {p.root} ({subjects}): a subject is one its {FILE} lists "
                                f"under `subjects`, by id")
-        return p, p.subject_dir(subject)
+        return p, named_run(p.root, None, subject)
     if run is None:
         return p, p.root
     if (at := _real(run)) is None:

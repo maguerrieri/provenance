@@ -54,18 +54,21 @@ def _provenance(*args, lines: bool = False):
     # rich folds a long tmp path at 80 columns. Put back `_width` itself, not the width it
     # computed, which would pin it (CLAUDE.md, "Rich reads brackets as markup").
     width, colour = cli.con._width, cli.con._color_system
+    err_colour = cli.err._color_system
     cli.con._width = 10_000
     # No colour, even where the environment forces it (FORCE_COLOR): then rich writes no escape
     # sequence of its own, and any in the output came from the data. Stripping rich's instead
-    # would strip a leaked `\x1b[8m` (conceal) with them.
-    cli.con._color_system = None
+    # would strip a leaked `\x1b[8m` (conceal) with them. The same for standard error's console.
+    cli.con._color_system = cli.err._color_system = None
     try:
         res = CliRunner().invoke(cli.app, [str(a) for a in args])
     finally:
         cli.con._width, cli.con._color_system = width, colour
+        cli.err._color_system = err_colour
         # A print that raised leaves its text in rich's buffer, and every later print in the
         # process tries to write it again: one regression would fail every test after it.
         del cli.con._buffer[:]
+        del cli.err._buffer[:]
     # The runner catches the exception a surrogate raises in the print: say so plainly.
     assert res.exception is None or isinstance(res.exception, SystemExit), repr(res.exception)
     out = res.output
