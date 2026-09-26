@@ -2682,8 +2682,12 @@ def _install(path: Path, body: str) -> None:
     written to a temporary file beside it, fsynced, then hard-linked into place, which raises
     FileExistsError if `path` exists. A run killed while writing leaves only the temporary file
     (a dotfile nothing reads), never a partial `path`: a partial provenance.toml read as the
-    project, a partial template refusing the retry as not the one given. On a filesystem with
-    no hard links, `path` is created exclusively and written in place instead."""
+    project, a partial template refusing the retry as not the one given.
+
+    A filesystem with no hard links (some removable and network disks) has no primitive that is
+    both exclusive and whole, so there `path` is created exclusively and written in place, and
+    removed again if the write fails. Only a run killed mid-write can leave it partial there, and
+    a partial project file is refused, as unreadable, by every command that reads it."""
     import errno
     import os
     import tempfile
@@ -2700,9 +2704,13 @@ def _install(path: Path, body: str) -> None:
             if e.errno not in (errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EXDEV):
                 raise
             with open(path, "x", encoding="utf-8") as f:
-                f.write(body)
-                f.flush()
-                os.fsync(f.fileno())
+                try:
+                    f.write(body)
+                    f.flush()
+                    os.fsync(f.fileno())
+                except BaseException:
+                    os.unlink(path)
+                    raise
     finally:
         try:
             os.unlink(tmp)
@@ -2710,23 +2718,45 @@ def _install(path: Path, body: str) -> None:
             pass
 
 
+def _refuse_run_files(root: Path, held: list[str]) -> NoReturn:
+    # A run's own files: a project from before project files, or a cache. Writing a project
+    # file beside them would adopt them, which is a reviewed change, not a command's.
+    _refuse(f"{root} holds a run's files already ({', '.join(held)}): `provenance new` and "
+            f"`provenance ask` only create a project. A project laid out the old way gets its "
+            f"{proj.FILE} by hand, as a reviewed change (README, \"Moving a project laid out the "
+            f"old way\").")
+
+
+def _run_files(root: Path, ours=()) -> list[str]:
+    """The names a run keeps its own files under that `root` holds, but for `ours`."""
+    import os
+
+    return sorted(n for n in proj.RESERVED - {proj.FILE} - set(ours)
+                  if os.path.lexists(root / n))
+
+
 def _scaffold(root: Path, name: str, sources: list[str], cache: str, files: dict[str, str],
               *, create: bool) -> proj.Project:
     """Write `root`/provenance.toml and `files` beside it, and read the project back as every
     command reads it, or refuse and leave nothing behind: what was written removed, and every
-    directory created for it that is still empty. Read back through `project.resolve()`, so it
-    is refused for anything any command would refuse it for, a subject of another project's
-    included.
+    directory this run made for it that is still empty. Read back through `project.resolve()`,
+    so it is refused for anything any command would refuse it for, a subject of another
+    project's included.
 
-    Nothing is written into or over anything another process made. With `create` (the caller
-    found no `root`), `root` is created exclusively, so one made since the caller looked is
-    refused. Each file is installed whole or not at all (`_install()`), and never over a file.
-    The project file goes last, so an interrupted run leaves no project, and nothing reads what
-    it left as one: `new` run again finds the same template, and `ask` refuses the directory,
-    saying what may have left it."""
+    Nothing is written into or over what another process made, as far as a check can see.
+    With `create` (the caller found no `root`), `root` is created exclusively, so one made since
+    the caller looked is refused. Each file is installed whole or not at all (`_install()`), and
+    never over a file. The project file goes last, so an interrupted run leaves no project, and
+    nothing reads what it left as one: `new` run again finds the same template, and `ask`
+    refuses the directory, saying what may have left it. And a run's files that appeared by the
+    time the project file did take it back: adopting them is the caller's own refusal. One
+    written after that is written into a project, which is what a project is for.
+
+    These are checks, not a lock: no local check stops another process writing into a
+    directory, and nothing in the pipeline takes a lock to honour one."""
     import os
 
-    created: list[Path] = []   # directories made for the project, deepest first
+    created: list[Path] = []   # directories this run made, deepest first
     written: list[Path] = []
     text = _PROJECT_FILE.format(name=_toml_string(name), sources=json.dumps(sources),
                                 cache=_toml_string(cache))
@@ -2740,22 +2770,23 @@ def _scaffold(root: Path, name: str, sources: list[str], cache: str, files: dict
         for d in created:
             try:
                 d.rmdir()
-            except FileNotFoundError:
-                continue
             except OSError:
                 break
 
     if create:
-        missing = _missing_dirs(root)
-        try:
-            created = missing[1:]
-            root.parent.mkdir(parents=True, exist_ok=True)
-            os.mkdir(root)   # exclusive: never a directory made since the caller looked
-            created = missing
-        except OSError as e:
-            # FileExistsError too: `root` made meanwhile, or a part of the path that is a file.
-            undo()
-            _refuse(f"could not create {root}: {e}")
+        # Each made exclusively, shallowest first, and counted as this run's only if it made
+        # it: a parent another process made meanwhile is left to it, even when empty.
+        for d in [*reversed(_missing_dirs(root.parent)), root]:
+            try:
+                os.mkdir(d)
+                created.insert(0, d)
+            except FileExistsError:
+                if d == root or not d.is_dir():
+                    undo()
+                    _refuse(f"could not create {root}: {d} exists")
+            except OSError as e:
+                undo()
+                _refuse(f"could not create {root}: {e}")
     for rel, body in {**files, proj.FILE: text}.items():
         path = root / rel
         try:
@@ -2769,6 +2800,9 @@ def _scaffold(root: Path, name: str, sources: list[str], cache: str, files: dict
         except OSError as e:
             undo()
             _refuse(f"could not write {path}: {e}. Nothing was written.")
+    if held := _run_files(root, files):
+        undo()
+        _refuse_run_files(root, held)
     try:
         p, _ = proj.resolve(None, root)
     except proj.ProjectError as e:
@@ -2838,12 +2872,8 @@ def new(directory: Annotated[Path, typer.Argument(
         _refuse(f"{root} is not a directory")
     if os.path.lexists(root / proj.FILE):
         _already_a_project(root)
-    if held := sorted(n for n in proj.RESERVED - {proj.FILE} if os.path.lexists(root / n)):
-        # A run's own files: a project from before project files, or a cache. Writing a project
-        # file beside them would adopt them, which is a reviewed change, not a command's.
-        _refuse(f"{root} holds a run's files already ({', '.join(held)}): `provenance new` only "
-                f"creates a project. A project laid out the old way gets its {proj.FILE} by "
-                f"hand, as a reviewed change (README, \"Moving a project laid out the old way\").")
+    if held := _run_files(root):
+        _refuse_run_files(root, held)
     dest = root / "template.md"
     keep = False
     if os.path.lexists(dest):
