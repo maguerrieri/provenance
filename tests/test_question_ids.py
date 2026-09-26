@@ -173,7 +173,7 @@ def test_a_pending_maps_from_is_reported_and_does_not_fail(tmp_path):
                [("q1", VOTE), ("q2", FUNDS)])
     code, out = _provenance("build", "--data", run)
     assert code == 0 and _rendered(run), out
-    assert "still declares maps_from (q2 from q5), a migration for the retired `provenance remap`" in out
+    assert "still declares maps_from (q2 from q5), a migration for the retired `vg remap`" in out
     assert "Delete the key" in out and "q1 from q1" not in out, out
     code, out = _provenance("status", "--data", run)
     assert code == 0 and "still declares maps_from (q2 from q5)" in out, out

@@ -120,7 +120,7 @@ Each of these is load-bearing:
 - **The status and the conflict line**, rebuilt from the shard on every build. The field is
   machine-owned: stripped from agent-authored files, and overwritten, never read, when build
   loads a claim file trusted.
-- **Nothing else takes it out of the shard.** Re-homing (`provenance remap --apply`, bare `provenance
+- **Nothing else takes it out of the shard.** Re-homing (`vg remap --apply`, bare `vg
   judgments --repair`) archived every verdict its claim no longer cites as lapsed, which would
   have released the claim in silence. The issue proposed teaching re-homing to keep a
   `contradicts` with its claim. #101 retires re-homing instead: question ids are stable and
@@ -1073,8 +1073,8 @@ verdict about the new one (see "A verdict is about the answer it judged, too"). 
 judgment pass, and the gate catches the reuse itself only while the old claim is still in
 `claims/`, so still move a reworded or replaced question to a new id before anyone researches it.
 
-This rule replaced `provenance remap`, which re-filed claims onto a renumbered question set (declared
-as `maps_from` in `questions.json`) and re-homed their verdicts, and `provenance judgments --repair`,
+This rule replaced `vg remap`, which re-filed claims onto a renumbered question set (declared
+as `maps_from` in `questions.json`) and re-homed their verdicts, and `vg judgments --repair`,
 which re-homed verdicts after the fact. Both are retired: invoking either exits 1 and states
 this rule. Question ids are also file names, and a verdict belongs to a claim only through the
 shard it sits in, so every move was a chance to attach a real verdict to the wrong claim. remap
@@ -1093,10 +1093,14 @@ What is left:
   it, as it always has (#85, closed with remap, since nothing writes it now).
 - A `judgments-backup/` that an interrupted re-home left behind still stops every command that
   reads verdicts, `provenance remap` included, because the shards may be half-rewritten. The message
-  says how to undo it: run `provenance judgments --rollback` from a checkout of
+  says how to undo it: run `vg judgments --rollback` from a checkout of
   `judgments.LAST_WITH_ROLLBACK`, with the run's absolute path, since a relative `--data` there
   names that checkout's own data/. The rollback leaves the migration pending, so then re-run the
-  interrupted command from that same checkout to finish it.
+  interrupted command from that same checkout to finish it. That commit predates the rename to
+  `provenance` (#6), so the message names every command run there as `vg`, the command that
+  checkout has: don't rename them. The same goes for any text about what a re-home did or left
+  behind: only `vg remap` and `vg judgments --repair` ever ran one. The stub a user types now,
+  which only refuses, is `provenance remap`.
   `judgments-backup.partial/` and `judgments-backup.discard/` are different: one was still being
   built and had touched no shard, and the other was already retired after its re-home finished.
   Nothing reads them, and nothing clears them now, so `provenance judgments` names them
@@ -2387,6 +2391,15 @@ default, the `OptionInfo` object, which is truthy: every test that omitted the f
 retired-flag refusal. Give options through `Annotated[bool, typer.Option(...)] = False`, so
 the default is a real value either way. Typer does not resolve a `type` alias to an Annotated,
 so spell each one out.
+
+## A skip names the one condition it is for
+
+`test_the_commit_named_for_rollback_is_on_main_and_has_it` skips where the history isn't there
+(CI's checkout is shallow). It skipped whenever `git show <commit>:<path>` failed, so when the
+rename to `provenance` (#6) made its path wrong, the test went quiet instead of failing. It now
+tests for the commit alone, and a wrong path fails. A skip that catches every failure reads the
+test's own bug as a missing environment. Test for the missing thing itself, and let everything
+else fail.
 
 ## Style
 

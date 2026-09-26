@@ -172,7 +172,7 @@ def path_for(root: Path, question_id: str) -> Path:
 
 
 def backup_dir(root: Path) -> Path:
-    """Where a re-home by the retired `provenance remap` kept every shard as it was while it rewrote
+    """Where a re-home by the retired `vg remap` kept every shard as it was while it rewrote
     them. Nothing writes it now, so one that exists was left by an interrupted re-home."""
     return root / "judgments-backup"
 
@@ -231,14 +231,16 @@ def _lock(root: Path, *, shared: bool = False):
             os.close(fd)
 
 
-# A commit on main whose `provenance judgments --rollback` undoes an interrupted re-home. Named outright,
+# A commit on main whose `vg judgments --rollback` undoes an interrupted re-home. Named outright,
 # and in full: a lookup such as `git log -S'def rollback('` finds whatever commit last touched
-# that text, and an abbreviated id can become ambiguous as the repository grows.
+# that text, and an abbreviated id can become ambiguous as the repository grows. It predates the
+# rename to `provenance` (#6), so its command is `vg`, and refuse_if_interrupted() names every
+# command that runs there as `vg`.
 LAST_WITH_ROLLBACK = "6f73eac879f5ce54a196436c781a8939217c5154"
 
 
 def leftovers(root: Path) -> list[Path]:
-    """Scratch an interrupted re-home by the retired `provenance remap` left that no reader uses: a
+    """Scratch an interrupted re-home by the retired `vg remap` left that no reader uses: a
     backup still being built, which had touched no shard, or one already retired after its
     re-home finished. The next re-home used to clear them. Now nothing does, so `provenance judgments`
     names them, and neither is ever to be restored from."""
@@ -247,7 +249,7 @@ def leftovers(root: Path) -> list[Path]:
 
 
 def refuse_if_interrupted(root: Path) -> None:
-    """Raise if a re-home by the retired `provenance remap` or `provenance judgments --repair` was interrupted.
+    """Raise if a re-home by the retired `vg remap` or `vg judgments --repair` was interrupted.
     A backup left behind means a rewrite stopped partway: some shards may already hold their new
     contents and others not. Reading that as the verdicts would render whatever is missing as
     unreviewed, which is the silent loss the backup exists to prevent. The command that undoes
@@ -263,12 +265,12 @@ def refuse_if_interrupted(root: Path) -> None:
         # exists() would read this as "no backup" (3.13+), and the shards as whole.
         raise UnreadableJudgments(f"cannot tell whether {b} exists: {e}.") from None
     raise UnreadableJudgments(
-        f"{b} exists, so a re-home of {root / 'judgments'} by the retired `provenance remap` or `provenance "
+        f"{b} exists, so a re-home of {root / 'judgments'} by the retired `vg remap` or `vg "
         f"judgments --repair` was interrupted, and its shards may be half-rewritten. This "
-        f"version cannot undo it: run `provenance judgments --rollback --data "
+        f"version cannot undo it: run `vg judgments --rollback --data "
         f"{shlex.quote(str(root.resolve()))}` from a checkout of commit {LAST_WITH_ROLLBACK}, "
         f"which still has it. It puts back everything the re-home changed: the verdicts, and the "
-        f"claim files and questions.json if it was `provenance remap --apply`. Then, from that checkout, "
+        f"claim files and questions.json if it was `vg remap --apply`. Then, from that checkout, "
         f"re-run the command that was interrupted to finish it, since this version cannot apply a "
         f"migration either.")
 

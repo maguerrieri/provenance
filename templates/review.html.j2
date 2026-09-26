@@ -188,7 +188,8 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
 //
 // KEY holds what earlier versions of this page saved, per source: {"<source id>": {done, flag,
 // note}}. It is only read, to migrate from when STORE is absent, so neither version's tab
-// overwrites the other's progress.
+// overwrites the other's progress. Its "vgpipe:" prefix predates the rename to provenance (#6)
+// and stays: it names progress already saved, and a new prefix would read every review as empty.
 const KEY = "vgpipe:{{ run_id }}";
 const STORE = KEY + ":v2";
 const UNREADABLE = STORE + ":unreadable";
