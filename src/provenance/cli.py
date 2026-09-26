@@ -765,10 +765,11 @@ def _no_own_set(p: proj.Project, run: Path) -> str:
     retired or reworded ids that the fallback used to leave out."""
     from . import questions
 
-    if (run.resolve() == p.root or questions.find(run) is not None
-            or questions.find(p.root) is None):
+    # By the name the project declares: a symlinked subject's directory has another, and a
+    # command naming that one would be refused.
+    subject = p.subject_of(run)
+    if subject is None or questions.find(run) is not None or questions.find(p.root) is None:
         return ""
-    subject = run.resolve().name
     return (f"{run} is {subject}'s run and has no {questions.FILE} of its own, so no claim in it "
             f"can be checked against the question its id names. The project's "
             f"{p.root / questions.FILE} is not read instead: it is worded for another subject. "
