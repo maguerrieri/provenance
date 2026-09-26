@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Annotated, NoReturn
 
 import typer
+import yaml
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
