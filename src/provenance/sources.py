@@ -147,7 +147,7 @@ def bare_host(value: str) -> str | None:
     one: a scheme, a path, a port or a leading `www.` (which `domain()` strips from every URL)
     would match nothing, and a single label would match a whole top-level domain. So would an
     IP address's tail (`0.1` matches every address ending in it): no top-level domain is all
-    digits, so a last label that is refuses both."""
+    digits, so an entry whose last label is all digits is refused."""
     host = _ascii(value.strip().lower().rstrip("."))   # a trailing dot names the same host
     if not _HOST.fullmatch(host) or host.rsplit(".", 1)[-1].isdigit():
         return None
@@ -165,6 +165,14 @@ def _ascii(host: str) -> str:
         return idna.encode(host, uts46=True, transitional=False).decode("ascii")
     except (idna.IDNAError, UnicodeError):
         return host
+
+
+def host_key(url: str) -> str:
+    """`url`'s host as hosts are compared: `domain()`'s, in the ASCII form list entries are
+    stored in (`_ascii()`). Everything that asks whether two hosts are one uses it, the
+    corroboration check's "different outlets" included, so `bücher.example` and its `xn--`
+    spelling are one host there as they are to `classify()`. `domain()` stays the form shown."""
+    return _ascii(domain(url))
 
 
 def display_host(host: str) -> str:
@@ -201,7 +209,7 @@ def classify(url: str, rules: dict[str, tuple[str, ...]] | None = None) -> str:
     """One of: bylined_journalism, primary_document, lead_generator_only,
     excluded, campaign_statement_only, unknown."""
     r = rules if rules is not None else default_rules()
-    host = _ascii(domain(url))
+    host = host_key(url)
     for key in CATEGORIES:  # most restrictive first
         if _matches(host, r.get(key, ())):
             return key
@@ -211,7 +219,7 @@ def classify(url: str, rules: dict[str, tuple[str, ...]] | None = None) -> str:
 def publishes_legal_text(url: str, rules: dict[str, tuple[str, ...]] | None = None) -> bool:
     """True when `url` is on a host a loaded list names under `legal_text`."""
     r = rules if rules is not None else default_rules()
-    return _matches(_ascii(domain(url)), r.get(LEGAL_TEXT, ()))
+    return _matches(host_key(url), r.get(LEGAL_TEXT, ()))
 
 
 # Bylines that name nobody. Refused as an author, and never taken as naming who argues something.

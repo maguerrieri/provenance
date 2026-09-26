@@ -33,7 +33,16 @@ from .models import (
     strip_machine_fields,
 )
 from .report import clear_render, render, store_id
-from .sources import TIER_LABEL, bare_host, display_host, domain, notes, speakers, tier
+from .sources import (
+    TIER_LABEL,
+    bare_host,
+    classify,
+    display_host,
+    domain,
+    notes,
+    speakers,
+    tier,
+)
 from .terminal import printable as _printable
 from .verify import (
     GOOD,
@@ -2348,8 +2357,20 @@ def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path
                 con.print(f"  [red]{st}[/] " + escape(
                     f"{cited}\n      {_printable(src_.verification.reason or '')}"))
         copies = [src_ for src_ in claim.sources if unacked_copy(src_, rules)]
+        # Only a host the lists don't class can be named in `primary_hosts` (project.load()
+        # refuses the rest), so only its copy is handed on. A news outlet's is the researcher's.
+        unnamed = [src_ for src_ in copies if classify(src_.url, rules) == "unknown"]
         for src_ in claim.sources:
-            if src_ in copies:
+            if src_ in copies and src_ not in unnamed:
+                failed.add("fix")
+                con.print("  [red]secondary host[/] " + escape(_printable(
+                    f"{domain(src_.url)} is classed as {classify(src_.url, rules)} by the "
+                    f"project's source lists, so it is not the body that issues this record\n"
+                    f"      Cite the issuing authority's own. If you genuinely cannot reach it, "
+                    f"set `secondary_host_ack` saying what you could not reach and why this "
+                    f"copy is the same document — but never substitute silently.",
+                    lines=True)))
+            elif src_ in copies:
                 # Not the researcher's to fix when the host is the authority itself. "Not
                 # named" is all the pipeline knows, so the message says that and gives both
                 # ways on: told only "not the authority", a researcher citing the authority
@@ -2409,9 +2430,9 @@ def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path
             # above again, and reads as a second thing to fix. Asked again of the claim as it
             # will stand once a person names those hosts: the project's rules with them added.
             named = dataclasses.replace(p, primary_hosts=p.primary_hosts + tuple(
-                h for h in (bare_host(domain(c.url)) for c in copies) if h))
+                h for h in (bare_host(domain(c.url)) for c in unnamed) if h))
             released = check_corroboration(claim.model_copy(deep=True), rules=named.rules())
-            if not copies or released.corroboration_ok is not True:
+            if not unnamed or released.corroboration_ok is not True:
                 failed.add("corroboration")
                 con.print(f"  [red]corroboration[/] "
                           f"{escape(_printable(claim.corroboration_note))}")

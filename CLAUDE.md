@@ -1448,7 +1448,9 @@ as a copy. Passing unlisted hosts instead would reopen the substitution this exi
 - **check-claim says when what is left is handed on.** It closed with "do not hand this on",
   which contradicted the two failures a researcher is told to hand on: an authority the project
   doesn't name (the brief) and a scan kept with its `page` (researcher.md). It records what
-  failed by kind, and gives the hand-on close only when every kind is `copy` or `scan`. Any
+  failed by kind, and gives the hand-on close only when every kind is `copy` or `scan`. A copy
+  counts as `copy` only on a host the lists don't class: a news outlet can't be named in
+  `primary_hosts`, so its copy of a record is the researcher's to fix, and says so. Any
   other kind keeps the red close, so a check added later without a kind of its own fails
   toward "do not hand this on", never toward handing on. Its corroboration line is left out
   when the claim passes as it will stand once the hosts are named (the project's rules with
@@ -1458,8 +1460,9 @@ as a copy. Passing unlisted hosts instead would reopen the substitution this exi
   acknowledged copy, and prints the host as an entry would hold it, inside `<bdi>`.
 - **Hosts compare in one form.** `domain()` gives a host as the URL spells it, and an entry can
   be spelled either way, so an internationalized host matched only an entry spelled like it.
-  List entries, `bare_host()` and every lookup (`classify()`, `publishes_legal_text()`) use the
-  ASCII form (`sources._ascii()`), encoded by UTS 46 as browsers and httpx resolve a host, not
+  List entries, `bare_host()` and every comparison of two hosts (`classify()`,
+  `publishes_legal_text()`, and corroboration's "different outlets", through `host_key()`) use
+  the ASCII form (`sources._ascii()`), encoded by UTS 46 as browsers and httpx resolve a host, not
   by Python's `idna` codec: that is IDNA 2003, which folds `ß` into `ss` and so took another
   registrant's `strasse.example` for `straße.example`. The brief prints each host's Unicode form
   (`display_host()`), the one a researcher's address bar shows. And `domain()` drops a trailing
