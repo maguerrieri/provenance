@@ -212,6 +212,7 @@ nearest one at or above the run it is given (`--data`, else the working director
 name = "example"
 title = "Example County Assessor"   # optional: the review page's title, `name` if left out
 sources = ["us", "ca"]              # the source lists citations are checked against
+primary_hosts = ["records.example.gov"]   # optional: hosts that issue this project's records
 cache = "."                         # the directory that holds cache/, as --cache names it
 subjects = [                        # optional: a run for each, in its own subdirectory
   {id = "lind", name = "Avery Lind"},
@@ -225,6 +226,18 @@ completeness_check = """
 """
 ```
 
+- **`primary_hosts`** names the issuing authorities for the project's own records that its
+  source lists leave out: an agency's records site, a standards body's document tracker. A
+  `primary_document`, `official_record` or `official_analysis` cited from a host neither names
+  is a copy: `provenance check-claim` fails it, and `provenance build` fails its claim's
+  corroboration, until it carries `secondary_host_ack`. Each entry is a bare
+  host (`records.example.gov`, no scheme, path or `www.`) and covers its subdomains, so name the
+  authority's own host, never a suffix shared with others. A host the lists already class
+  (excluded, a lead generator, campaign material, a news outlet) is refused: the project adds
+  authorities, and can't reclass a host. The project file is a person's to edit: a researcher
+  that names its own issuing authorities can pass off any copy as the record, so one that meets
+  an unlisted authority hands the claim on with a note instead. Once a person adds the host,
+  the next `provenance build` releases the claim.
 - **`cache`** is where the shared page cache and the CAL-ACCESS database live, relative to the
   file, with `~` expanded. `"."` keeps them beside it. The same path in several projects, such
   as `"~/.cache/provenance"`, shares one cache between them. `--cache` overrides it.
@@ -283,7 +296,8 @@ instead.
 ## What researchers are told
 
 `provenance brief` prints what goes into every researcher's and verifier's prompt, verbatim:
-the project, the run's subject, `context`, and the notes that ship with each source list the
+the project, the run's subject, `context`, the issuing authorities (the source lists'
+primary-document hosts and `primary_hosts`), and the notes that ship with each source list the
 project names (see [Source lists](#source-lists)). It never prints `completeness_check`.
 
 Keep `context` thin. It reaches every researcher and verifier unverified: no snippet, no source, nothing
@@ -317,7 +331,7 @@ none). A list that isn't exactly these keys, each a list of bare host names (`ex
 scheme, path, port or `www.`), is refused, and every command names it as a problem with the
 project. A new list is a change to the tool: add it under
 `src/provenance/source_lists/` in a clone, since an installed copy's lists are replaced on the
-next install.
+next install. The hosts that issue one project's own records go in its `primary_hosts` instead.
 
 A list can ship notes beside it, `<name>-notes.md`: how its records behave, such as which
 filings come in series and which portals answer only through a bulk export. `provenance brief`

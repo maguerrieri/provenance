@@ -1000,8 +1000,10 @@ the agent definitions, except the tool's own source lists and their notes (see "
 content ships with its source list"). A project's provenance.toml holds its title, its subjects (each an `id`,
 its directory, and a `name`, what the questions call it), what its researchers are told
 (`context`) and what they never are (`completeness_check`). It names its source lists too
-(`sources`, each a `src/provenance/source_lists/<region>-sources.yaml`), and they merge. If you
-find yourself adding a subject's name to the pipeline, put it in the project file instead.
+(`sources`, each a `src/provenance/source_lists/<region>-sources.yaml`), and they merge, and the
+hosts that issue its own records that the lists leave out (`primary_hosts`; see "Unreachable
+source → silent substitution"). If you find yourself adding a subject's name to the pipeline,
+or a host to a tool list for one project's sake, put it in the project file instead.
 
 **A subject is not necessarily a person.** It can be a pending proposal or a document, so no
 name, scaffolding or help text may assume one. Two versions of an amended proposal are two
@@ -1391,6 +1393,67 @@ saying what could not be reached and why this copy is the same document. `proven
 fails without it, `check_corroboration()` fails the claim without it so build holds it too, and
 the review app badges the row "copy, not the issuing authority".
 The rule is not "never cite a copy", it is **never substitute silently**.
+
+**Which hosts issue records is partly the project's to say (#179).** `secondary_host()` can
+only ask whether a host is *named* as an issuing authority, and the tool's lists name a few
+jurisdictions' hosts. So a project anywhere else met the check on its first primary source,
+including the issuing body's own site, and both ways past it were wrong. An ack badged the
+authority's own record as a copy. Relabelling it `own_statement`, which a researcher did, passed
+the check, but the source class no longer said what the source was. A project's `primary_hosts`
+names the authorities its lists leave out, and `Project.rules()` adds them to the lists'
+`primary_document` hosts. The rule itself is unchanged: a host that neither names still reads
+as a copy. Passing unlisted hosts instead would reopen the substitution this exists to catch.
+- **One way to the rules.** Every command reads them through `Project.rules()`. A command that
+  handed the project's lists to `load_rules()` itself would check against the lists alone and
+  call every named authority's record a copy. A test fails on a `load_rules(` anywhere outside
+  `sources.py` and `project.py` (`test_no_command_reads_the_lists_without_the_projects_hosts`).
+- **An entry that would fail open is refused.** A scheme, a path, a port or `www.` matches no
+  URL, so the real host's records would still read as copies. A single label (`gov`) would make
+  a whole top-level domain an authority. A suffix several bodies share would too, and nothing
+  here can tell one from an authority's own host, so the README says to name the host itself.
+- **The project adds authorities, and can't reclass a host.** Classification takes the most
+  restrictive class first, so an excluded or lead-generator host named here would stay what it
+  was while every brief called it an issuing authority. And a news outlet named here would stop
+  being one: its copy of a record would pass as the record. A host *above* a listed outlet does
+  the same, since `primary_document` is classed before journalism: naming `example.com` would
+  reclass `news.example.com`. `project.load()` refuses all three. A host above an excluded
+  one is allowed: the most restrictive class still wins there.
+- **The brief says which hosts count, and what to do about any other.** `researcher_brief()`
+  gives the merged list and `cli.ISSUING_AUTHORITIES` beside the source lists' notes, so a
+  researcher isn't left to guess. The guidance lives there alone: `researcher.md` points to the
+  brief, as it does for the notes, rather than keeping a second copy that could drift.
+  `researcher.md` said "your brief names the specific hosts" before the brief did.
+- **Only a person adds one.** A researcher that can name its own issuing authorities can pass
+  off any copy as the record, which is the line in "The line that must not blur" one layer out.
+  So the message gives both ways on: ack a real copy, or, when the host is the authority, hand
+  the claim on with a note, never relabel. The researcher is told never to edit the project
+  file, and the skill hands the host to the human rather than retrying. Nothing mechanical stops
+  a process with Bash from editing `provenance.toml`: the project file is reviewed like any
+  other change to the project.
+- **One gate for the copy: #188's, fed the project's hosts.** Handing on made check-claim no
+  longer the gate, so something downstream has to keep a handed-on claim out of the green.
+  `unacked_copy()`, which check-claim and `check_corroboration()` share (#188), fails the claim's
+  corroboration on a copy with no ack. Build therefore never renders the claim green, whatever
+  path set its row's status, an archive upgrade included. #190 first added a row-level hold of
+  its own in verify, build and the archive upgrade, then dropped it for that one mechanism:
+  two gates for one rule can come to disagree, and the archive path was one the hold missed.
+  What #190 adds is which hosts count. Every caller of `secondary_host()`, `unacked_copy()`,
+  `tier()` and `check_corroboration()` gets `Project.rules()`, so build and check-claim agree
+  about a named host, for an official analysis as for a primary record. An unjudged claim still
+  reads `pending` (`Claim.status` asks for verdicts before corroboration). Judged, it is
+  `human_review` until a person names the host, and the next build releases it.
+- **check-claim says when the copy is the only failure.** It closed with "do not hand this on",
+  which contradicted the brief's instruction to hand on an authority the project doesn't name.
+  When every failure is an unacknowledged copy, it says so and names both ways on instead. Its
+  corroboration line is left out when the claim would pass once the host is named, since it
+  only repeats the copy line as a second thing to fix. The review page tells an unacknowledged
+  unnamed host ("not a named issuing authority", with where to add it) apart from an
+  acknowledged copy, and prints the host as an entry would hold it, inside `<bdi>`.
+- **Hosts compare in one form.** `domain()` gives a host as the URL spells it, and an entry can
+  be spelled either way, so an internationalized host matched only an entry spelled like it.
+  List entries, `bare_host()` and every lookup (`classify()`, `publishes_legal_text()`) use the
+  IDNA form (`sources._ascii()`). And `domain()` drops a trailing dot, which names the same host:
+  left on, `example.gov.` matched no entry, and an excluded host's page passed as unlisted.
 
 The other half is fixing the reachability where possible, rather than only detecting the
 symptom — and then *recording* it, so the finding outlives the session that made it.
