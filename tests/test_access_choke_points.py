@@ -72,6 +72,9 @@ NESTED_LOGINS = [
     # An encoded `/` before an encoded `@`: decoded, the authority ends before the `@`.
     f"curl 'https://x.example/api?next=https://canary-user:x%2F{CANARY}%40y.example/'",
     f"curl -d 'next=https://canary-user:x%252F{CANARY}%2540y.example/' https://x.example/api",
+    # Encoded whole, `//` and `/` included: decoded, the `/` ends the authority at `user:x`.
+    f"curl 'https://x.example/api?next=https%3A%2F%2Fcanary-user%3A{CANARY}%2Fpart%40y.example"
+    "%2F'",
     # Encoded seven times over: read to the end, however deep.
     f"curl 'https://x.example/api?next=https://canary-user:{CANARY}%25252525252540y.example/'",
     f"curl -H 'Origin: https://x.example/?next=https://{LOGIN}@y.example/' https://x.example/api",
@@ -115,6 +118,9 @@ def test_a_value_encoded_past_reading_is_refused_not_read_no_further(registry):
     Recipe(id="r", method="GET", url="https://x.example/api",
            headers={"X-Endpoint": f"https://{LOGIN}@y.example/"}),
     Recipe(id="r", method="GET", url="https://x.example/api", notes=f"//{LOGIN}@y.example"),
+    # An origin's fragment has no pairs to read, and a URL in it is read all the same.
+    Recipe(id="r", method="GET", url="https://x.example/api",
+           headers={"Origin": f"https://x.example/#https://{LOGIN}@y.example"}),
 ])
 def test_run_refuses_a_login_in_a_nested_url(recipe, registry):
     """`run()` checks a recipe as `check_entry()` does, since one built by hand reaches it too."""
@@ -263,6 +269,9 @@ def test_check_entry_refuses_each_shape_naming_where_not_what(entry, match):
     _entry(**_recipe(headers={"content-type": "application/json"}, body='{"year": {year}}',
                      params=["year"])),
     _entry(notes="search from:alice@agency.example to find the filings"),
+    # A port is a number, or a recipe's placeholder for one.
+    _entry(ui_url="https://portal.example:8443/", **_recipe(url="https://{host}:{port}/api",
+                                                            params=["host", "port"])),
 ])
 def test_check_entry_accepts_what_is_not_a_credential(entry):
     check_entry(entry)
@@ -474,6 +483,7 @@ def test_every_command_that_writes_the_registry_is_held_to_the_check(registry, t
     f"session_id={CANARY}",
     f"-H 'X-CSRF-Token: {CANARY}'",
     f"see https://canary-user:x%2F{CANARY}%40y.example/ first",
+    f"next=https%3A%2F%2Fcanary-user%3A{CANARY}%2Fpart%40y.example%2F",
     # A pair whose name is not a credential's gives up its name, not the rest of the line.
     f"ValueError: bad; api_key: {CANARY}",
     f"note: see token: {CANARY}",
