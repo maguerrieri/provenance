@@ -337,9 +337,12 @@ function kind(x){
   if (!Object.prototype.hasOwnProperty.call(x, 'v')) return 'legacy';
   return x.v === 3 ? 'v3' : x.v === 2 ? 'v2' : null;
 }
-function save(){ try { localStorage.setItem(STORE, JSON.stringify(state)); } catch(e){} }
-// Carried over: saved under STORE at once, with MOVED naming it, so it is never read again.
-function carried(){ try { localStorage.setItem(MOVED, STORE); } catch (e) {} save(); }
+function save(){
+  try { localStorage.setItem(STORE, JSON.stringify(state)); return true; } catch(e){ return false; }
+}
+// Carried over: saved under STORE at once, and only then MOVED naming it, so it is never read
+// again. A save that fails (a full localStorage) marks nothing, and the next load reads it again.
+function carried(){ if (save()) try { localStorage.setItem(MOVED, STORE); } catch (e) {} }
 // The newest title-keyed progress there is, and what it has to be: this shape under V3, the one
 // from before notes were hashed under V2, the per-source map earlier versions kept under KEY.
 function titled(){
