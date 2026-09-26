@@ -34,6 +34,15 @@ def test_the_data_is_found_in_the_package():
     assert access.load_all(), "the shipped access registry reads as empty"
 
 
+def test_nothing_the_package_reads_is_found_beside_the_checkout():
+    """A path built from `__file__` up past the package (`parents[2]`) is the repo root in a
+    checkout and a directory inside the tool's environment in an installed copy, and every test
+    passes, because tests run from the checkout. Package data goes through importlib.resources.
+    races/ is the one left, until #8 replaces RACES_DIR with the project file's race key."""
+    found = {p.name for p in PACKAGE.glob("*.py") if "__file__" in p.read_text()}
+    assert found == {"races.py"}, found
+
+
 def test_the_wheel_carries_the_data(tmp_path):
     """uv_build puts only the module root in the wheel, which is why the data moved under it.
     Built for real, since a file left outside src/provenance/ is exactly what a check of the

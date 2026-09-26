@@ -45,6 +45,15 @@ def test_provenance_version_prints_the_package_version():
     assert res.output == f"provenance {VERSION}\n"
 
 
+def test_provenance_version_without_an_install_says_so(monkeypatch):
+    def missing(name):
+        raise cli.PackageNotFoundError(name)
+    monkeypatch.setattr(cli, "package_version", missing)
+    res = CliRunner().invoke(cli.app, ["--version"])
+    assert res.exit_code == 1
+    assert "no installed version" in res.output and "Traceback" not in res.output
+
+
 def test_the_skill_checks_the_cli_is_at_the_plugins_version_first():
     """The check, what it must print, and the install command it gives name one version, the
     plugin's, and so does the README's install command. A version left behind by a release

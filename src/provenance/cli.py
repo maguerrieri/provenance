@@ -8,6 +8,7 @@ import shlex
 import sys
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Annotated, NoReturn
@@ -61,9 +62,18 @@ def _print_version(value: bool) -> None:
     # The plugin's skill checks this before a run: its agents name the commands and flags of
     # one version, and pyproject's version is the plugin's (tests/test_plugin.py holds them
     # equal).
-    if value:
-        typer.echo(f"provenance {package_version('provenance')}")
-        raise typer.Exit()
+    if not value:
+        return
+    try:
+        installed = package_version("provenance")
+    except PackageNotFoundError:
+        # Run from source without installing: there is no version to compare, so say so
+        # rather than print a traceback the skill would read as a broken install.
+        typer.echo("provenance: no installed version (run from source without installing it)",
+                   err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"provenance {installed}")
+    raise typer.Exit()
 
 
 @app.callback()
