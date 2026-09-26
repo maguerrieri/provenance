@@ -1075,10 +1075,12 @@ the title named the subject), or two versions of an amended proposal, showed eac
 checkmarks, and a `--title` moved a review's progress. #14's reviewer notes are stored with the
 progress, so they follow the same key. Two projects of one `name` share progress for subjects of
 one id, since `provenance serve` serves every project from one origin; the README says so.
-Progress saved under the title is read once, where the run has none of its own yet, and saved
-under the new key at once, so a later title-keyed save never reaches it. When you change what a
-stored key means, decide what the old key means under the new rule, and read it once rather
-than on every load.
+Progress saved under the title is carried over once, to the first key that finds it: saved
+under that key at once, with a marker naming it, and never read by any other key. The first
+cut read it wherever the new key was empty, so renaming the project (a new key) brought back
+flags and checks cleared since, and so did any other run whose page had the same title. When
+you change what a stored key means, decide what the old key means under the new rule, and
+carry it over once rather than read it whenever the new one is missing.
 
 One consequence of separate runs worth keeping in mind: `conflicts.py` compares dollar
 figures across every claim it is given. That is right within a subject and wrong across

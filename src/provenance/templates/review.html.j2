@@ -190,7 +190,7 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
 //   {v: 3,
 //    checked: {"<fingerprint>": "<row key>"},
 //    sources: {"<source id>": {flag, note}},
-//    notice: {cleared, uncited, unreadable}}      (until the reviewer dismisses it)
+//    notice: {cleared, uncited, unreadable, moved}}      (until the reviewer dismisses it)
 // A check is an attestation that one source, as cited and shown, supports one claim, so it is
 // recorded by the row's fingerprint (report.review_fingerprint), which covers exactly that. A
 // row reads checked while its fingerprint is recorded. Another question citing the same source
@@ -210,15 +210,19 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
 // and would drop them and save over them.
 //
 // V3 is this shape as the page saved it before STORE was kept per project and subject, keyed
-// by the page's title, as V2 is. The newest of them there is is read once, where STORE is
-// absent, and saved under STORE at once, so it is never read again. KEY holds what earlier
-// versions of this page saved, per source: {"<source id>": {done, flag, note}}, also keyed by
-// the title. It is only read, to migrate from when neither store is there, so no version's tab
-// overwrites another's progress. Their "vgpipe:" prefix predates the rename to provenance (#6)
+// by the page's title, as V2 is. KEY holds what earlier versions of this page saved, per source:
+// {"<source id>": {done, flag, note}}, also keyed by the title. They are only read, never
+// rewritten, so no version's tab overwrites another's progress, and only to carry them over
+// where STORE is absent: the newest store there is (V3, then V2) as it is, if it is what its key
+// holds, else KEY migrated. Several runs' pages could share a title, and a project renamed later
+// has a new STORE, so they are carried over once, to the first STORE that finds them: MOVED
+// names it, and any other STORE starts over and says why. Read again, they would bring back
+// flags and checks cleared since. Their "vgpipe:" prefix predates the rename to provenance (#6)
 // and stays: it names progress already saved, and a new prefix would read every review as empty.
 const KEY = "vgpipe:{{ run_id }}";
 const V2 = KEY + ":v2";
 const V3 = KEY + ":v3";
+const MOVED = KEY + ":moved";
 const STORE = "provenance:{{ store_id }}:v3";
 const UNREADABLE = STORE + ":unreadable";
 const ROW_RE = new RegExp({{ row_key_re|tojson }});
@@ -279,8 +283,8 @@ function sanitizeState(raw){
   const n = raw.notice;
   if (n && typeof n === 'object'){
     const kept = {cleared: count(n.cleared), uncited: count(n.uncited),
-                  unreadable: n.unreadable === true};
-    if (kept.cleared || kept.uncited || kept.unreadable) out.notice = kept;
+                  unreadable: n.unreadable === true, moved: n.moved === true};
+    if (kept.cleared || kept.uncited || kept.unreadable || kept.moved) out.notice = kept;
   }
   return out;
 }
@@ -305,6 +309,10 @@ function migrate(out, raw){
 function noticeText(n){
   if (n.unreadable) return "The progress saved in this browser could not be read, so this page "
     + "started over. The unreadable copy is kept in its localStorage under \"" + UNREADABLE + "\".";
+  if (n.moved) return "Progress this page saved before it was kept per project and subject was "
+    + "already carried over to another project or subject whose page had this title, so it is not "
+    + "read here: this page started over. If it belongs here, export it from that page and import "
+    + "it here.";
   return "This progress was saved by an earlier version of this page, which kept one checkmark "
     + "per source, shared by every question citing it. Those checkmarks can't show which claim "
     + "was checked, or against which excerpt, so they were cleared: " + n.cleared + " on "
@@ -330,16 +338,31 @@ function kind(x){
   return x.v === 3 ? 'v3' : x.v === 2 ? 'v2' : null;
 }
 function save(){ try { localStorage.setItem(STORE, JSON.stringify(state)); } catch(e){} }
-const own = stored(STORE), v3 = own === null ? stored(V3) : null;
-const kept = own !== null ? own : v3 !== null ? v3 : stored(V2);
-if (kept === null) load(parse(stored(KEY)));
-else if (kind(parse(kept)) !== (own !== null || kept === v3 ? 'v3' : 'v2')){
+// Carried over: saved under STORE at once, with MOVED naming it, so it is never read again.
+function carried(){ try { localStorage.setItem(MOVED, STORE); } catch (e) {} save(); }
+// The newest title-keyed store there is, and what it has to be.
+function titled(){
+  for (const [k, expected] of [[V3, 'v3'], [V2, 'v2']]){
+    const text = stored(k);
+    if (text !== null) return [text, expected];
+  }
+  return [null, null];
+}
+const own = stored(STORE), moved = stored(MOVED);
+const mine = moved === null || moved === STORE;   // the title-keyed progress is this STORE's to read
+const [kept, expected] = own !== null ? [own, 'v3'] : mine ? titled() : [null, null];
+if (kept === null){
+  const old = mine && own === null ? stored(KEY) : null;
+  if (old !== null) { load(parse(old)); carried(); }
+  else load(own === null && !mine ? {v: 3, notice: {moved: true}} : undefined);
+}
+else if (kind(parse(kept)) !== expected){
   // Not a fallback to an older store: that would bring back flags cleared since. The first save
   // replaces STORE, so the text is kept where a person can recover it.
   try { localStorage.setItem(UNREADABLE, kept); } catch (e) {}
   load({v: 3, notice: {unreadable: true}});
 }
-else { load(parse(kept)); if (own === null) save(); }
+else { load(parse(kept)); if (own === null) carried(); }
 function ann(el){
   const k = el.dataset.sid;
   if (!Object.prototype.hasOwnProperty.call(state.sources, k)) state.sources[k] = {flag:false, note:""};

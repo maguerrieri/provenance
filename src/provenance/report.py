@@ -175,11 +175,12 @@ def query_provenance(claim_source) -> str:
 def render(claims: list[Claim], out_dir: Path, *, title: str = "citation review",
            cache_root: Path | None = None,
            rules: dict[str, tuple[str, ...]] | None = None,
-           store: str | None = None) -> tuple[Path, Path]:
+           store: str) -> tuple[Path, Path]:
     """`cache_root` is the root this build resolved: the `--cache` for a query row that carries
     no stamp of its own (one build did not re-run, whose file stamp revalidation dropped).
     `rules` are the project's source lists, which the "copy, not the issuing authority" badge
-    is decided by, as `provenance check-claim` decides it. `store` is the run's `store_id()`."""
+    is decided by, as `provenance check-claim` decides it. `store` is the run's `store_id()`:
+    required, since a default would be one store every caller that forgot it shared."""
     from .cli import qid_sort_key
 
     claims = sorted(claims, key=lambda c: qid_sort_key(c.question_id))
@@ -243,7 +244,7 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "citation review"
         claims=view,
         title=title,
         run_id=titled,
-        store_id=store if store is not None else store_id("", None),
+        store_id=store,
         row_key_re=ROW_KEY_RE,
         generated=datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC"),
         n_sources=sum(len(c.sources) for c in claims),

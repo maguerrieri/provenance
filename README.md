@@ -37,8 +37,8 @@ on it once to rewrite them.
 
 Two things keep the old name on purpose:
 
-- **Review progress.** The review page stores your checks under a key that starts with `vgpipe:`,
-  so checks made before the rename carry over.
+- **Review progress.** Checks made before the rename are under keys that start with `vgpipe:`,
+  and the review page reads them to carry them over (see "The review app").
 - **Undoing an interrupted `vg remap`.** The rollback runs from a checkout from before the
   rename, so the message that sends you there names its commands as `vg`, the command that
   checkout has.
@@ -149,9 +149,11 @@ the page's title, so two subjects never share them, nor two versions of an amend
 (two subjects). Renaming either starts that review over, so export your progress first. Two
 projects with the same `name` share progress between their subjects of one id, since
 `provenance serve` serves every project from one origin: give each project its own `name`.
-Progress saved before it was kept this way was kept by the page's title, and it carries over
-once, on the first build whose title is the one it was saved under. For a run built under
-another title, build once with `--title '<that title>'`.
+Progress saved before it was kept this way was kept by the page's title. It carries over once,
+to the first run whose page has the title it was saved under. For a run built under another
+title, build once with `--title '<that title>'`. Another run whose page has that title (or
+this one, after the project is renamed) starts over and says so: export the progress from the
+page it went to, and import it where it belongs.
 
 Reading the context is the point. ⌘F proves the words are on the page; only you can tell
 whether they support the claim.

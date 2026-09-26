@@ -24,7 +24,7 @@ NODE = shutil.which("node")
 LEGACY = "vgpipe:t"          # what earlier versions of the page saved, per source, by title
 V2 = "vgpipe:t:v2"          # what the page saved before a claim's notes were hashed, by title
 V3 = "vgpipe:t:v3"          # this version's progress, as saved by title before subjects
-STORE = f"provenance:{store_id('', None)}:v3"   # render()'s own when no store is given
+STORE = f"provenance:{store_id('example', None)}:v3"   # the store run() renders with
 
 CONTEXT = "At its March meeting the council approved the levy by a vote of four to one."
 SNIPPET = "the council approved the levy"
@@ -56,7 +56,8 @@ def _tree(node) -> dict:
 
 
 def run(tmp_path: Path, claims: list[Claim], *, storage: dict | None = None,
-        actions: list | None = None, store: str | None = None, title: str = "T") -> dict:
+        actions: list | None = None, store: str = store_id("example", None),
+        title: str = "T") -> dict:
     """Render `claims`, load the page with `storage` as its localStorage, perform `actions`,
     and return what the page shows and stores."""
     # Only the tests that run the page need node, so the fingerprint tests run anywhere. And CI
@@ -381,6 +382,24 @@ def test_progress_saved_by_title_is_read_once_under_the_subjects_key(tmp_path):
     assert rows(run(tmp_path, [c], store=store, storage=cleared))[key]["checked"], \
         "once it has its own, the title-keyed progress is never read again"
 
+    # Nor by any other run: a subject whose page had the same title, or this one after the
+    # project is renamed. Read again, it would bring back what was unticked since. It starts
+    # over and says why.
+    unticked = run(tmp_path, [c], store=store, storage=adopted["storage"],
+                   actions=[{"do": "tick", "row": key, "checked": False}])
+    renamed = run(tmp_path, [c], store=store_id("renamed study", "measure-a"),
+                  storage=unticked["storage"])
+    assert not rows(renamed)[key]["checked"]
+    assert "already carried over to another project or subject" in renamed["notice"]
+    # The per-source progress of earlier versions, keyed by the title too, is carried over once
+    # the same way.
+    legacy = json.dumps({c.sources[0].sid: {"done": False, "flag": True, "note": "n"}})
+    first = run(tmp_path, [c], store=store, storage={LEGACY: legacy})
+    assert rows(first)[key]["flagged"]
+    again = run(tmp_path, [c], store=store_id("renamed study", "measure-a"),
+                storage=first["storage"])
+    assert not rows(again)[key]["flagged"] and "already carried over" in again["notice"]
+
     # Unreadable, it is kept aside as unreadable progress of its own is, never read as empty.
     broken = run(tmp_path, [c], store=store, storage={V3: '{"v": 3, "checked": {'})
     assert "could not be read" in broken["notice"]
@@ -469,7 +488,8 @@ def test_a_claims_researcher_notes_render_escaped_and_only_when_present(tmp_path
             "<script>alert(1)</script><img src=x onerror=\"alert(2)\">")
     noted, blank = claim("q1", "Approved."), claim("q3", "Approved.")
     noted.notes, blank.notes = note, " \n "
-    html = render([noted, claim("q2", "Approved."), blank], tmp_path, title="T")[0].read_text()
+    html = render([noted, claim("q2", "Approved."), blank], tmp_path, title="T",
+                  store="test")[0].read_text()
 
     assert "<script>alert(1)</script>" not in html and "<img src=x" not in html
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html, "the note renders, escaped"
@@ -553,7 +573,8 @@ def test_a_note_added_after_checking_clears_the_claims_checks(tmp_path):
         assert all(r["noteStale"] and not r["stale"] and not r["checked"]
                    for r in after["rows"]), notes
         assert after["claims"][0]["noteChanged"], notes
-    page = HTMLParser(render([build(), build(NOTE)], tmp_path, title="T")[0].read_text())
+    page = HTMLParser(render([build(), build(NOTE)], tmp_path, title="T",
+                             store="test")[0].read_text())
     assert ["has been removed" in m.text() for m in page.css(".nchanged")] == [True, False]
 
     # Unchecking a row settles its warning, as it does for changed evidence.
