@@ -110,13 +110,18 @@ and this README name to both), then tags the commit `v<version>` and pushes the 
 `provenance serve` opens a local checklist. Per source: the cached page context with your snippet
 **highlighted in place**, plus the live link, the archive link, a copy-snippet button, and
 a persistent checkbox. Keyboard: `j`/`k` move, `space` check, `f` flag, `o` open, `a`
-archive, `c` copy. Filters: unchecked, adversarial, paywalled, conflicts, needs-review.
+archive, `c` copy. Filters: unchecked, adversarial, paywalled, conflicts, needs-review,
+researcher notes.
+
+A claim whose researcher left notes shows them above its sources: the caveats written for the
+person checking it, such as a scan to read by eye, a filing that may not be the newest, or a
+figure a query would not settle.
 
 A check belongs to one claim: a source cited by two questions is checked under each
 separately. It also clears itself when what you checked changes, and the row says so: the
 claim (a reworded answer), the excerpt you read (a re-fetch that changes its text or
 highlight), or, on a row with no excerpt, the snapshot offered instead (a new one from
-`provenance archive`). Flags and notes are about the source, and show wherever it is cited.
+`provenance archive`). Your flags and notes are about the source, and show wherever it is cited.
 
 Serve it rather than opening `review.html` directly — several browsers disable
 `localStorage` on `file://` origins, which silently loses your progress. Export/import
