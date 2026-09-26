@@ -171,10 +171,12 @@ NOT_A_NAME = frozenset({"staff", "unknown", "n/a", "none", "editorial board"})
 
 
 def names_nobody(name: str) -> bool:
-    """Whether `name` is one of `NOT_A_NAME`, compared folded as a question is: a fullwidth
-    "Staff" or an "Editorial Board" spaced with a no-break space prints the same, and compared
-    by `.lower()` alone it passed as a name."""
-    return normalize(unicodedata.normalize("NFC", name))[0] in NOT_A_NAME
+    """Whether `name` is one of `NOT_A_NAME`, with or without a leading "The" ("The Editorial
+    Board" is the usual byline). Compared folded as a question is, since a fullwidth "Staff" or
+    an "Editorial Board" spaced with a no-break space prints the same, and compared by
+    `.lower()` alone it passed as a name."""
+    folded = normalize(unicodedata.normalize("NFC", name))[0]
+    return (folded[4:] if folded.startswith("the ") else folded) in NOT_A_NAME
 
 
 def check_source_class(src: Source, rules: dict[str, tuple[str, ...]] | None = None) -> tuple[bool, str | None]:
@@ -234,9 +236,10 @@ TIER_LABEL = {
 }
 
 
-def tier(src: Source, rules: dict[str, tuple[str, ...]] | None = None) -> str:
+def tier(src: Source, rules: dict[str, tuple[str, ...]]) -> str:
     """The tier `src` carries: its source_type's, lowered to `unlisted_outlet` for reporting on a
-    host the lists don't name as a news outlet."""
+    host the lists don't name as a news outlet. `rules` is required: defaulted to `us`, every
+    regional outlet would read as unlisted."""
     t = TIER_OF[src.source_type]
     if t == "reporting" and classify(src.url, rules) != "bylined_journalism":
         return "unlisted_outlet"
@@ -253,13 +256,19 @@ def _folded(text: str) -> str:
 
 def speakers(src: Source) -> list[str]:
     """What an answer can name `src`'s arguer by: its author or its publisher, the publisher with
-    or without a leading "The". Whole names only: a surname alone also names everyone else who
-    has it, and the check tells the researcher exactly which names it takes. A byline that names
-    nobody (`NOT_A_NAME`) is not one."""
+    or without a leading "The" where that leaves two words or more. Whole names only: a surname
+    alone also names everyone else who has it, and one word left of "The Record" is a word that
+    starts sentences ("Record turnout shows ..."). The check tells the researcher exactly which
+    names it takes. A byline that names nobody (`names_nobody()`) is not one, and nor is one of
+    fewer than two letters ("-", "A"): it matched any answer holding that mark or letter, so a
+    bare fact read as attributed (CLAUDE.md: "No name means no words, not an empty string").
+    Letters are counted over the whole name, so one written as single characters with spaces
+    between still counts."""
     names = [src.author.strip(), src.publisher.strip()]
-    if re.match(r"(?i)the\s", names[1]):
-        names.append(names[1][4:].strip())
-    return [n for n in dict.fromkeys(names) if _folded(n) and not names_nobody(n)]
+    if re.match(r"(?i)the\s", names[1]) and len(rest := names[1][4:].split()) >= 2:
+        names.append(" ".join(rest))
+    return [n for n in dict.fromkeys(names)
+            if len(re.findall(r"[^\W\d_]", _folded(n))) >= 2 and not names_nobody(n)]
 
 
 def attributes(answer: str, src: Source) -> bool:

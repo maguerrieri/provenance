@@ -953,7 +953,15 @@ def secondary_host(src: Source, rules: dict[str, tuple[str, ...]] | None = None)
     return classify(src.url, rules) != "primary_document"
 
 
-def unattributed(claim: Claim, rules: dict[str, tuple[str, ...]] | None) -> list[Source]:
+def unacked_copy(src: Source, rules: dict[str, tuple[str, ...]]) -> bool:
+    """A primary text or official analysis cited from a host that doesn't issue it, with no
+    `secondary_host_ack` saying why this copy is the same document. `provenance check-claim`
+    fails it and `check_corroboration()` fails the claim on it: one test, so the two can't
+    drift."""
+    return secondary_host(src, rules) and not (src.secondary_host_ack or "").strip()
+
+
+def unattributed(claim: Claim, rules: dict[str, tuple[str, ...]]) -> list[Source]:
     """The sources `claim` rests on for what their author argues (`sources.ARGUED`: opinion,
     advocacy, an unlisted outlet) whose author or publisher its answer never names.
 
@@ -1129,7 +1137,7 @@ def check_corroboration(claim: Claim, *, rules: dict[str, tuple[str, ...]]) -> C
         if is_argued and not attributes(claim.answer, s):
             n_bare += 1
             continue
-        if secondary_host(s, rules) and not (s.secondary_host_ack or "").strip():
+        if unacked_copy(s, rules):
             n_copy += 1
             continue
         counted.append(s)

@@ -1604,15 +1604,25 @@ host list only lowers it:
 
 **Opinion, advocacy and an unlisted outlet support only "X argues Y"** (`sources.ARGUED`). Campaign
 material is limited to "the campaign says X" in the same way. The mechanical half is that the
-answer names X: the source's author or publisher, as whole words (`sources.attributes()`).
-Whitespace, quote and dash styles fold as a question's do, but case does not. A name is told
-from a word by its capitals: compared case-blind, a publisher called "The Record" was named by
-"the record shows", and "The Times" by "three times". Only whole names count, because a surname
-alone also names everyone else who has it. A byline that names nobody ("Staff", `NOT_A_NAME`)
-never counts. That list is recognized case-blind, as a question is compared, since "STAFF" names
-nobody either: case decides whether a name is named, not whether something is a name. The refusal lists the names it will take. Whether the answer then states the argument
-as the arguer's or as fact is judgment, so `verifier.md` asks the verifier to judge that, and a
-claim that states it as fact gets `topic_only`.
+answer names X, the source's author or publisher, as whole words (`sources.attributes()`,
+`sources.speakers()`). Each rule on what counts as naming X closed a way a bare fact read as
+attributed:
+- **Case counts.** Whitespace, quote and dash styles fold as a question's do, but case does not:
+  a name is told from a word by its capitals. Compared case-blind, a publisher called "The
+  Record" was named by "the record shows", and "The Times" by "three times".
+- **Whole names only.** A surname alone also names everyone else who has it. A publisher's
+  leading "The" can be left off only where two words or more remain: one word left of "The
+  Record" starts sentences ("Record turnout shows ...").
+- **Something that names nobody never counts.** That covers a byline in `NOT_A_NAME` ("Staff",
+  "The Editorial Board"), recognized case-blind, since "STAFF" names nobody either (case decides
+  whether a name is named, not whether something is a name). It also covers a name of fewer than
+  two letters ("-", "A"), which matched any answer holding that mark or letter.
+
+The refusal lists the names it will take. Whether the answer then states the argument as the
+arguer's or as fact is judgment. `provenance handoff` prints each source's tier beside its type,
+since an unlisted outlet's type still reads `bylined_journalism`, and `verifier.md` asks the
+verifier to return `topic_only` for a claim that states an argued tier as fact. Adding the tier
+to the hand-off changed every outstanding context token once.
 - **`provenance check-claim` fails an unattributed one,** naming its tier and the names that
   would attribute it. For an unlisted outlet it also says why the outlet is not reporting.
 - **`check_corroboration()` fails the claim's corroboration on one,** however many other sources
@@ -1626,12 +1636,12 @@ claim that states it as fact gets `topic_only`.
   or a report beside them. A page cited for fact and for opinion both is one document, and it
   counts with the facts.
 
-`check_corroboration()` and `report.render()` take the project's lists as a required keyword,
-because a news citation's tier depends on them. If they defaulted to `us`, every regional outlet
-would read as unlisted: corroboration would fail toward review in silence, and the page would
-badge a row "unlisted outlet" beside a status that counted it as reporting. That is the
-wrong-default shape of `cache_root` (see "A verdict is about a source as cached at judgment
-time").
+`tier()`, `unattributed()`, `check_corroboration()` and `report.render()` take the project's
+lists as a required argument, because a news citation's tier depends on them. If they defaulted
+to `us`, every regional outlet would read as unlisted: corroboration would fail toward review in
+silence, and the page would badge a row "unlisted outlet" beside a status that counted it as
+reporting. That is the wrong-default shape of `cache_root` (see "A verdict is about a source as
+cached at judgment time").
 
 What it costs: an unlisted local paper now has to be cited as what it reports ("the Example
 Gazette reports that ..."). If it does its own reporting, add it to a source list. That is a
@@ -1644,8 +1654,12 @@ What is unchanged, and why:
 - **The review page shows each row's tier and says what an argued row supports**, and
   claims.json carries `tier`. The badge is derived from the host and the type, like the
   secondary-host badge, and neither is in `review_fingerprint()` (#185).
-- **The other checks' `rules` still default to `us`** (#171). `check_corroboration()` is new to
-  taking them, and the tier made `render()`'s default wrong, so those two require them.
+- **The other checks' `rules` still default to `us`** (#171). The tier functions are new, and the
+  tier made `render()`'s default wrong, so those require them.
+- **`secondary_host_ack` still admits a copy as the text it copies.** It is agent-written, so it
+  grants: an advocacy page labeled `official_analysis` with an ack counts as a fact document. That
+  is the existing rule for copies, never substitute silently. The ack is shown in full on the row
+  under its "copy" badge, and the verifier judges the page, not its label.
 - **An official analysis from an issuing body's own unlisted host reads as a copy**, as a primary
   document does there (#179). Since build now holds an unacked copy as `check-claim` does, a
   project whose lists name no issuing authorities meets that in build too, and until #179 the
@@ -1659,7 +1673,7 @@ What is unchanged, and why:
 
   The hand-off token covers `source_type`, so a relabel between hand-off and `judge` is refused.
 - **A new `source_type` needs a tier.** `test_every_source_type_has_a_tier` fails until
-  `TIER_OF` classifies it, so adding one (#41 may) means deciding what it can carry.
+  `TIER_OF` classifies it, so adding one means deciding what it can carry.
 
 ## Don't proxy the property you actually care about
 

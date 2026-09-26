@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import get_args
 
+import pytest
 from conftest import write_project
 
 from provenance.models import EXTRACTOR_VERSION, Claim, PageCache, Source, SourceType
@@ -79,6 +80,10 @@ def test_the_tier_is_the_citations_not_the_hosts():
     assert tier(_source(), load_rules(("us",))) == "unlisted_outlet"
     # A label never raises a page past what it is: opinion stays opinion on any host.
     assert tier(_source(url=ADVOCACY, source_type="opinion"), RULES) == "opinion"
+    # And the lists are the caller's to give: defaulted to `us`, every regional outlet would be
+    # unlisted.
+    with pytest.raises(TypeError):
+        tier(_source())
 
 
 def test_an_answer_attributes_a_source_by_its_author_or_publisher_as_whole_words():
@@ -103,8 +108,19 @@ def test_a_name_is_told_from_a_word_by_its_capitals():
     staff = _source(source_type="opinion", author="Staff", publisher="")
     assert speakers(staff) == []
     assert not attributes("City staff say the levy is a mistake.", staff)
+    # One word left of "The Record" starts sentences, so the publisher is named whole.
+    assert not attributes("Record turnout shows the levy is a mistake.", record)
+    assert "Record" not in speakers(record)
+    # A name of a mark or one letter matched any answer holding it. Counted over the whole name,
+    # so one written as single characters with spaces between is still a name.
+    for mark in ("-", "A"):
+        unnamed = _source(source_type="advocacy", author=mark, publisher="")
+        assert speakers(unnamed) == []
+        assert not attributes("A levy fails voters - it costs too much.", unnamed)
+    assert speakers(_source(author="\u674e \u660e", publisher="")) == ["\u674e \u660e"]
     # Folded as a question is: a fullwidth "Staff" and a no-break space print the same.
-    for nobody in ("\uff33\uff54\uff41\uff46\uff46", "Editorial\u00a0Board", " N/A "):
+    for nobody in ("\uff33\uff54\uff41\uff46\uff46", "Editorial\u00a0Board", " N/A ",
+                   "The Editorial Board"):
         assert speakers(_source(source_type="opinion", author=nobody, publisher="")) == []
         ok, why = check_source_class(_source(author=nobody), RULES)
         assert not ok and "is not a named or institutional author-of-record" in why
@@ -314,3 +330,11 @@ def test_the_review_page_and_claims_json_carry_each_rows_tier(tmp_path):
     assert page.count("This supports only what its author argues") == 2
     assert ("levy-watch.example is not on this project's source lists as a news outlet, so "
             "this is not counted as reporting.") in " ".join(page.split())
+
+    # The verifier sees the tier too: labeled reporting, it is an unlisted outlet, and the
+    # verifier judges an argued tier's claim form.
+    code, out = _provenance("handoff", "q1", "--data", tmp_path)
+    assert code == 0, out
+    assert "bylined_journalism · tier: reporting" in out, out
+    assert "opinion · tier: opinion" in out, out
+    assert "bylined_journalism · tier: unlisted outlet" in out, out
