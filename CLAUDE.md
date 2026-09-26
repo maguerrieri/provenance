@@ -943,10 +943,13 @@ they don't show, and a check lost to one teaches re-ticking. The choices in it:
   That keeps small the cost "Hash identity, not display" warns about (a reworded note clears
   checks): the row sends the reviewer to reread the note, not the excerpts, which did not
   change. Where the evidence changed too, the row gives the general warning.
-- **Matched by what the row shows, not the row it names.** The first cut compared a lapsed check
-  with the row whose key it carried. A claim moved to another id, or whose two citations of one
-  source swapped places, then got the general warning or none, though only its note changed.
-  Everything before the dot is content, not position, so it finds the row wherever it sits.
+- **The row it names first, then what rows show** (`rowsOf()` in the page). The first cut
+  compared a lapsed check only with the row whose key it carried, so a claim moved to another
+  id, or whose two citations of one source swapped places, got the general warning or none,
+  though only its note changed. The second matched by content alone, and sent a note change on
+  one claim to its twin (another claim asking and answering the same thing from the same
+  citation), where a tick then settled it. So a lapsed check is on the row it names while that
+  row shows the same claim and evidence, and only otherwise on every row that does.
 - **Only when there are notes.** A claim without them hashes exactly as it did before notes were
   hashed (a test pins one fingerprint), so checks saved then still stand and nothing is cleared
   wholesale. An old key reads as a check made with no note. On a claim that has one now it
