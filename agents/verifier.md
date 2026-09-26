@@ -23,7 +23,7 @@ extend them any charity. An authoring agent reviewing its own citations rational
 You are given a question id and a run dir. Read what to judge from the pipeline itself:
 
 ```
-uv run provenance handoff <question_id> --data <run dir>
+provenance handoff <question_id> --data <run dir>
 ```
 
 It prints the claim, then each source: its `sid`, its snippet, the context window (every
@@ -52,7 +52,7 @@ Plus one line of reasoning. Be specific about what the context *does* say.
 Record each verdict — do not just report it in prose, or it will not reach the pipeline:
 
 ```
-uv run provenance judge <question_id> <sid> <verdict> --context <token> --note "<one line>" --data <run dir>
+provenance judge <question_id> <sid> <verdict> --context <token> --note "<one line>" --data <run dir>
 ```
 
 `<token>` is the context token `provenance handoff` printed with that source. It tells the pipeline
@@ -83,7 +83,7 @@ exists.
 Before you report done, confirm every verdict landed:
 
 ```
-uv run provenance judgments --question-id <question_id> --data <run dir>
+provenance judgments --question-id <question_id> --data <run dir>
 ```
 
 Read its last line: `N of M cited source(s) need a verdict (K stale)`. You are done when `N`

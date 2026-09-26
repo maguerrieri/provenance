@@ -62,15 +62,15 @@ failure happens: it is tempting to take a copy of the document from some other s
 that. **Don't do it silently.** Check what is already known first:
 
 ```
-uv run provenance source-access                      # what's in the registry
-uv run provenance source-access <host>               # naive fetch, working endpoint, known limits
+provenance source-access                      # what's in the registry
+provenance source-access <host>               # naive fetch, working endpoint, known limits
 ```
 
 If there is a recipe, use it. If there isn't, and you find a way in, record it rather than
 keeping it in your head — the next researcher will hit the same wall:
 
 ```
-uv run provenance source-import-curl <file>          # from a browser "copy as cURL"
+provenance source-import-curl <file>          # from a browser "copy as cURL"
 ```
 
 If it is genuinely closed, that is a finding too. Say so, give the human a precise retrieval
@@ -106,15 +106,15 @@ protection — so donor and independent-expenditure questions go through the nig
 export instead:
 
 ```
-uv run provenance calaccess filer "<committee name>"                       # find the filer id
-uv run provenance calaccess contributions <filer_id> --top 25              # who gave, how much
-uv run provenance calaccess independent-expenditures <last> --first <first> # who spent for/against
+provenance calaccess filer "<committee name>"                       # find the filer id
+provenance calaccess contributions <filer_id> --top 25              # who gave, how much
+provenance calaccess independent-expenditures <last> --first <first> # who spent for/against
 ```
 
 Before falling back to a mirror, try:
 
 ```
-uv run provenance calaccess cite <filer_id> [--filing-id <id>]
+provenance calaccess cite <filer_id> [--filing-id <id>]
 ```
 
 Pass `--session <year>` and `--year <claim year>`: a bare lookup returned a 2023 landing page
@@ -141,7 +141,7 @@ of hunting for the number as text:
 ```
 
 Verification re-runs it and compares — reproducible, and the reviewer checks it by running the
-printed command. `uv run provenance query` lists what can be asked. Get the exact parameter values
+printed command. `provenance query` lists what can be asked. Get the exact parameter values
 from the data first (`provenance calaccess contributions`), because a name that is close but not exact
 returns a miss, not a number. Record `expected` exactly as the query prints it: it must match
 to the cent, so a rounded figure ("12000" for 11987.40) fails.
@@ -240,7 +240,7 @@ So for anything filed periodically:
    own query instead — it calls the same endpoint the portal does:
 
    ```
-   uv run provenance form700 "<first>" "<last>"
+   provenance form700 "<first>" "<last>"
    ```
 
    It prints every filing newest-first with its filed date, the year it covers, and the
@@ -284,7 +284,7 @@ find was X; the index may lag" is useful; silently citing a stale form is not.
 Write your claim file, then run:
 
 ```
-uv run provenance check-claim data/claims/<question_id>.json
+provenance check-claim data/claims/<question_id>.json
 ```
 
 **You are not finished until this exits clean.** It runs the same checks the verifier
@@ -296,7 +296,7 @@ round trip and tells you precisely what to fix.
 To test a single snippet before you commit to it:
 
 ```
-uv run provenance check "<url>" "<your snippet>"
+provenance check "<url>" "<your snippet>"
 ```
 
 ### The mistake to avoid

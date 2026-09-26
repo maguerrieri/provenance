@@ -8,6 +8,26 @@ description: Use when running the voter guide research pipeline for any race —
 Three phases. The design principle throughout: **agents find and judge; Python decides
 whether a citation is real.** Never let a model set a verification status.
 
+## First — the `provenance` command, at this plugin's version
+
+Every step below, and every command the agents run, is the `provenance` command. Check it
+before anything else:
+
+```
+provenance --version
+```
+
+It must print `provenance 0.1.0`, this plugin's version. If the command is not found, or it
+prints another version, stop and give the operator the fix:
+
+```
+uv tool install --force git+https://github.com/maguerrieri/provenance@v0.1.0
+```
+
+The agents' instructions name the commands and flags of this version, and a CLI of another
+version can lack one or refuse what they write. Don't fall back to running it through `uv run`:
+that works only inside a clone of the tool's own repo.
+
 ## Phase 0 — split the template
 
 1. Read `data/template.md`.
@@ -47,7 +67,7 @@ finding, and stretching a nearby section to cover it is not.
 
 
 
-Spawn one `researcher` subagent per atomic question, **in parallel** (they're
+Spawn one `provenance:researcher` subagent per atomic question, **in parallel** (they're
 independent). Give each:
 
 - the question text and its `claim_type`, verbatim from the run's own `questions.json`: for a
@@ -60,20 +80,20 @@ Do not summarize the source rules for them — the agent definition carries them
 
 ## Phase 2 — verification
 
-1. `uv run provenance verify --race <race>` — deterministic checks on every source: URL resolves, snippet is
+1. `provenance verify --race <race>` — deterministic checks on every source: URL resolves, snippet is
    literally on the page, snippet appears exactly once, source class is allowed, paywall
    detection. No model in this loop.
-2. Spawn one `verifier` subagent per claim that passed the mechanical checks, for the
+2. Spawn one `provenance:verifier` subagent per claim that passed the mechanical checks, for the
    judgment half: does the cached context actually support *this* claim, and (for
    adversarial claims) are the two sources genuinely independent? Give it the question id
    and the run dir, not a copy of the claim: it reads the claim and each source's context
-   from `uv run provenance handoff <qid> --data <run>`, which prints every context with its sid and a
+   from `provenance handoff <qid> --data <run>`, which prints every context with its sid and a
    **context token** naming the whole hand-off: the claim (its type included), and every
    source printed with it, each with its citation, its context and, for a query citation, the
    query run that produced it. Record each verdict with:
 
    ```
-   uv run provenance judge <qid> <sid> supports|topic_only|contradicts|superseded --context <token> --note "..."
+   provenance judge <qid> <sid> supports|topic_only|contradicts|superseded --context <token> --note "..."
    ```
 
    `provenance judge` refuses, writing nothing, unless that claim (exact id, case included) cites
@@ -125,7 +145,7 @@ Do not summarize the source rules for them — the agent definition carries them
    keep the contradicting source as it is, so the reviewer can still open it.
 
    For each failing source, hand the failure reason back to a fresh
-   `researcher` for that question — "your snippet was not on the page", "your snippet
+   `provenance:researcher` for that question — "your snippet was not on the page", "your snippet
    appears 3 times, pick a distinctive span", "ballotpedia is a lead-generator, cite the
    underlying document". **Max 2 retries**, then leave it as `human_review` with the
    reason attached. Serialize verify→retry per question; questions run in parallel.
@@ -156,7 +176,7 @@ Do not summarize the source rules for them — the agent definition carries them
    A claim held by a contradiction a retry dropped is also `human_review` with every source
    green, but its conflict line names a source id and a verifier's verdict, not figures: that
    one is the human's (above), not a retry.
-4. `uv run provenance archive` — saves a fresh snapshot of every cited URL, checks each one
+4. `provenance archive` — saves a fresh snapshot of every cited URL, checks each one
    actually holds the cited page (a bot check or a capture missing the snippet is
    `archive_unusable`), then re-checks any paywalled snippet against its snapshot and
    upgrades it to `verified_via_archive` when the text is readable there. Runs last, never
@@ -172,7 +192,7 @@ Do not summarize the source rules for them — the agent definition carries them
 
 ## Phase 3 — review surface
 
-1. `uv run provenance build --race <race>` — detects conflicts and renders `data/out/review.html` +
+1. `provenance build --race <race>` — detects conflicts and renders `data/out/review.html` +
    `data/out/claims.json`. It first checks every claim against the question its id names in
    `questions.json`. A claim on an id the set no longer lists, or answering another question,
    is left out of the app, and build exits 1, naming it last. Retire the id (Phase 0, step 2),
@@ -181,7 +201,7 @@ Do not summarize the source rules for them — the agent definition carries them
    nothing, a fresh `provenance serve` refuses and a running one answers a reload with a 404, until a
    build succeeds. A tab already open keeps its page, so tell its reviewer to stop and reload
    once one does.
-2. `uv run provenance serve` — opens the app on `127.0.0.1:8765`. Serve rather than opening the
+2. `provenance serve` — opens the app on `127.0.0.1:8765`. Serve rather than opening the
    file directly: browsers disable `localStorage` on `file://` origins, and the checkbox
    state is what makes a long review session survivable.
 3. Report to the operator: counts by status, the conflict list, the `not_found` list, and which
@@ -233,7 +253,7 @@ Doe settlement" is transcription. Use the completeness check *after* results are
 if the research didn't independently surface a known item, that is itself a finding — hand
 the gap to the human rather than topping up a claim with the answer.
 
-`uv run provenance races` lists what's defined. A new race is a new file in `races/`, not an edit
+`provenance races` lists what's defined. A new race is a new file in `races/`, not an edit
 to this skill.
 
 ## Style for any prose output
