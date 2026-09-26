@@ -75,6 +75,8 @@ NESTED_LOGINS = [
     # Encoded whole, `//` and `/` included: decoded, the `/` ends the authority at `user:x`.
     f"curl 'https://x.example/api?next=https%3A%2F%2Fcanary-user%3A{CANARY}%2Fpart%40y.example"
     "%2F'",
+    # ... and with a password that reads as a port: `user:123`, before a path holding the `@`.
+    "curl 'https://x.example/api?next=https%3A%2F%2Fcanary-user%3A123%2Fpart%40y.example%2F'",
     # Encoded seven times over: read to the end, however deep.
     f"curl 'https://x.example/api?next=https://canary-user:{CANARY}%25252525252540y.example/'",
     f"curl -H 'Origin: https://x.example/?next=https://{LOGIN}@y.example/' https://x.example/api",
@@ -241,6 +243,7 @@ def _recipe(**fields) -> dict:
     (_entry(limits=f"proxy http://{LOGIN}@proxy.example works"), "field limits holds a username"),
     # In prose, a bare `name:x@host` is a login written without its scheme, search syntax or not.
     (_entry(notes=f"portal login {LOGIN}@portal.example"), "field notes holds a username"),
+    (_entry(notes=f"reason:{LOGIN}@portal.example"), "field notes holds a username"),
     (_entry(**_recipe(notes=f"works as {LOGIN}@portal.example")),
      "in recipe 'search', its field notes holds a username"),
     (_entry(extra=[{"deep": f"//{LOGIN}@portal.example/"}]), "field extra.deep holds"),
@@ -534,6 +537,11 @@ def test_every_command_that_writes_the_registry_is_held_to_the_check(registry, t
     f"Nothing recorded for /tmp/{LOGIN}@portal.example.",   # a login after a `/`
     f"see https://canary-user:x%2F{CANARY}%40y.example/ first",
     f"next=https%3A%2F%2Fcanary-user%3A{CANARY}%2Fpart%40y.example%2F",
+    "next=https%3A%2F%2Fcanary-user%3A123%2Fpart%40y.example%2F",
+    # A quoted value runs past an escaped quote, and to the end of a line it never closes on.
+    f'{{"token": "prefix\\"{CANARY}"}}',
+    f"{{'password': 'it\\'s {CANARY}'}}",
+    f'"token": "{CANARY}',
     # A pair whose name is not a credential's gives up its name, not the rest of the line.
     f"ValueError: bad; api_key: {CANARY}",
     f"note: see token: {CANARY}",

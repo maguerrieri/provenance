@@ -174,18 +174,20 @@ def _readings(text: str) -> list[str]:
 _MAX_DECODINGS = 8
 
 
-# Where a URL's authority starts, and what it runs to: an `@` in it follows a login.
+# Where a URL's authority starts, and what it runs to as written: an `@` in it follows a login.
 _AUTHORITY = re.compile(r"//([^/?#\s\"'<>`\\]*)")
-# `name:secret@host` with no scheme: a proxy setting, curl's `-u` value pasted whole. Only the
-# redactor reads text for it. Going in, search text reads the same (`from:alice@example.org`),
-# so a scheme-less login is refused only where a host is expected (`_norm_host()`).
+# ... and the same with its `//` percent-encoded, in a value holding a URL encoded whole. It runs
+# to the first delimiter as written (a query's `&` included): decoded, a `%2F` in it would end it
+# before its `@`.
+_ENCODED_AUTHORITY = re.compile(r"%2[fF]%2[fF]([^/?#&\s\"'<>`\\]*)")
+# An authority whose port is not a number (or a recipe's `{port}`): what a login's first half
+# looks like once a `/` has ended the authority before its `@` (`https://user:x/y@host`).
+_NOT_A_PORT = re.compile(r"^[^\[\]]*:(?!(?:\d*|\{\w+\})$)")
+# `name:secret@host` with no scheme: a proxy setting, curl's `-u` value pasted whole. Prose,
+# names and host arguments are refused it (`_prose_login()`), and the redactor removes it. A
+# request is not read for it: there it is search syntax too (`from:alice@example.org`).
 _BARE_LOGIN = re.compile(r"(?<![^\s\"'<>`(=,;&?/])(?!mailto:)[^\s/?#@\"'<>`:=&;]+:"
                          r"[^\s/?#@\"'<>`]*@[^\s/?#@\"'<>`]", re.IGNORECASE)
-
-
-# An authority whose port is not a number (or a recipe's `{port}`): `user:secret` is what a
-# login's first half looks like once a `/` has ended the authority before its `@`.
-_NOT_A_PORT = re.compile(r"^[^\[\]]*:(?!(?:\d*|\{\w+\})$)")
 
 
 def _login_in(text: str) -> bool:
@@ -194,15 +196,18 @@ def _login_in(text: str) -> bool:
     wherever it sits and whatever the field is called. An `@` in a path (`https://host/@user`)
     or an email address is not one.
 
-    One rule, applied to each `//` authority found in each reading, and to that authority in
-    every decoding of its own: it holds an `@`, or a `:` followed by something that is not a
-    port. The second half is there because decoding moves an authority's end. Found raw,
-    `https://user:pw%2Fx%40host/` has no `@`, and decoded, its authority ends at the `/` the
-    `%2F` became, leaving `user:pw` (a port that isn't one) before a path holding the `@`. A
-    URL encoded whole, `//` included, decodes to that same shape."""
-    return any("@" in a or _NOT_A_PORT.match(a)
-               for r in _readings(text) for m in _AUTHORITY.finditer(r)
-               for a in _readings(m.group(1)))
+    One rule: an authority, taken as written in some reading of `text`, then read in every
+    decoding of its own, holds an `@` (or, where it was found, a port that isn't one).
+    Decoding moves where an authority ends, so where it ends is taken before decoding it:
+    `https://user:pw%2Fx%40host/` found raw ends at its last `/`, and decoded, at the `/` the
+    `%2F` became, before the `@`. A URL encoded whole has no `//` until decoded, so an encoded
+    `%2F%2F` starts an authority too, which decoded as a whole would read `user:123` (a real
+    port) before a path holding the `@`."""
+    readings = _readings(text)
+    return (any("@" in a or _NOT_A_PORT.match(a) for r in readings
+                for m in _AUTHORITY.finditer(r) for a in _readings(m[1]))
+            or any("@" in a for r in readings
+                   for m in _ENCODED_AUTHORITY.finditer(r) for a in _readings(m[1])))
 
 
 def _has_login(url: str, where: str) -> bool:
@@ -439,7 +444,10 @@ _REDACTED = "[redacted]"
 _COLON_NAME = re.compile(r"""(?<![\w.\-\[\]$])(?P<name>[A-Za-z_$][\w.\-\[\]$]*)["']?[ \t]*:"""
                          r"""[ \t]*""")
 # ... and its value, which runs to its closing quote or the end of the line.
-_COLON_VALUE = re.compile(r""""[^"\n]*"|'[^'\n]*'|[^"'\s][^"'\n]*""")
+# A quoted value honours backslash escapes, as JSON's and Python's reprs write them, and runs to
+# the end of the line if it is never closed (a quote cut short).
+_COLON_VALUE = re.compile(r""""(?:\\.|[^"\\\n])*(?:"|(?=\n)|\Z)"""
+                          r"""|'(?:\\.|[^'\\\n])*(?:'|(?=\n)|\Z)|[^"'\s][^"'\n]*""")
 # ... and a query or form pair (`api_key=x`), whose value runs to the next separator.
 _EQUALS_PAIR = re.compile(r"""(?<![^\s&;?#=/"'<>`])(?P<name>[^\s&;?#=/"'<>`]+)="""
                           r"""(?P<value>[^\s&;#"'<>`]+)""")
