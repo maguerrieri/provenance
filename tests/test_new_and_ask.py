@@ -279,6 +279,13 @@ def test_questions_sharing_their_first_words_get_different_directories(tmp_path,
                                    for n in names), names
 
 
+def test_a_curly_possessive_is_dropped_like_a_straight_one():
+    """Folding to ASCII dropped the curly apostrophe first, so "county\u2019s" named its
+    directory "countys"."""
+    curly = cli._ask_dir("What does the record show about the county\u2019s road-repair bond?")
+    assert curly.name.startswith("ask-county-road-repair-bond-"), curly
+
+
 def test_the_hash_is_long_enough_that_questions_do_not_collide_on_it():
     """Cut to 24 bits, the hash put these two on one directory: their digests share their first
     six hex digits."""
