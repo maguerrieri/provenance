@@ -1,8 +1,8 @@
-"""Question ids are stable and never reused, and `vg build` and `vg status` are the rule's gate:
+"""Question ids are stable and never reused, and `provenance build` and `provenance status` are the rule's gate:
 each claim is checked against the question the run's questions.json holds for its id. A claim
 on an id the set no longer lists, or answering another question than its id names, is left out
 of the review app and fails both commands. A `maps_from` nothing will ever apply is reported.
-`vg check-claim` runs the same check on the one claim a researcher is handing on."""
+`provenance check-claim` runs the same check on the one claim a researcher is handing on."""
 
 from __future__ import annotations
 
@@ -13,15 +13,15 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from typer.testing import CliRunner
 
-from vgpipe import cli
-from vgpipe.fetch import cache_path
-from vgpipe.models import EXTRACTOR_VERSION, Claim, PageCache, Source
+from provenance import cli
+from provenance.fetch import cache_path
+from provenance.models import EXTRACTOR_VERSION, Claim, PageCache, Source
 
 VOTE = "How did the member vote on the harbor levy?"
 FUNDS = "Who are the largest donors to the member's campaign?"
 
 
-def _vg(*args):
+def _provenance(*args):
     width = cli.con.width
     cli.con.width = 10_000   # rich folds a long tmp path mid-word at 80 columns
     try:
@@ -57,11 +57,11 @@ def _built(run) -> dict[str, dict]:
 def test_a_run_whose_claims_answer_their_ids_questions_builds(tmp_path):
     run = _run(tmp_path / "data", [{"id": "q1", "text": VOTE}, {"id": "q2", "text": FUNDS}],
                [("q1", VOTE), ("q2", FUNDS)])
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 0, out
     assert set(_built(run)) == {"q1", "q2"}
     assert "questions.json" not in out and "left out" not in out, out
-    code, out = _vg("status", "--data", run)
+    code, out = _provenance("status", "--data", run)
     assert code == 0, out
 
 
@@ -72,7 +72,7 @@ def test_a_claim_on_an_id_the_question_set_does_not_list_is_left_out_and_fails(t
     every other one."""
     run = _run(tmp_path / "data", [{"id": "q1", "text": VOTE}, {"id": "q3", "text": FUNDS}],
                [("q1", VOTE), ("q2", FUNDS), ("q3", FUNDS)])
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 1, out
     assert f"1 claim(s) sit on an id {run / 'questions.json'} does not list: q2." in out, out
     assert "claim from claims/ to claims-archive/" in out and "derives_from" in out, out
@@ -81,7 +81,7 @@ def test_a_claim_on_an_id_the_question_set_does_not_list_is_left_out_and_fails(t
                         "their id names (above): q2"), out
     assert set(_built(run)) == {"q1", "q3"}
 
-    code, out = _vg("status", "--data", run)
+    code, out = _provenance("status", "--data", run)
     assert code == 1, out
     assert "does not list: q2." in out and "left out of this summary" in out, out
     table = out.split("does not list")[1]
@@ -93,7 +93,7 @@ def test_a_claim_answering_another_question_than_its_id_names_is_left_out_and_fa
     under the new one, and the shard's verdicts with it."""
     run = _run(tmp_path / "data", [{"id": "q1", "text": VOTE}, {"id": "q2", "text": FUNDS}],
                [("q1", VOTE), ("q2", "Which committees spent against the member?")])
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 1, out
     assert "1 claim(s) answer another question than" in out, out
     assert ("q2: the claim answers 'Which committees spent against the member?' "
@@ -101,7 +101,7 @@ def test_a_claim_answering_another_question_than_its_id_names_is_left_out_and_fa
     assert "give the new question a new id" in out, out
     assert set(_built(run)) == {"q1"}
 
-    code, out = _vg("status", "--data", run)
+    code, out = _provenance("status", "--data", run)
     assert code == 1 and "answer another question than" in out, out
 
 
@@ -111,7 +111,7 @@ def test_a_claim_deriving_from_one_left_out_reads_its_input_as_missing(tmp_path)
     (run / "claims" / "q3.json").write_text(Claim(
         question_id="q3", question=FUNDS, answer="a", confidence="not_found",
         derives_from=["q2"]).model_dump_json())
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 1, out
     built = _built(run)
     assert "q2" not in built
@@ -121,7 +121,7 @@ def test_a_claim_deriving_from_one_left_out_reads_its_input_as_missing(tmp_path)
 def test_an_id_differing_only_in_case_is_named(tmp_path):
     """The fix there is the claim's id, not archiving its research as a retired id's."""
     run = _run(tmp_path / "data", [{"id": "q3", "text": VOTE}], [("Q3", VOTE)])
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 1, out
     assert "does not list: Q3 (the set has q3, which differs only in case)." in out, out
 
@@ -129,7 +129,7 @@ def test_an_id_differing_only_in_case_is_named(tmp_path):
 def test_whitespace_alone_is_not_another_question(tmp_path):
     run = _run(tmp_path / "data", [{"id": "q1", "text": "How did the member\nvote on the levy? "}],
                [("q1", "How did the  member vote on the levy?")])
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 0 and _rendered(run), out
 
 
@@ -139,7 +139,7 @@ def test_typographic_drift_is_not_another_question(tmp_path):
     run = _run(tmp_path / "data",
                [{"id": "q1", "text": "What is the member’s record — on the levy?"}],
                [("q1", "what is the member's record -- on the levy?")])
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 0 and _rendered(run), out
 
 
@@ -148,7 +148,7 @@ def test_unicode_composition_alone_is_not_another_question(tmp_path):
     failure on it would be one nobody could see to fix."""
     run = _run(tmp_path / "data", [{"id": "q1", "text": "How did Ren\u00e9 Sample vote?"}],
                [("q1", "How did Rene\u0301 Sample vote?")])
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 0 and _rendered(run), out
 
 
@@ -157,13 +157,13 @@ def test_any_other_difference_is_another_question(tmp_path):
     the fix for each."""
     run = _run(tmp_path / "data", [{"id": "q1", "text": "How did the member vote on the levy?"}],
                [("q1", "How did the member vote on the levy")])
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 1, out
     assert "copy the exact text into its `question`" in out, out
 
 
 def test_a_pending_maps_from_is_reported_and_does_not_fail(tmp_path):
-    """Nothing applies a `maps_from` now that `vg remap` is retired, so no claim moves: each
+    """Nothing applies a `maps_from` now that `provenance remap` is retired, so no claim moves: each
     is still checked against the question at the id it sits on, which is what fails. An
     identity pair only adopted a rewording and never moved anything, so it is not reported."""
     run = _run(tmp_path / "data",
@@ -171,11 +171,11 @@ def test_a_pending_maps_from_is_reported_and_does_not_fail(tmp_path):
                 {"id": "q2", "text": FUNDS, "maps_from": "q5"},
                 {"id": "q3", "text": "Who endorsed them?", "maps_from": ""}],
                [("q1", VOTE), ("q2", FUNDS)])
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 0 and _rendered(run), out
-    assert "still declares maps_from (q2 from q5), a migration for the retired `vg remap`" in out
+    assert "still declares maps_from (q2 from q5), a migration for the retired `provenance remap`" in out
     assert "Delete the key" in out and "q1 from q1" not in out, out
-    code, out = _vg("status", "--data", run)
+    code, out = _provenance("status", "--data", run)
     assert code == 0 and "still declares maps_from (q2 from q5)" in out, out
 
 
@@ -184,13 +184,13 @@ def test_an_unlisted_id_a_pending_maps_from_names_says_so(tmp_path):
     it, but the operator reads that advice knowing which question it answered."""
     run = _run(tmp_path / "data", [{"id": "q2", "text": FUNDS, "maps_from": "q5"}],
                [("q5", FUNDS), ("q7", VOTE)])
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 1, out
     assert "does not list: q5 (maps_from of q2), q7." in out, out
 
 
 def test_a_candidate_run_reads_its_own_question_set_before_the_data_roots(tmp_path):
-    """`vg new-candidate` gives a run its own copy, retargeted to the candidate. Until a run
+    """`provenance new-candidate` gives a run its own copy, retargeted to the candidate. Until a run
     declares its question set (#8), that copy wins, and a run without one reads the root's."""
     root = tmp_path / "data"
     root.mkdir()
@@ -198,11 +198,11 @@ def test_a_candidate_run_reads_its_own_question_set_before_the_data_roots(tmp_pa
         [{"id": "q1", "text": "How did Alex Placeholder vote on the levy?"}]))
     run = _run(root / "cand", [{"id": "q1", "text": "How did Sam Sample vote on the levy?"}],
                [("q1", "How did Sam Sample vote on the levy?")])
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 0, out
 
     (run / "questions.json").unlink()
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 1, out
     assert f"another question than {root / 'questions.json'} asks" in out, out
 
@@ -215,13 +215,13 @@ def test_an_unreadable_own_question_set_does_not_fall_back_to_the_roots(tmp_path
     root.mkdir()
     (root / "questions.json").write_text(json.dumps([{"id": "q1", "text": VOTE}]))
     run = _run(root / "cand", "{", [("q1", VOTE)])
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 1, out
     assert f"unreadable question set {run / 'questions.json'}" in out, out
 
     (run / "questions.json").unlink()
     (run / "questions.json").symlink_to(tmp_path / "moved.json")
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 1, out
     assert f"unreadable question set {run / 'questions.json'}" in out, out
 
@@ -230,7 +230,7 @@ def test_no_question_set_is_said_and_does_not_fail(tmp_path):
     """Nothing to check against is not a pass: it is said, so silence never stands for a
     check that did not run."""
     run = _run(tmp_path / "data", None, [("q1", VOTE)])
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 0 and _rendered(run), out
     assert "no questions.json in" in out and "no claim was checked" in out, out
 
@@ -256,23 +256,23 @@ def test_an_unreadable_question_set_fails_rather_than_reading_as_empty(tmp_path,
     one claim file and one shard on macOS's default disk, and an id no claim can carry, whose
     claims would otherwise read as unlisted with nothing naming the entry."""
     run = _run(tmp_path / "data", text, [("q1", VOTE)])
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 1, out
     assert expect in out and str(run / "questions.json") in out, out
     assert "review app not rendered" in out and not _rendered(run), out
-    code, out = _vg("status", "--data", run)
+    code, out = _provenance("status", "--data", run)
     assert code == 1 and expect in out, out
 
 
 def test_status_with_no_claims_still_reads_the_question_set(tmp_path):
     """A migration nothing applies is worth settling before anyone researches on its ids."""
     run = _run(tmp_path / "data", [{"id": "q2", "text": FUNDS, "maps_from": "q1"}], [])
-    code, out = _vg("status", "--data", run)
+    code, out = _provenance("status", "--data", run)
     assert code == 0 and "No claims yet." in out, out
     assert "still declares maps_from (q2 from q1)" in out, out
 
     (run / "questions.json").write_text("[")
-    code, out = _vg("status", "--data", run)
+    code, out = _provenance("status", "--data", run)
     assert code == 1 and "unreadable question set" in out, out
 
 
@@ -281,7 +281,7 @@ def test_question_text_prints_as_text_not_markup(tmp_path):
     a bracketed aside, an emoji code, or a closing tag that raises."""
     run = _run(tmp_path / "data", [{"id": "q1", "text": "Did they vote [sic] :smile: yes?"}],
                [("q1", "Did they vote [/] :smile: no?")])
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 1, out
     assert "'Did they vote [/] :smile: no?'" in out, out
     assert "'Did they vote [sic] :smile: yes?'" in out, out
@@ -292,7 +292,7 @@ SNIPPET = "voted against the harbor levy on its second reading"
 
 
 def _cited(root, run, qid, question):
-    """`run/claims/<qid>.json`, citing a page cached under `root`, so `vg check-claim` passes it
+    """`run/claims/<qid>.json`, citing a page cached under `root`, so `provenance check-claim` passes it
     offline on everything but its question."""
     page = PageCache(url=URL, final_url=URL, status=200, content_type="text/html", title="T",
                      text=f"At the meeting the member {SNIPPET}, the minutes show.",
@@ -316,24 +316,24 @@ def test_check_claim_fails_a_question_build_would_refuse(tmp_path):
     (root / "questions.json").write_text(json.dumps([{"id": "q1", "text": VOTE}]))
 
     path = _cited(root, root, "q1", VOTE)
-    code, out = _vg("check-claim", path, "--data", root)
+    code, out = _provenance("check-claim", path, "--data", root)
     assert code == 0 and "All sources check out." in out, out
 
     path = _cited(root, root, "q1", VOTE.rstrip("?"))
-    code, out = _vg("check-claim", path, "--data", root)
+    code, out = _provenance("check-claim", path, "--data", root)
     assert code == 1, out
     assert f"question is not the one {root / 'questions.json'} asks at q1" in out, out
     assert f"yours: '{VOTE.rstrip('?')}' asked: '{VOTE}'" in out, out
 
     path = _cited(root, root, "q9", VOTE)
-    code, out = _vg("check-claim", path, "--data", root)
+    code, out = _provenance("check-claim", path, "--data", root)
     assert code == 1, out
     assert f"question id q9 is not in {root / 'questions.json'}" in out, out
     assert "do not edit it" in out, out
 
     # A miscased id is the researcher's to fix, not a changed question set to report.
     path = _cited(root, root, "Q1", VOTE)
-    code, out = _vg("check-claim", path, "--data", root)
+    code, out = _provenance("check-claim", path, "--data", root)
     assert code == 1, out
     assert (f"question id Q1 is not in {root / 'questions.json'}, which has q1: they differ "
             f"only in case") in out, out
@@ -341,7 +341,7 @@ def test_check_claim_fails_a_question_build_would_refuse(tmp_path):
 
 
 def test_check_claim_finds_the_run_from_inside_claims(tmp_path, monkeypatch):
-    """`vg check-claim q1.json` from inside claims/ gave a parent name of "", fell back to
+    """`provenance check-claim q1.json` from inside claims/ gave a parent name of "", fell back to
     --data, found no question set there, and passed without checking the question."""
     root = tmp_path / "data"
     root.mkdir()
@@ -350,7 +350,7 @@ def test_check_claim_finds_the_run_from_inside_claims(tmp_path, monkeypatch):
     monkeypatch.chdir(root / "claims")
     # The default --data, as a researcher runs it: from here it names claims/data, which has
     # no question set. --cache only points at the cached page.
-    code, out = _vg("check-claim", "q1.json", "--cache", root)
+    code, out = _provenance("check-claim", "q1.json", "--cache", root)
     assert code == 1 and "question is not the one" in out, out
 
 
@@ -366,7 +366,7 @@ def test_check_claim_reads_the_question_set_of_the_run_the_claim_is_in(tmp_path)
     (run / "questions.json").write_text(json.dumps(
         [{"id": "q1", "text": "How did Sam Sample vote on the levy?"}]))
     path = _cited(root, run, "q1", "How did Sam Sample vote on the levy?")
-    code, out = _vg("check-claim", path, "--data", root)
+    code, out = _provenance("check-claim", path, "--data", root)
     assert code == 0 and "All sources check out." in out, out
 
 
@@ -374,12 +374,12 @@ def test_check_claim_with_no_question_set_says_so_and_one_it_cannot_read_fails(t
     root = tmp_path / "data"
     root.mkdir()
     path = _cited(root, root, "q1", VOTE)
-    code, out = _vg("check-claim", path, "--data", root)
+    code, out = _provenance("check-claim", path, "--data", root)
     assert code == 0, out
     assert "no questions.json for" in out and "the question was not checked" in out, out
 
     (root / "questions.json").write_text('{"q1": "?"}')
-    code, out = _vg("check-claim", path, "--data", root)
+    code, out = _provenance("check-claim", path, "--data", root)
     assert code == 1, out
     assert "cannot check the question:" in out and "is not a list of questions" in out, out
 
@@ -388,7 +388,7 @@ def test_an_id_retired_as_the_gate_says_leaves_nothing_to_report(tmp_path):
     """The retire procedure and the unowned-shard message said where a retired claim goes
     (claims-archive/) but only that its shard leaves judgments/. Both now name
     judgments-archive/, and a run retired that way passes the gate with nothing left over."""
-    from vgpipe import judgments
+    from provenance import judgments
 
     root = tmp_path / "data"
     root.mkdir()
@@ -397,19 +397,19 @@ def test_an_id_retired_as_the_gate_says_leaves_nothing_to_report(tmp_path):
     old = Claim.model_validate_json(_cited(root, root, "q1", VOTE).read_text())
     judgments.record(root, "q1", old.sources[0].sid, "supports", "judged under the old id")
 
-    code, out = _vg("build", "--data", root)
+    code, out = _provenance("build", "--data", root)
     assert code == 1 and "shard from judgments/ to judgments-archive/" in out, out
 
     (root / "claims-archive").mkdir()
     (root / "claims" / "q1.json").rename(root / "claims-archive" / "q1.json")
-    _, out = _vg("judgments", "--data", root)
+    _, out = _provenance("judgments", "--data", root)
     assert "1 verdict(s) sit in judgments/ under an id no claim has (q1.json)" in out, out
     assert "Move each to judgments-archive/ to keep it" in out, out
 
     (root / "judgments-archive").mkdir()
     judgments.path_for(root, "q1").rename(root / "judgments-archive" / "q1.json")
-    _, out = _vg("judgments", "--data", root)
+    _, out = _provenance("judgments", "--data", root)
     assert "no claim has" not in out and "judgments-archive" not in out, out
-    code, out = _vg("build", "--data", root)
+    code, out = _provenance("build", "--data", root)
     assert code == 0 and "left out" not in out, out
     assert set(_built(root)) == {"q2"}

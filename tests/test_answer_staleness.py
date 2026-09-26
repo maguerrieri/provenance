@@ -15,8 +15,8 @@ import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from vgpipe import judgments
-from vgpipe.models import EXTRACTOR_VERSION, Claim, PageCache, Source
+from provenance import judgments
+from provenance.models import EXTRACTOR_VERSION, Claim, PageCache, Source
 
 HOST = "https://minutes.example"
 QUESTION = "How did the member for District 9 vote on Measure Q-7?"
@@ -34,10 +34,10 @@ def claim(qid: str, *sources: Source, answer: str = FOR, question: str = QUESTIO
                  sources=list(sources) or [src()])
 
 
-def _vg(*args) -> tuple[int, str]:
+def _provenance(*args) -> tuple[int, str]:
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     width = cli.con.width
     cli.con.width = 10_000   # rich folds a long tmp path mid-word at 80 columns
@@ -49,14 +49,14 @@ def _vg(*args) -> tuple[int, str]:
 
 
 def _write(run: Path, *claims: Claim) -> None:
-    """Write claim files as a researcher does: research fields only, `vg verify` next."""
+    """Write claim files as a researcher does: research fields only, `provenance verify` next."""
     for c in claims:
         (run / "claims" / f"{c.question_id}.json").write_text(c.model_dump_json())
 
 
 def _verified_run(run: Path, *claims: Claim) -> Path:
-    """A run whose claims `vg verify` has checked offline against cached pages."""
-    from vgpipe.fetch import cache_path
+    """A run whose claims `provenance verify` has checked offline against cached pages."""
+    from provenance.fetch import cache_path
 
     (run / "claims").mkdir(parents=True)
     (run / "questions.json").write_text(json.dumps(
@@ -74,14 +74,14 @@ def _verified_run(run: Path, *claims: Claim) -> Path:
 
 
 def _verify(run: Path) -> str:
-    code, out = _vg("verify", "--data", run)
+    code, out = _provenance("verify", "--data", run)
     assert code == 0, out
     return out
 
 
 def _handed(data, qid: str, sid: str) -> list[str]:
-    """`--context` and the token `vg handoff` prints beside `sid`, as a verifier passes it on."""
-    code, out = _vg("handoff", qid, "--data", data)
+    """`--context` and the token `provenance handoff` prints beside `sid`, as a verifier passes it on."""
+    code, out = _provenance("handoff", qid, "--data", data)
     assert code == 0, out
     token = re.search(rf"sid {re.escape(sid)}\s+context token (\w+)", out)
     assert token, out
@@ -89,21 +89,21 @@ def _handed(data, qid: str, sid: str) -> list[str]:
 
 
 def _judge(run: Path, qid: str, s: Source, verdict: str, note: str = "") -> None:
-    code, out = _vg("judge", qid, s.sid, verdict, "--data", run, "--note", note or verdict,
+    code, out = _provenance("judge", qid, s.sid, verdict, "--data", run, "--note", note or verdict,
                     *_handed(run, qid, s.sid))
     assert code == 0, out
 
 
 def _built(run: Path) -> dict[str, dict]:
-    """{question id: claim} as `vg build` writes it out, status included."""
-    code, out = _vg("build", "--data", run)
+    """{question id: claim} as `provenance build` writes it out, status included."""
+    code, out = _provenance("build", "--data", run)
     assert code == 0, out
     return {c["question_id"]: c for c in json.loads((run / "out" / "claims.json").read_text())}
 
 
 def _gate(run: Path) -> tuple[int, int, int, str]:
-    """(exit code, need a verdict, stale, output) of `vg judgments`."""
-    code, out = _vg("judgments", "--data", run)
+    """(exit code, need a verdict, stale, output) of `provenance judgments`."""
+    code, out = _provenance("judgments", "--data", run)
     m = re.search(r"(\d+) of \d+ cited source\(s\) need a verdict \((\d+) stale\)", out)
     assert m, out
     return code, int(m.group(1)), int(m.group(2)), out
@@ -215,14 +215,14 @@ def test_a_verdict_filed_under_another_claims_id_does_not_apply_there(tmp_path):
     [(_s, _j, why)] = judgments.verdicts_for(c, run, cache_root=run)
     assert "filed under another claim's id" in why, why
     assert _built(run)["q1"]["status"] == "pending"
-    # and the gate counts it as a verifier's to close, which `vg judge` lets it do
+    # and the gate counts it as a verifier's to close, which `provenance judge` lets it do
     assert _gate(run)[1:3] == (2, 1)
     _judge(run, "q1", s, "supports")
     assert _built(run)["q1"]["status"] == "verified"
 
 
 def test_verify_reports_a_verdict_about_another_answer_as_not_applied(tmp_path):
-    """`vg verify` is where a retry's claim is checked first, so it says which verdicts no
+    """`provenance verify` is where a retry's claim is checked first, so it says which verdicts no
     longer apply and why, as it does for a page re-fetched since."""
     s = src()
     run = _verified_run(tmp_path / "run", claim("q1", s))
@@ -234,10 +234,10 @@ def test_verify_reports_a_verdict_about_another_answer_as_not_applied(tmp_path):
 
 
 def test_a_verdict_stale_on_both_halves_names_both(tmp_path):
-    """Re-judging a rewritten claim whose page was also re-fetched needs `vg verify` first,
-    or `vg judge` refuses to stamp a copy the verifier did not read. Naming only the answer
+    """Re-judging a rewritten claim whose page was also re-fetched needs `provenance verify` first,
+    or `provenance judge` refuses to stamp a copy the verifier did not read. Naming only the answer
     would hide that step."""
-    from vgpipe.fetch import cache_path
+    from provenance.fetch import cache_path
 
     s = src()
     run = _verified_run(tmp_path / "run", claim("q1", s))
@@ -252,11 +252,11 @@ def test_a_verdict_stale_on_both_halves_names_both(tmp_path):
 
 
 def test_a_stale_verdict_on_a_redrawn_context_waits_on_verify_not_a_verifier(tmp_path):
-    """Revalidation redraws an excerpt that moved since `vg verify`, and drops any verdict on
-    the old one. The gate sent such a row to `vg verify` only when its verdict had applied, so
+    """Revalidation redraws an excerpt that moved since `provenance verify`, and drops any verdict on
+    the old one. The gate sent such a row to `provenance verify` only when its verdict had applied, so
     once a rewritten answer made the verdict stale, the row counted as a verifier's to close:
-    `vg judge` accepted a verdict on the claim file's outdated excerpt, and build dropped it."""
-    from vgpipe.fetch import cache_path
+    `provenance judge` accepted a verdict on the claim file's outdated excerpt, and build dropped it."""
+    from provenance.fetch import cache_path
 
     s = src()
     run = _verified_run(tmp_path / "run", claim("q1", s))
@@ -272,13 +272,13 @@ def test_a_stale_verdict_on_a_redrawn_context_waits_on_verify_not_a_verifier(tmp
     code, need, stale, out = _gate(run)
     assert (code, need, stale) == (0, 0, 0), out       # not waiting on a verifier...
     assert "1 more source(s) have nothing a verifier can judge yet" in out, out
-    assert "unreviewed (run vg verify)" in out, out     # ...but on `vg verify`
+    assert "unreviewed (run provenance verify)" in out, out     # ...but on `provenance verify`
 
 
 def test_an_unjudged_source_on_a_redrawn_context_waits_on_verify_not_a_verifier(tmp_path):
-    """The same row with no verdict yet. It counted as a verifier's to close, and `vg judge`
+    """The same row with no verdict yet. It counted as a verifier's to close, and `provenance judge`
     stamped a verdict on the claim file's outdated excerpt that build then dropped."""
-    from vgpipe.fetch import cache_path
+    from provenance.fetch import cache_path
 
     s = src()
     run = _verified_run(tmp_path / "run", claim("q1", s))
@@ -289,7 +289,7 @@ def test_an_unjudged_source_on_a_redrawn_context_waits_on_verify_not_a_verifier(
     code, need, stale, out = _gate(run)
     assert (code, need, stale) == (0, 0, 0), out
     assert "1 more source(s) have nothing a verifier can judge yet" in out, out
-    assert "unreviewed (run vg verify) the context changed since vg verify" in out, out
+    assert "unreviewed (run provenance verify) the context changed since provenance verify" in out, out
 
     _verify(run)                                            # redraws the claim file's excerpt
     code, need, stale, out = _gate(run)

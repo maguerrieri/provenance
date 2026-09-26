@@ -275,7 +275,7 @@ _warned: set[tuple[str, datetime]] = set()
 
 def _warn_kept(page: PageCache) -> None:
     """Log a page kept after a failed re-fetch, once per run. The URL is one a claim cited or
-    `vg fetch` was given, and the note quotes exception text, so both go through `printable()`:
+    `provenance fetch` was given, and the note quotes exception text, so both go through `printable()`:
     Python's last-resort handler writes the line as it is, and an ESC or C1 sequence in either
     reached the operator's terminal. The retry command is `shlex.quote`d, and printed only for a
     URL a pasted copy carries as it is (`unprintable()`, the rule for every command printed for
@@ -286,10 +286,10 @@ def _warn_kept(page: PageCache) -> None:
     _warned.add((page.url, f.attempted_at))
     # Withheld, the line still says how to retry: from where the URL is held as it is, since
     # the operator cannot copy or type it from here.
-    retry = (f"Retry: vg fetch --refresh {shlex.quote(page.url)}" if not unprintable(page.url)
+    retry = (f"Retry: provenance fetch --refresh {shlex.quote(page.url)}" if not unprintable(page.url)
              else "No retry command: the URL holds a control or invisible character a pasted "
-                  "command would not carry. Retry with vg verify --refresh, which reads it from "
-                  "the claim citing it, or vg fetch --refresh with the URL copied from its "
+                  "command would not carry. Retry with provenance verify --refresh, which reads it from "
+                  "the claim citing it, or provenance fetch --refresh with the URL copied from its "
                   "source, not from this line")
     log.warning(f"{printable(page.url)}: {printable(kept_copy_note(page))}. {retry}")
 

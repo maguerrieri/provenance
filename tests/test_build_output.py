@@ -1,8 +1,8 @@
-"""A build that stops short leaves no review app behind for `vg serve`.
+"""A build that stops short leaves no review app behind for `provenance serve`.
 
-`vg build` renders nothing when it can't read what it would check or render (the question set,
+`provenance build` renders nothing when it can't read what it would check or render (the question set,
 a claim, verdict or archive file), and a crash or a kill stops it too. Each used to leave the
-previous build's review.html and claims.json in out/, and `vg serve` served that render as if
+previous build's review.html and claims.json in out/, and `provenance serve` served that render as if
 nothing had happened. Build now removes the last render before any step that can stop it, so
 whatever stops it leaves nothing to serve, and serve says why."""
 
@@ -14,14 +14,14 @@ import re
 import pytest
 from typer.testing import CliRunner
 
-from vgpipe import cli, report
-from vgpipe.models import Claim
+from provenance import cli, report
+from provenance.models import Claim
 
 VOTE = "How did the member vote on the harbor levy?"
 FUNDS = "Who are the largest donors to the member's campaign?"
 
 
-def _vg(*args):
+def _provenance(*args):
     width = cli.con.width
     cli.con.width = 10_000   # rich folds a long tmp path mid-word at 80 columns
     try:
@@ -46,7 +46,7 @@ def run(tmp_path):
         [{"id": "q1", "text": VOTE}, {"id": "q2", "text": FUNDS}]))
     _claim(run, "q1", VOTE)
     _claim(run, "q2", FUNDS)
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 0 and _left(run) == {report.REVIEW_HTML, report.CLAIMS_JSON}, out
     return run
 
@@ -87,29 +87,29 @@ REFUSALS = {
 def test_a_build_that_stops_short_leaves_no_review_app_to_serve(run, tmp_path, args, damage):
     if damage:
         damage(run)
-    code, out = _vg("build", "--data", run, *(a.format(tmp=tmp_path) for a in args))
+    code, out = _provenance("build", "--data", run, *(a.format(tmp=tmp_path) for a in args))
     assert code != 0, out
     assert _left(run) == set(), out
 
-    code, out = _vg("serve", "--data", run, "--no-open-browser")
+    code, out = _provenance("serve", "--data", run, "--no-open-browser")
     assert code == 1, out
     assert f"No review.html in {(run / 'out').resolve()}" in out, out
-    assert "its last run refused and rendered nothing. Run `vg build`" in out, out
+    assert "its last run refused and rendered nothing. Run `provenance build`" in out, out
 
 
 def test_the_question_id_refusal_says_the_app_was_not_rendered(run):
     _unreadable_questions(run)
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 1 and "review app not rendered" in out, out
     assert _left(run) == set(), out
 
 
 def test_a_build_after_the_fix_renders_again(run):
     _unreadable_questions(run)
-    assert _vg("build", "--data", run)[0] == 1
+    assert _provenance("build", "--data", run)[0] == 1
     (run / "questions.json").write_text(json.dumps(
         [{"id": "q1", "text": VOTE}, {"id": "q2", "text": FUNDS}]))
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 0 and _left(run) == {report.REVIEW_HTML, report.CLAIMS_JSON}, out
 
 
@@ -118,7 +118,7 @@ def test_a_build_that_leaves_a_claim_out_serves_its_own_render(run):
     render, so what is served after that exit 1 is this build's, without the claim."""
     _claim(run, "q1", VOTE, answer="the newer answer")
     _claim(run, "q3", FUNDS)   # an id questions.json does not list
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 1 and "left out of the review app" in out, out
     assert _left(run) == {report.REVIEW_HTML, report.CLAIMS_JSON}, out
     written = {c["question_id"]: c["answer"]
@@ -138,13 +138,13 @@ def test_a_build_that_dies_writing_the_page_leaves_none(run, monkeypatch):
 
     _claim(run, "q1", VOTE, answer="the newer answer")
     monkeypatch.setattr(report.os, "replace", killed_at_the_page)
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code != 0, out
     assert _left(run) == {report.CLAIMS_JSON}, out   # nor the temp file
     written = json.loads((run / "out" / report.CLAIMS_JSON).read_text())
     assert [c["answer"] for c in written if c["question_id"] == "q1"] == ["the newer answer"]
 
-    code, out = _vg("serve", "--data", run, "--no-open-browser")
+    code, out = _provenance("serve", "--data", run, "--no-open-browser")
     assert code == 1, out
 
 
@@ -154,14 +154,14 @@ def test_a_build_removes_the_temp_files_a_killed_build_left(run):
     for name in (report.REVIEW_HTML, report.CLAIMS_JSON):
         (run / "out" / f".{name}.4242.tmp").write_text("left by a killed build")
     _unreadable_questions(run)
-    assert _vg("build", "--data", run)[0] == 1
+    assert _provenance("build", "--data", run)[0] == 1
     assert _left(run) == set()
 
 
 def test_a_build_removes_only_what_it_writes(run):
     (run / "out" / "notes.txt").write_text("the reviewer's own file")
     _unreadable_questions(run)
-    assert _vg("build", "--data", run)[0] == 1
+    assert _provenance("build", "--data", run)[0] == 1
     assert _left(run) == {"notes.txt"}
 
 
@@ -170,7 +170,7 @@ def test_a_render_it_cannot_remove_stops_the_build(run, monkeypatch):
         raise PermissionError(13, "Permission denied", str(self))
 
     monkeypatch.setattr(report.Path, "unlink", locked)
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 1, out
     assert f"could not clear the previous render from {run / 'out'}: [Errno 13]" in out, out
     assert "Remove it by hand" in out and "wrote" not in out, out

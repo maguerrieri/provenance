@@ -21,7 +21,7 @@ def printable(text: str, *, lines: bool = False) -> str:
     nothing else to the terminal. Every print or log of such text goes through here. rich's
     `Text` strips only BEL, BS, VT, FF and CR, so an ESC or C1 sequence in a filer name or a
     response body erased lines or faked output. Splitting on `\\n` alone left an ANSI erase-line
-    or a U+2028 to fake a line of `vg handoff`'s own framing, and a lone surrogate (which
+    or a U+2028 to fake a line of `provenance handoff`'s own framing, and a lone surrogate (which
     json.loads keeps, and which an undecodable byte in argv becomes) made the print raise.
     Backslashes are left alone: the text a verifier compares, snippet against context, must read
     as written.

@@ -5,7 +5,7 @@ reused"). A claim and its verdicts are filed under the id they were researched f
 moves them, so what can go wrong is the id coming to mean something else, or nothing: a
 question reworded or replaced in place, or an id retired while its claim stays in claims/.
 `check()` compares each claim with the question the run's questions.json holds for its id. It
-is the rule's gate: `vg build` and `vg status` run it on every claim, and `vg check-claim` on
+is the rule's gate: `provenance build` and `provenance status` run it on every claim, and `provenance check-claim` on
 the one a researcher is handing on.
 """
 
@@ -33,7 +33,7 @@ class UnreadableQuestions(ValueError):
 @dataclass
 class QuestionSet:
     text: dict[str, str]        # id -> the question asked at it
-    maps_from: dict[str, str]   # id -> another id a `vg remap` migration declared it maps from
+    maps_from: dict[str, str]   # id -> another id a `provenance remap` migration declared it maps from
 
 
 @dataclass
@@ -55,7 +55,7 @@ def find(data: Path) -> Path | None:
     """The run's questions.json: its own, else the data root's. None when neither exists.
 
     Which question set belongs to a run is #8. Until a run declares it, a candidate run
-    (`data/<candidate>`, which `vg new-candidate` gives its own retargeted copy) reads its own,
+    (`data/<candidate>`, which `provenance new-candidate` gives its own retargeted copy) reads its own,
     and one without falls back to its parent's template. A file that exists but can't be read
     is `load()`'s to refuse, never a reason to fall back: a dangling symlink included, which
     `exists()` alone reads as absent.

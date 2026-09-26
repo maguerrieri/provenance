@@ -177,7 +177,7 @@ _RECEIPT_GIFTS = f"""
                  {amount_sql("r.AMOUNT")} AS AMT
           FROM {{rows}} r JOIN FILER_FILING f ON f.FILING_ID = r.FILING_ID
           WHERE f.FILER_ID = ?{{extra}}) x
-    GROUP BY x.tbase, vg_name_key(x.CTRIB_NAML), vg_name_key(x.CTRIB_NAMF),
+    GROUP BY x.tbase, provenance_name_key(x.CTRIB_NAML), provenance_name_key(x.CTRIB_NAMF),
              x.RCPT_DATE, x.AMT
     HAVING {{having}}
 """
@@ -385,7 +385,7 @@ class QueryResult:
         matches to leave the row for a person rather than retry it; the third says LEFT_OUT and
         the last "is for names exactly as filed", which it matches too. Each names its
         UNSETTLED_SHOWN or LATE_SHOWN largest (`_listed`): this becomes a claim file's reason,
-        and a committee's whole history can name dozens. `vg query` prints the rest.
+        and a committee's whole history can name dozens. `provenance query` prints the rest.
         """
         why = []
         if self.unrestated:
@@ -442,7 +442,7 @@ def _listed(items: list, line, shown: int, more: str) -> str:
     # > 0, not truthiness: with fewer items than shown the difference is negative, and truthy,
     # and every short reason ended "and -4 more filing(s)"
     if (rest := len(items) - shown) > 0:
-        each += f"; and {rest} more {more}, which `vg query` lists"
+        each += f"; and {rest} more {more}, which `provenance query` lists"
     return each
 
 
@@ -459,7 +459,7 @@ def share_text(u) -> str:
     return f"{u.describe()}: {what} this result {u.does} (open {u.cite_url})"
 
 
-# What `vg verify` and `vg build` write for a value with `reattributed` filings, and what the
+# What `provenance verify` and `provenance build` write for a value with `reattributed` filings, and what the
 # research skill matches to tell such a row from one to retry.
 LEFT_OUT = "leaves out rows that a filing's own amendment attributed to this candidate"
 
@@ -1042,8 +1042,8 @@ def _groups(names: dict[Any, _Name]) -> dict[Any, frozenset[int]]:
 
 
 # A name's key, as `_givers` groups it: last and first name, each through `_name_key`.
-_KL = "vg_name_key({t}.CTRIB_NAML)"
-_KF = "vg_name_key({t}.CTRIB_NAMF)"
+_KL = "provenance_name_key({t}.CTRIB_NAML)"
+_KF = "provenance_name_key({t}.CTRIB_NAMF)"
 
 
 @functools.lru_cache(maxsize=1 << 16)
@@ -1055,7 +1055,7 @@ def _name_key(part: Any) -> str:
     own that displayed like the plain one ("Rue Abbot | Rue Abbot"), and 'José' and 'JOSÉ' were
     two givers, each short. Upper-casing without normalizing still split 'José' written with a
     combining accent from the one written with 'é'. `calaccess.connect` registers it as
-    vg_name_key. The dedup has to use the same key as the names: with ASCII rules there and
+    provenance_name_key. The dedup has to use the same key as the names: with ASCII rules there and
     these here, a gift's two copies filed 'Élise' and 'élise' stayed apart and were summed under
     one name. Normalized again after folding, since folding can leave a string unnormalized.
     Remembered: SQLite asks it of every row, and a committee's rows repeat a few names."""
@@ -1118,9 +1118,9 @@ def _name_sql(alias: str, first: bool) -> str:
     CTRIB_NAMF too when `first`. Its args are the name, then the first name. One rule for the
     rows a total sums and the names it holds against it: two copies that drifted apart would
     flag the counted name as another one."""
-    sql = f"{_KL.format(t=alias)} = vg_name_key(?)"
+    sql = f"{_KL.format(t=alias)} = provenance_name_key(?)"
     if first:
-        sql += f" AND {_KF.format(t=alias)} = vg_name_key(?)"
+        sql += f" AND {_KF.format(t=alias)} = provenance_name_key(?)"
     return sql
 
 
@@ -2031,7 +2031,7 @@ def _ie_total(root: Path, *, candidate_last: str, first: str = "", stance: str =
     if n == 0:
         if reattributed:
             # Carried on the miss below, as the receipt queries carry a left-out schedule: a
-            # miss with an unsettled reason goes to a person (`vg verify`), and that reason
+            # miss with an unsettled reason goes to a person (`provenance verify`), and that reason
             # names each filing, so the detail only says why nothing was counted. Without it
             # the miss read as "nobody spent on this candidate" when a filing's own amendment
             # says someone did.
@@ -2080,7 +2080,7 @@ class Query(NamedTuple):
     # that changed but happened to return the same number would keep a verdict about the old
     # one. Every name here has already returned different numbers after a fix (amendment,
     # cover-record and cross-form dedup; the first-name requirement). A verdict recorded under
-    # another version is stale (`judgments.is_stale()`), and `vg verify` says which.
+    # another version is stale (`judgments.is_stale()`), and `provenance verify` says which.
     #
     # BUMP IT when a change can alter what the query returns for ANY input the previous
     # version accepted, even if every recorded figure still reproduces: dedup, name matching,
@@ -2182,12 +2182,12 @@ def dataset(name: str) -> str:
 
 
 def describe_export(export_date: str, data: str = "CAL-ACCESS") -> str:
-    """How every message names the export a figure came from — `vg query`, `vg judge`,
-    `vg judgments` and the review page — so a reviewer comparing them reads one phrasing."""
+    """How every message names the export a figure came from — `provenance query`, `provenance judge`,
+    `provenance judgments` and the review page — so a reviewer comparing them reads one phrasing."""
     if export_date:
         return f"the {data} export of {export_date}"
     return (f"an undated {data} database (built before exports were dated; rebuild it with "
-            f"`vg calaccess build`)")
+            f"`provenance calaccess build`)")
 
 
 def export_date(name: str, root: Path) -> str:
@@ -2226,8 +2226,8 @@ def unsafe_reason(name: str, params: dict[str, str]) -> str | None:
     shell. Quoting makes any printable text inert; it cannot help with the rest:
     - a control character acts on the terminal before the shell parses a quote (^C abandons
       the line; an embedded end-of-bracketed-paste turns what follows into keystrokes);
-    - a name starting with `-` is read by `vg query` as an option, quoted or not;
-    - a key holding `=` is split differently by `vg query` than it was by verification;
+    - a name starting with `-` is read by `provenance query` as an option, quoted or not;
+    - a key holding `=` is split differently by `provenance query` than it was by verification;
     - an invisible character (`_INVISIBLE`, or anything str.isprintable() rejects) makes the
       command on screen differ from the one copied.
     The messages never echo the text. The cost, measured: 84 of ~1.2M distinct contributor
@@ -2296,8 +2296,8 @@ def human_command(name: str, params: dict[str, str], cache_root: str | None = No
     """The command a reviewer copies and runs to check this themselves.
 
     `cache_root` is the root the figure was checked against (`QueryRun.cache_root`). Pass it
-    whenever it is known: without `--cache`, `vg query` resolves its own root from `--data`,
-    so a figure verified with `vg verify --cache X` printed a command reading a different
+    whenever it is known: without `--cache`, `provenance query` resolves its own root from `--data`,
+    so a figure verified with `provenance verify --cache X` printed a command reading a different
     database, or none — a green row its own command could not reproduce.
 
     The review page hands this string to a human to paste into a shell, and the name, keys
@@ -2327,4 +2327,4 @@ def human_command(name: str, params: dict[str, str], cache_root: str | None = No
         cache = f" --cache {shlex.quote(root if not root.startswith('-') else './' + root)}"
     args = "".join(f" --param {shlex.quote(str(k))}={shlex.quote(str(v))}"
                    for k, v in params.items())
-    return f"uv run vg query {shlex.quote(name)}{cache}{args}"
+    return f"uv run provenance query {shlex.quote(name)}{cache}{args}"

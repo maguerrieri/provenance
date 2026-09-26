@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from vgpipe import access
-from vgpipe.access import Recipe, credential_header, parse_curl, run
+from provenance import access
+from provenance.access import Recipe, credential_header, parse_curl, run
 
 URL = "https://portal.example/api/search"
 USER = "canary-user"
@@ -263,7 +263,7 @@ def test_the_commands_refuse_a_url_whose_host_cant_be_parsed_without_repeating_i
     """What a person sees: the refusal is printed, and a terminal can be logged."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     reg = tmp_path / "access"
     reg.mkdir()
@@ -326,7 +326,7 @@ def test_run_allows_a_hand_added_header_that_is_not_a_credential(monkeypatch):
 def test_import_command_writes_nothing_for_a_refused_paste(tmp_path, monkeypatch):
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     monkeypatch.setattr(access, "REGISTRY", tmp_path / "access")
     paste = tmp_path / "paste.txt"
@@ -340,7 +340,7 @@ def test_import_command_writes_nothing_for_a_refused_paste(tmp_path, monkeypatch
 def test_import_command_writes_the_entry_without_session_headers(tmp_path, monkeypatch):
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     monkeypatch.setattr(access, "REGISTRY", tmp_path / "access")
     paste = tmp_path / "paste.txt"

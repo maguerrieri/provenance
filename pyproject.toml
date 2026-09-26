@@ -1,5 +1,5 @@
 [project]
-name = "vgpipe"
+name = "provenance"
 version = "0.1.0"
 description = "Voter guide research pipeline: cited-claim verification + local review app"
 readme = "README.md"
@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.scripts]
-vg = "vgpipe.cli:app"
+provenance = "provenance.cli:app"
 
 [dependency-groups]
 dev = ["pytest>=8.3", "isort>=5.13"]

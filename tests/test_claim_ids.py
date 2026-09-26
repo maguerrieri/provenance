@@ -7,7 +7,7 @@ import re
 
 import pytest
 
-from vgpipe.cli import load_claims
+from provenance.cli import load_claims
 
 
 def _claim(qid: str) -> dict:
@@ -24,7 +24,7 @@ def _write(path, *qids):
 def test_two_ids_differing_only_in_case_are_refused_at_load(tmp_path, layout):
     """Claims Q1 and q1 both loaded, since the duplicate check compared ids exactly. On a
     case-insensitive disk (macOS's default) their verdict shards Q1.json and q1.json are one
-    file: `vg judge` for either wrote into it, `vg build` applied its verdicts to both claims,
+    file: `provenance judge` for either wrote into it, `provenance build` applied its verdicts to both claims,
     and a re-home could plan both as destinations, the second write replacing the first with no
     error and no archive entry. So loading refuses the pair on every disk, naming both files.
 
@@ -74,10 +74,10 @@ def test_ids_that_differ_in_more_than_case_still_load(tmp_path):
 
 def test_every_command_stops_on_the_pair_with_both_files_named(tmp_path, monkeypatch):
     """Every command loads claims through one loader, so the refusal reaches them all as a
-    readable message and exit 1, not a traceback. `vg status` stands in for them."""
+    readable message and exit 1, not a traceback. `provenance status` stands in for them."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     claims = tmp_path / "claims"
     claims.mkdir()

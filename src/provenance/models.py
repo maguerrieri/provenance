@@ -45,13 +45,13 @@ MECHANICAL_FAILURES = frozenset({"snippet_not_found", "snippet_not_unique", "sni
                                  "fetch_failed", "bad_source_class", "human_review"})
 
 # Usable evidence that the judgment pass never covers. A paywalled row has no confirmed
-# context: the live page is gated and no snapshot confirmed the quote. So `vg judge` refuses
+# context: the live page is gated and no snapshot confirmed the quote. So `provenance judge` refuses
 # it, and a verdict recorded on it reads stale. The route to a verdict is its snapshot. Once
-# `vg verify` or `vg archive` confirms the quote there, the row is `verified_via_archive` and
+# `provenance verify` or `provenance archive` confirms the quote there, the row is `verified_via_archive` and
 # is judged like any other. Until then the human checks it, and the claim is flagged for that.
 NOT_JUDGED = frozenset({"could_not_verify_paywall"})
 
-# Whether the snapshot `vg archive` saved actually holds the cited page. A successful save is
+# Whether the snapshot `provenance archive` saved actually holds the cited page. A successful save is
 # not a usable snapshot: SPN reports success on bot-protected pages and captures the bot check.
 #   archived             — checked: the snippet is in it, or it matches the live page
 #   archive_unconfirmed  — a capture of the cited URL that could not be checked: nothing to
@@ -91,7 +91,7 @@ class QueryRun(BaseModel):
     @classmethod
     def _printable(cls, v: str) -> str:
         """It is printed into a command a human pastes. Checked on load too: a trusted load
-        (`vg status`, `vg judgments`) reads a stamp back from a claim file anyone can edit."""
+        (`provenance status`, `provenance judgments`) reads a stamp back from a claim file anyone can edit."""
         from .queries import unprintable
 
         if unprintable(v):
@@ -105,7 +105,7 @@ class PageCopy(BaseModel):
 
     `url` is the cache key the copy sits under: the cited page, or the snapshot for a
     `verified_via_archive` row, whose context comes from the Wayback capture and not from the
-    paywall stub at the cited URL. A verdict is about the copy the verifier read, so `vg judge`
+    paywall stub at the cited URL. A verdict is about the copy the verifier read, so `provenance judge`
     stamps this one rather than whatever is cached when it runs, and refuses when the
     cache no longer holds it.
     """
@@ -154,7 +154,7 @@ class QueryCitation(BaseModel):
 
         The name, keys and values all end up in a shell command a human copies and runs.
         Quoting makes printable text inert, but not a control character, a name read as an
-        option, or a key `vg query` splits differently — see `queries.unsafe_reason`. Checked
+        option, or a key `provenance query` splits differently — see `queries.unsafe_reason`. Checked
         here, like `_http_only`, so no consumer of a loaded claim has to remember to.
         """
         from .queries import unsafe_reason
@@ -267,7 +267,7 @@ class Source(BaseModel):
         """The claim waits on this source's verdict: none is recorded, and the source is not
         one the judgment pass never covers (NOT_JUDGED), where waiting would wait forever.
 
-        For `Claim.status` only. It is not the `vg judgments` gate: a source `vg verify` has not
+        For `Claim.status` only. It is not the `provenance judgments` gate: a source `provenance verify` has not
         reached yet waits here, but the gate counts only sources with confirmed context
         (`verify.GOOD`), since that is all a verifier can judge."""
         return (self.verification.support == "unreviewed"
@@ -294,7 +294,7 @@ class Source(BaseModel):
 # Question IDs become filenames (`data/claims/<qid>.json`, `data/judgments/<qid>.json`),
 # and agents supply them. Constrain the shape at the schema boundary so a traversal or
 # absolute path in a claim file never reaches the filesystem layer. An id that never
-# passes through the schema (`vg judge` takes one from its command line) is checked
+# passes through the schema (`provenance judge` takes one from its command line) is checked
 # against this same pattern by `judgments.path_for()`.
 QID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
 
@@ -340,7 +340,7 @@ class Claim(BaseModel):
     def fingerprint(self) -> str:
         """What a verifier judged a source against: the claim's question and its answer.
 
-        `vg judge` stamps it on each verdict (`Judgment.claim_fingerprint`). A verdict is keyed
+        `provenance judge` stamps it on each verdict (`Judgment.claim_fingerprint`). A verdict is keyed
         by sid, which covers the quote and not what the claim says about it, so a retry that
         rewrites the answer and keeps the quote keeps the verdict too. The stamp is what shows
         the verdict was about other words. Both halves go in, because a verdict judges one
@@ -418,7 +418,7 @@ class Claim(BaseModel):
             if self.corroboration_ok is True:
                 return "verified"
             return "pending" if self.corroboration_ok is None else "human_review"
-        # A source `vg verify` has not reached leaves the claim unsettled, whatever it carries:
+        # A source `provenance verify` has not reached leaves the claim unsettled, whatever it carries:
         # a verdict re-applied by sid to a rewritten, not-yet-verified citation included.
         # Checked before the paywall flag, so it cannot hide behind it.
         if any(s == "pending" for s in sts):
@@ -439,8 +439,8 @@ MACHINE_CLAIM_FIELDS = ("corroboration_ok", "unmet_inputs", "corroboration_note"
                         "dropped_contradictions")
 # archive_url is evidence — verify_against_archive() fetches it and a snippet found there
 # upgrades the source — so it is stripped like `verification`. It used to be kept, because
-# `vg verify` strips and writes back and would have deleted every snapshot; its safety then
-# rested on `vg archive` overwriting every recorded value, which it did not do on a URL where
+# `provenance verify` strips and writes back and would have deleted every snapshot; its safety then
+# rested on `provenance archive` overwriting every recorded value, which it did not do on a URL where
 # Save Page Now failed. The pipeline's own snapshots now live in the run's archive records
 # (`archive.RECORDS`) and `verify.apply_archive()` puts them back, so nothing an agent
 # writes here survives.
@@ -462,7 +462,7 @@ def strip_machine_fields(raw: dict, *, archive_only: bool = False) -> dict:
     """Drop pipeline-owned fields from an agent-authored claim before validation.
 
     Without this, a researcher agent could write `verification.status: "verified"` into
-    its own claim file and `vg build` would render it as verified without `vg verify`
+    its own claim file and `provenance build` would render it as verified without `provenance verify`
     ever having fetched the page — precisely the failure this pipeline exists to catch.
     Claim files are rewritten by the pipeline after each verify run, so real verification
     data survives via that path, not via whatever the file happened to contain.

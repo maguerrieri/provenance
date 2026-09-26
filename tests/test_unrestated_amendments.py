@@ -18,9 +18,9 @@ import zipfile
 import pytest
 from typer.testing import CliRunner
 
-from vgpipe import calaccess, cli, queries
-from vgpipe.models import QueryCitation, Source, Verification
-from vgpipe.verify import revalidate_from_cache, verify_source
+from provenance import calaccess, cli, queries
+from provenance.models import QueryCitation, Source, Verification
+from provenance.verify import revalidate_from_cache, verify_source
 
 FILER = "8880100"
 SETTLED_460 = "8880101"      # amendments 0 and 1, and amendment 1 restates every row
@@ -149,7 +149,7 @@ def test_a_total_counting_a_dropped_row_goes_to_human_review_naming_the_filing(r
     assert calaccess.filing_url(DROPPED_496) in v.reason
     assert "amendment 0" in v.reason and "latest amendment (1) has none" in v.reason
     assert SETTLED_460 not in v.reason, "a settled filing is not one to open"
-    assert "vg query" in v.reason and v.query_run is not None   # the re-run command
+    assert "provenance query" in v.reason and v.query_run is not None   # the re-run command
 
 
 def test_a_settled_total_still_verifies(root):
@@ -263,7 +263,7 @@ def test_build_downgrades_a_row_verified_before_it_asked(root):
 
 def test_both_paths_write_the_phrase_the_skill_matches(root):
     """The research skill does not retry an unsettled figure, and tells one by this phrase in
-    its reason. `vg verify` and `vg build` word the rest of their reasons differently."""
+    its reason. `provenance verify` and `provenance build` word the rest of their reasons differently."""
     phrase = "it counts rows a later amendment may have withdrawn"
     s = cited("calaccess.ie_total", IE_PARAMS, "4200")
     assert phrase in verify_source(s, root).verification.reason
@@ -284,11 +284,11 @@ def test_every_citable_query_flags_and_refuses(tmp_path):
     for name, (params, _) in PLANTED.items():
         with pytest.warns(calaccess.DegradedDatabaseWarning), \
                 pytest.raises(calaccess.DegradedDatabase,
-                              match="rows a later amendment dropped.*vg calaccess build"):
+                              match="rows a later amendment dropped.*provenance calaccess build"):
             queries.run(name, params, degraded)
         with pytest.warns(calaccess.DegradedDatabaseWarning):
             v = verify_source(cited(name, params, "1"), degraded).verification
-        assert v.status != "verified" and "vg calaccess build" in v.reason, name
+        assert v.status != "verified" and "provenance calaccess build" in v.reason, name
 
 
 def test_no_cover_table_is_refused_for_what_it_is(tmp_path):
@@ -352,7 +352,7 @@ def test_the_cli_says_a_database_cannot_check(tmp_path):
     assert "cannot tell whether a filing's latest amendment dropped" in plain(res.output)
 
 
-def test_vg_query_warns_before_the_value_is_recorded(root):
+def test_provenance_query_warns_before_the_value_is_recorded(root):
     """The researcher copies `expected` from this output, so it says here, not only at
     check-claim, that the value will go to human_review however it is cited."""
     res = CliRunner().invoke(cli.app, ["query", "calaccess.contributor_total",
@@ -366,9 +366,9 @@ def test_vg_query_warns_before_the_value_is_recorded(root):
     assert out.count(DROPPED_496) == 2, "its explanation and its URL, not again in the note"
 
 
-def test_a_reason_names_the_largest_shares_and_vg_query_lists_the_rest(tmp_path, monkeypatch):
+def test_a_reason_names_the_largest_shares_and_provenance_query_lists_the_rest(tmp_path, monkeypatch):
     """A committee's whole history can name dozens of filings, and the reason is written into
-    the claim file and rendered on the review page. It names the largest few, and `vg query`,
+    the claim file and rendered on the review page. It names the largest few, and `provenance query`,
     which a reviewer re-runs, lists every one."""
     shares = [calaccess.Unrestated(f"888030{i}", 0, 1, amount=1000.0 - i, rows=1)
               for i in range(queries.UNSETTLED_SHOWN + 2)]
@@ -376,7 +376,7 @@ def test_a_reason_names_the_largest_shares_and_vg_query_lists_the_rest(tmp_path,
     reason = result.unsettled
     assert all(u.filing_id in reason for u in shares[:queries.UNSETTLED_SHOWN])
     assert not any(u.filing_id in reason for u in shares[queries.UNSETTLED_SHOWN:])
-    assert "and 2 more filing(s) with smaller shares, which `vg query` lists" in reason
+    assert "and 2 more filing(s) with smaller shares, which `provenance query` lists" in reason
     for n in (1, queries.UNSETTLED_SHOWN):    # nothing left over is never "and -4 more"
         assert "more filing(s)" not in queries.QueryResult(value=1.0,
                                                            unrestated=shares[:n]).unsettled

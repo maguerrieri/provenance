@@ -16,7 +16,7 @@ limits: |
 
   express-lane.zip returns 403; only dbwebexport.zip is public.
 
-  Wrapped as `vg calaccess build | filer | contributions | independent-expenditures`.
+  Wrapped as `provenance calaccess build | filer | contributions | independent-expenditures`.
   Download once by hand (the pipeline never pulls 1.5 GB implicitly), then build the SQLite
   index.
 

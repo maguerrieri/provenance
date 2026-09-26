@@ -16,11 +16,11 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from vgpipe import cli
-from vgpipe.conflicts import detect, money, money_values, unsourced_figures
-from vgpipe.fetch import cache_path
-from vgpipe.models import EXTRACTOR_VERSION, Claim, PageCache, Source
-from vgpipe.verify import check_corroboration, check_inputs
+from provenance import cli
+from provenance.conflicts import detect, money, money_values, unsourced_figures
+from provenance.fetch import cache_path
+from provenance.models import EXTRACTOR_VERSION, Claim, PageCache, Source
+from provenance.verify import check_corroboration, check_inputs
 
 LEDGER = "https://daily-ledger.example/pier-settlement"
 WEEKLY = "https://harbor-weekly.example/pier-settlement"
@@ -197,7 +197,7 @@ def _cache(root: Path, url: str) -> None:
     cache_path(root, url).write_text(page.model_dump_json())
 
 
-def _vg(*args) -> tuple[int, str]:
+def _provenance(*args) -> tuple[int, str]:
     width = cli.con.width
     cli.con.width = 10_000   # rich folds a long tmp path mid-word at 80 columns
     try:
@@ -208,8 +208,8 @@ def _vg(*args) -> tuple[int, str]:
 
 
 def _handed(data, qid: str, sid: str) -> list[str]:
-    """`--context` and the token `vg handoff` prints beside `sid`, as a verifier passes it on."""
-    code, out = _vg("handoff", qid, "--data", data)
+    """`--context` and the token `provenance handoff` prints beside `sid`, as a verifier passes it on."""
+    code, out = _provenance("handoff", qid, "--data", data)
     assert code == 0, out
     token = re.search(rf"sid {re.escape(sid)}\s+context token (\w+)", out)
     assert token, out
@@ -230,14 +230,14 @@ def test_build_and_status_hold_it_and_a_claim_built_on_it(tmp_path):
     (data / "claims" / "q2.json").write_text(
         Claim(question_id="q2", question="?", answer="The settlement came after two hearings.",
               sources=[built_on], derives_from=["q1"]).model_dump_json())
-    code, out = _vg("verify", "--data", data)
+    code, out = _provenance("verify", "--data", data)
     assert code == 0, out
     for qid, sid in (("q1", base.sid), ("q2", built_on.sid)):
-        code, out = _vg("judge", qid, sid, "supports", "--note", "states it", "--data", data,
+        code, out = _provenance("judge", qid, sid, "supports", "--note", "states it", "--data", data,
                         *_handed(data, qid, sid))
         assert code == 0, out
 
-    code, out = _vg("build", "--data", data)
+    code, out = _provenance("build", "--data", data)
     assert code == 0, out
     q1, q2 = json.loads((data / "out" / "claims.json").read_text())
     assert q1["corroboration_ok"] is True
@@ -248,7 +248,7 @@ def test_build_and_status_hold_it_and_a_claim_built_on_it(tmp_path):
     assert q2["unmet_inputs"] == ["q1 (human_review)"]
     assert q2["status"] == "human_review"
 
-    code, out = _vg("status", "--data", data)
+    code, out = _provenance("status", "--data", data)
     assert code == 0, out
     rows = {ln.split()[0]: ln for ln in out.splitlines() if ln.split()[:1] in (["q1"], ["q2"])}
     assert "human_review" in rows["q1"] and rows["q1"].split()[-1] == "1", rows

@@ -1,12 +1,12 @@
 """A paywalled source is flagged for the human, never left waiting on a verdict.
 
 `could_not_verify_paywall` has no confirmed context: the live page is gated and no snapshot
-confirmed the quote. The judgment pass cannot cover it. `vg judge` refuses it, and a verdict
+confirmed the quote. The judgment pass cannot cover it. `provenance judge` refuses it, and a verdict
 recorded on it reads stale. So a roll-up that waited on its verdict read `pending` forever,
 and the review page never showed the paywall.
 
-The one route to a verdict on a paywalled source is its snapshot. Once `vg verify` or
-`vg archive` confirms the quote there, the row is `verified_via_archive`, its context is the
+The one route to a verdict on a paywalled source is its snapshot. Once `provenance verify` or
+`provenance archive` confirms the quote there, the row is `verified_via_archive`, its context is the
 snapshot, and it waits on a verdict like any other row.
 """
 
@@ -19,10 +19,10 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from vgpipe import archive, cli, judgments
-from vgpipe.fetch import cache_path
-from vgpipe.models import EXTRACTOR_VERSION, Claim, PageCache, Source
-from vgpipe.verify import check_corroboration
+from provenance import archive, cli, judgments
+from provenance.fetch import cache_path
+from provenance.models import EXTRACTOR_VERSION, Claim, PageCache, Source
+from provenance.verify import check_corroboration
 
 PAYWALLED = "https://daily-ledger.example/levy-vote"
 SNAPSHOT = f"https://web.archive.org/web/20260901000000/{PAYWALLED}"
@@ -56,7 +56,7 @@ def test_a_claim_whose_only_source_is_paywalled_is_flagged_not_pending():
 
 def test_the_exemption_covers_the_paywalled_source_and_nothing_beside_it():
     """Only the paywalled row is outside the judgment pass. A readable source beside it still
-    waits on its verdict, and one `vg verify` has not reached yet is still pending. A verdict
+    waits on its verdict, and one `provenance verify` has not reached yet is still pending. A verdict
     on the readable source never lifts the claim to verified: the paywalled row keeps it
     yellow."""
     waiting = _claim(_source(url=READABLE, status="verified"), _source())
@@ -67,7 +67,7 @@ def test_the_exemption_covers_the_paywalled_source_and_nothing_beside_it():
     not_yet_verified = _claim(_source(url=READABLE, status="pending"), _source())
     assert not_yet_verified.status == "pending"
     # ...even carrying a verdict: a citation rewritten with the same url and snippet keeps its
-    # sid, so a recorded verdict can land on it before `vg verify` reaches it again.
+    # sid, so a recorded verdict can land on it before `provenance verify` reaches it again.
     not_yet_verified.sources[0].verification.support = "supports"
     assert not_yet_verified.status == "pending"
 
@@ -102,11 +102,11 @@ def test_a_paywalled_claim_short_of_corroboration_goes_to_review_not_yellow():
 
 
 def test_the_statuses_outside_the_judgment_pass_are_exactly_the_usable_ones_without_context():
-    """`vg judgments` gates on GOOD: a verifier can judge only a row with confirmed context.
+    """`provenance judgments` gates on GOOD: a verifier can judge only a row with confirmed context.
     A usable status outside GOOD has none, so the roll-up must not wait on its verdict, and a
     new status of that kind has to be classified here rather than read `pending` forever."""
-    from vgpipe.models import NOT_JUDGED
-    from vgpipe.verify import GOOD, USABLE
+    from provenance.models import NOT_JUDGED
+    from provenance.verify import GOOD, USABLE
 
     assert NOT_JUDGED == set(USABLE) - set(GOOD)
 
@@ -118,7 +118,7 @@ def test_a_failed_citation_still_outranks_the_paywall_flag():
     assert broken.status == "human_review"
 
 
-# --- end to end: what `vg verify`, `vg judge`, `vg judgments` and `vg build` do with one ---
+# --- end to end: what `provenance verify`, `provenance judge`, `provenance judgments` and `provenance build` do with one ---
 
 
 def _cache(root: Path, url: str, fetched_at: datetime, **kw) -> None:
@@ -127,7 +127,7 @@ def _cache(root: Path, url: str, fetched_at: datetime, **kw) -> None:
     cache_path(root, url).write_text(page.model_copy(update=kw).model_dump_json())
 
 
-def _vg(*args) -> tuple[int, str]:
+def _provenance(*args) -> tuple[int, str]:
     width = cli.con.width
     cli.con.width = 10_000   # rich folds a long tmp path mid-word at 80 columns
     try:
@@ -138,8 +138,8 @@ def _vg(*args) -> tuple[int, str]:
 
 
 def _handed(data, qid: str, sid: str) -> list[str]:
-    """`--context` and the token `vg handoff` prints beside `sid`, as a verifier passes it on."""
-    code, out = _vg("handoff", qid, "--data", data)
+    """`--context` and the token `provenance handoff` prints beside `sid`, as a verifier passes it on."""
+    code, out = _provenance("handoff", qid, "--data", data)
     assert code == 0, out
     token = re.search(rf"sid {re.escape(sid)}\s+context token (\w+)", out)
     assert token, out
@@ -147,7 +147,7 @@ def _handed(data, qid: str, sid: str) -> list[str]:
 
 
 def _paywalled_run(tmp_path: Path, *, snapshot: bool) -> tuple[Path, Source]:
-    """A run whose one source is gated live, verified offline as `vg verify` leaves it. With
+    """A run whose one source is gated live, verified offline as `provenance verify` leaves it. With
     `snapshot`, the run's archive records hold a capture that contains the quote."""
     data, now = tmp_path / "data", datetime.now(UTC)
     _cache(data, PAYWALLED, now - timedelta(days=3), status=403, text="",
@@ -160,21 +160,21 @@ def _paywalled_run(tmp_path: Path, *, snapshot: bool) -> tuple[Path, Source]:
     (data / "claims").mkdir(parents=True)
     (data / "claims" / "q1.json").write_text(
         Claim(question_id="q1", question="?", answer="a", sources=[s]).model_dump_json())
-    code, out = _vg("verify", "--data", data)
+    code, out = _provenance("verify", "--data", data)
     assert code == 0, out
     return data, s
 
 
 def _built(data: Path) -> dict:
-    code, out = _vg("build", "--data", data)
+    code, out = _provenance("build", "--data", data)
     assert code == 0, out
     [claim] = json.loads((data / "out" / "claims.json").read_text())
     return claim
 
 
 def _gate(data: Path) -> tuple[int, int, int]:
-    """(need a verdict, total, nothing to judge yet), read off what `vg judgments` prints."""
-    code, out = _vg("judgments", "--data", data)
+    """(need a verdict, total, nothing to judge yet), read off what `provenance judgments` prints."""
+    code, out = _provenance("judgments", "--data", data)
     m = re.search(r"(\d+) of (\d+) cited source\(s\) need a verdict", out)
     assert m, out
     assert code == (1 if int(m.group(1)) else 0), out
@@ -183,7 +183,7 @@ def _gate(data: Path) -> tuple[int, int, int]:
 
 
 def test_a_paywalled_claim_builds_flagged_and_the_gate_does_not_wait_on_it(tmp_path):
-    """No snapshot confirms the quote, so the source is outside the judgment pass: `vg judge`
+    """No snapshot confirms the quote, so the source is outside the judgment pass: `provenance judge`
     refuses it, the gate reads 0, and the review app shows the paywall rather than a claim
     waiting on a judgment pass that can never record anything."""
     data, s = _paywalled_run(tmp_path, snapshot=False)
@@ -192,7 +192,7 @@ def test_a_paywalled_claim_builds_flagged_and_the_gate_does_not_wait_on_it(tmp_p
     assert built["status"] == "could_not_verify_paywall"
 
     assert _gate(data) == (0, 1, 1)
-    code, out = _vg("judge", "q1", s.sid, "supports", "--data", data)
+    code, out = _provenance("judge", "q1", s.sid, "supports", "--data", data)
     assert code == 1 and "it is could_not_verify_paywall" in out, out
 
 
@@ -219,7 +219,7 @@ def test_a_paywalled_source_is_judged_through_its_snapshot(tmp_path):
     assert built["status"] == "pending"
     assert _gate(data) == (1, 1, 0)
 
-    code, out = _vg("judge", "q1", s.sid, "supports", "--note", "the snapshot quotes the vote",
+    code, out = _provenance("judge", "q1", s.sid, "supports", "--note", "the snapshot quotes the vote",
                     "--data", data, *_handed(data, "q1", s.sid))
     assert code == 0, out
     assert _gate(data) == (0, 1, 0)

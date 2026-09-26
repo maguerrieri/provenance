@@ -18,7 +18,7 @@ whether a citation is real.** Never let a model set a verification status.
    later in a run, give each new question a new id and retire the old one. Move its claim
    file out of `claims/` (to `claims-archive/`) and its verdict shard out of `judgments/` (to
    `judgments-archive/`), and point any `derives_from` that names it at the new id. A reused id hands its old verdicts to
-   the new claim. `vg build` and `vg status` are the rule's gate: a claim whose id
+   the new claim. `provenance build` and `provenance status` are the rule's gate: a claim whose id
    `questions.json` no longer lists, or whose `question` differs from the text at its id, is
    left out of review, and the command exits 1. Once the new question's research has replaced
    the old claim, a reused id no longer shows, so give the new question its new id before
@@ -60,49 +60,49 @@ Do not summarize the source rules for them — the agent definition carries them
 
 ## Phase 2 — verification
 
-1. `uv run vg verify --race <race>` — deterministic checks on every source: URL resolves, snippet is
+1. `uv run provenance verify --race <race>` — deterministic checks on every source: URL resolves, snippet is
    literally on the page, snippet appears exactly once, source class is allowed, paywall
    detection. No model in this loop.
 2. Spawn one `verifier` subagent per claim that passed the mechanical checks, for the
    judgment half: does the cached context actually support *this* claim, and (for
    adversarial claims) are the two sources genuinely independent? Give it the question id
    and the run dir, not a copy of the claim: it reads the claim and each source's context
-   from `uv run vg handoff <qid> --data <run>`, which prints every context with its sid and a
+   from `uv run provenance handoff <qid> --data <run>`, which prints every context with its sid and a
    **context token** naming the whole hand-off: the claim (its type included), and every
    source printed with it, each with its citation, its context and, for a query citation, the
    query run that produced it. Record each verdict with:
 
    ```
-   uv run vg judge <qid> <sid> supports|topic_only|contradicts|superseded --context <token> --note "..."
+   uv run provenance judge <qid> <sid> supports|topic_only|contradicts|superseded --context <token> --note "..."
    ```
 
-   `vg judge` refuses, writing nothing, unless that claim (exact id, case included) cites
-   that sid, the cache still holds the copy of the page `vg verify` built its context from
+   `provenance judge` refuses, writing nothing, unless that claim (exact id, case included) cites
+   that sid, the cache still holds the copy of the page `provenance verify` built its context from
    (the snapshot, for a `verified_via_archive` source), that copy still gives the context the
-   claim file holds, and the token names the hand-off `vg handoff` would print now —
-   so run it after `vg verify`, and re-verify if another run re-fetched the page or
-   `vg archive` replaced the snapshot since. A verdict without a token is refused, a query
+   claim file holds, and the token names the hand-off `provenance handoff` would print now —
+   so run it after `provenance verify`, and re-verify if another run re-fetched the page or
+   `provenance archive` replaced the snapshot since. A verdict without a token is refused, a query
    citation's included. A token for an older hand-off means something in it changed while the
    verifier worked (a re-verify, a retry that rewrote the claim or swapped, added or dropped a
    source, a query re-run under a new definition, export or database, even one printing the
-   same figure): the verifier re-reads what `vg handoff` prints and judges that. A refusal names a wrong id, sid or `--data`, the copy
+   same figure): the verifier re-reads what `provenance handoff` prints and judges that. A refusal names a wrong id, sid or `--data`, the copy
    that moved, or what changed; it is never a cue to file the verdict under some other claim.
 
    Judgments are stored in `data/judgments/<qid>.json`, keyed by source id — **not** in the
-   claim file, which `vg verify` reloads with stripping on. A verdict written into the claim is
-   destroyed by the next verify run. `vg judgments` shows what has been recorded and ends
+   claim file, which `provenance verify` reloads with stripping on. A verdict written into the claim is
+   destroyed by the next verify run. `provenance judgments` shows what has been recorded and ends
    with one line, `N of M cited source(s) need a verdict (K stale)`. That line is the gate:
    the pass is finished when `N` is 0. **Read the number; don't count rows off the table.**
    The table wraps, and `grep -c unreviewed` has under-reported twice. A stale verdict
    predates the page it judged (or, for a query citation, the query definition), or judged
    another question or answer than the claim gives now (a retry rewrote it), or was recorded
    before verdicts named their claim (a one-time re-judge of every such verdict), and
-   `vg build` won't apply it, so it counts in `N` until the source is judged again. A source a verifier has nothing to judge on is not in `N`. That
+   `provenance build` won't apply it, so it counts in `N` until the source is judged again. A source a verifier has nothing to judge on is not in `N`. That
    means its citation failed, is paywalled, was never verified, or changed since the last
-   `vg verify`. Those are counted on a separate line, and each one's table row names its
-   status (`unreviewed (<status>)`, or `unreviewed (run vg verify)`). They go to the retry
-   loop (step 3), `vg archive` or `vg verify`, not to a verifier. The count runs the same
-   offline checks `vg build` does, so the two counts together are what the review app will
+   `provenance verify`. Those are counted on a separate line, and each one's table row names its
+   status (`unreviewed (<status>)`, or `unreviewed (run provenance verify)`). They go to the retry
+   loop (step 3), `provenance archive` or `provenance verify`, not to a verifier. The count runs the same
+   offline checks `provenance build` does, so the two counts together are what the review app will
    show without a verdict. The command exits 0 only when the pass is done: it exits 1 while
    `N` is above 0, and also when a claim file couldn't be read.
    For periodic filings (Form 700, campaign finance forms, annual reports), the verifier
@@ -140,8 +140,8 @@ Do not summarize the source rules for them — the agent definition carries them
    query citation whose reason says it counts or leaves out
    "rows a later amendment may have withdrawn", says it "leaves out rows that a filing's own
    amendment attributed to this candidate", says "it leaves out late-reported
-   contributions", or says it "is for names exactly as filed" (from `vg verify` or
-   `vg build`), is a correct citation of an unsettled record. Either the export cannot say
+   contributions", or says it "is for names exactly as filed" (from `provenance verify` or
+   `provenance build`), is a correct citation of an unsettled record. Either the export cannot say
    whether a later amendment withdrew or moved those rows, or a late gift is on file that no
    Form 460 has restated yet, or other names on file could be the same giver's. The reason
    names each filing or name to open, and a person checks the claim against them. Retrying it
@@ -151,44 +151,44 @@ Do not summarize the source rules for them — the agent definition carries them
    **A retry with no failing source: an answer whose figures no snippet carries.** The claim
    is `human_review` with every source green, and its conflict line names the dollar figures
    or years the answer states that none of its snippets do. Hand that line back to a
-   researcher: quote the span that carries the figure, or correct the answer. `vg
+   researcher: quote the span that carries the figure, or correct the answer. `provenance
    check-claim` does not catch this yet (#82), so a clean exit there does not rule it out.
    A claim held by a contradiction a retry dropped is also `human_review` with every source
    green, but its conflict line names a source id and a verifier's verdict, not figures: that
    one is the human's (above), not a retry.
-4. `uv run vg archive` — saves a fresh snapshot of every cited URL, checks each one
+4. `uv run provenance archive` — saves a fresh snapshot of every cited URL, checks each one
    actually holds the cited page (a bot check or a capture missing the snippet is
    `archive_unusable`), then re-checks any paywalled snippet against its snapshot and
    upgrades it to `verified_via_archive` when the text is readable there. Runs last, never
    blocks; a missing or unusable snapshot is a warning. Snapshots are recorded in the run's
    `archives.json`, never taken from a claim file.
 
-   **Then run `vg judgments` again, and judge what it lists.** An archive-verified row's
+   **Then run `provenance judgments` again, and judge what it lists.** An archive-verified row's
    context comes from its snapshot, and a fresh snapshot is a different copy: every verdict
-   on such a row goes stale when `vg archive` replaces it, and a row it newly upgrades has no
-   verdict yet. `vg archive` says how many verdicts it made stale. Skipping this step leaves
+   on such a row goes stale when `provenance archive` replaces it, and a row it newly upgrades has no
+   verdict yet. `provenance archive` says how many verdicts it made stale. Skipping this step leaves
    the claim behind every archive-verified row `pending` in the review app. A row still
    paywalled needs no verdict, and it never holds its claim at `pending`.
 
 ## Phase 3 — review surface
 
-1. `uv run vg build --race <race>` — detects conflicts and renders `data/out/review.html` +
+1. `uv run provenance build --race <race>` — detects conflicts and renders `data/out/review.html` +
    `data/out/claims.json`. It first checks every claim against the question its id names in
    `questions.json`. A claim on an id the set no longer lists, or answering another question,
    is left out of the app, and build exits 1, naming it last. Retire the id (Phase 0, step 2),
    or, if the claim only misquotes its question, copy the exact text into its `question`.
    Build removes the previous render before anything can stop it. After one that renders
-   nothing, a fresh `vg serve` refuses and a running one answers a reload with a 404, until a
+   nothing, a fresh `provenance serve` refuses and a running one answers a reload with a 404, until a
    build succeeds. A tab already open keeps its page, so tell its reviewer to stop and reload
    once one does.
-2. `uv run vg serve` — opens the app on `127.0.0.1:8765`. Serve rather than opening the
+2. `uv run provenance serve` — opens the app on `127.0.0.1:8765`. Serve rather than opening the
    file directly: browsers disable `localStorage` on `file://` origins, and the checkbox
    state is what makes a long review session survivable.
 3. Report to the operator: counts by status, the conflict list, the `not_found` list, and which
    rows need the most care (adversarial + paywalled).
 
 Claim files are stored as `data/claims/<qid>.json`. If a researcher writes one under any
-other name, delete the stale file — `vg` refuses to load two files carrying the same
+other name, delete the stale file — `provenance` refuses to load two files carrying the same
 `question_id` rather than silently double-counting the question.
 
 A claim whose every source the verifier rejected is `human_review`, and rejected sources do
@@ -201,7 +201,7 @@ A run that skips it produces green rows nobody has actually checked.
 
 - Every question has either a verified, corroboration-compliant, ⌘F-able citation, or an
   explicit `not_found` / `human_review` status **with a reason**.
-- Every cited source that passed its mechanical checks has a usable verdict: `vg judgments`
+- Every cited source that passed its mechanical checks has a usable verdict: `provenance judgments`
   ends with `0 of M cited source(s) need a verdict`. An unreviewed or stale source is not a
   verified one.
 - Every verified snippet passed exact (or PDF-normalized) substring + uniqueness checks.
@@ -233,7 +233,7 @@ Doe settlement" is transcription. Use the completeness check *after* results are
 if the research didn't independently surface a known item, that is itself a finding — hand
 the gap to the human rather than topping up a claim with the answer.
 
-`uv run vg races` lists what's defined. A new race is a new file in `races/`, not an edit
+`uv run provenance races` lists what's defined. A new race is a new file in `races/`, not an edit
 to this skill.
 
 ## Style for any prose output

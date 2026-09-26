@@ -16,8 +16,8 @@ from pathlib import Path
 import pytest
 from selectolax.parser import HTMLParser
 
-from vgpipe.models import Claim, QueryCitation, QueryRun, Source
-from vgpipe.report import render, review_fingerprint
+from provenance.models import Claim, QueryCitation, QueryRun, Source
+from provenance.report import render, review_fingerprint
 
 HARNESS = Path(__file__).parent / "review_app_harness.js"
 NODE = shutil.which("node")

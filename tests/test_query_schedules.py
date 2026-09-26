@@ -15,7 +15,7 @@ import zipfile
 
 import pytest
 
-from vgpipe import calaccess, queries
+from provenance import calaccess, queries
 
 FILER = "9990031"
 HEAD = ('FILING_ID\tAMEND_ID\tTRAN_ID\tLINE_ITEM\tCTRIB_NAML\tCTRIB_NAMF\tCTRIB_EMP'

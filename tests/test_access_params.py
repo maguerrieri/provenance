@@ -14,8 +14,8 @@ import time
 
 import pytest
 
-from vgpipe import access
-from vgpipe.access import Recipe, credential_param, parse_curl, run
+from provenance import access
+from provenance.access import Recipe, credential_param, parse_curl, run
 
 URL = "https://portal.example/api/search"
 FAKE = "fake-canary"
@@ -242,7 +242,7 @@ def test_the_registry_passes_its_own_parameter_check():
 def test_import_command_writes_nothing_for_a_credential_parameter(tmp_path, monkeypatch):
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     monkeypatch.setattr(access, "REGISTRY", tmp_path / "access")
     paste = tmp_path / "paste.txt"
@@ -302,7 +302,7 @@ def test_a_run_refusal_prints_bracketed_names_intact(tmp_path, monkeypatch):
     """Rich reads `[token]` as markup, which showed `auth[token]` as `auth`."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     reg = tmp_path / "access"
     reg.mkdir()

@@ -23,7 +23,7 @@ extend them any charity. An authoring agent reviewing its own citations rational
 You are given a question id and a run dir. Read what to judge from the pipeline itself:
 
 ```
-uv run vg handoff <question_id> --data <run dir>
+uv run provenance handoff <question_id> --data <run dir>
 ```
 
 It prints the claim, then each source: its `sid`, its snippet, the context window (every
@@ -52,30 +52,30 @@ Plus one line of reasoning. Be specific about what the context *does* say.
 Record each verdict — do not just report it in prose, or it will not reach the pipeline:
 
 ```
-uv run vg judge <question_id> <sid> <verdict> --context <token> --note "<one line>" --data <run dir>
+uv run provenance judge <question_id> <sid> <verdict> --context <token> --note "<one line>" --data <run dir>
 ```
 
-`<token>` is the context token `vg handoff` printed with that source. It tells the pipeline
+`<token>` is the context token `provenance handoff` printed with that source. It tells the pipeline
 which context your verdict is about, and every verdict is refused without it, on a query
 citation as on a cited page.
 `<run dir>` is the run you were given, e.g. `data/<candidate-id>` for a per-candidate run. Without
-it, `vg handoff`, this command and the check below all use the default `data/` run, which is a
-different run with its own `q1`, `q2`, and so on. If `vg judge` exits non-zero it recorded
+it, `provenance handoff`, this command and the check below all use the default `data/` run, which is a
+different run with its own `q1`, `q2`, and so on. If `provenance judge` exits non-zero it recorded
 nothing: the question id (exact, case included), the sid or the run dir does not match a claim
 that cites that source; or the copy of the page your context came from is no longer the one
-cached (the page was re-fetched, or its snapshot replaced, since `vg verify`); or something
-`vg handoff` printed changed since: the claim, this source's citation or context, another
+cached (the page was re-fetched, or its snapshot replaced, since `provenance verify`); or something
+`provenance handoff` printed changed since: the claim, this source's citation or context, another
 source of the claim (swapped, added, dropped or rebuilt), or a query citation's run (re-run
 under another definition, export or database), so your token names what the pipeline no
 longer has. It says which. A re-run under another definition, export or database changes
 the token even when its result reads the same: your verdict was about the calculation that
 printed it. A re-run under the same ones does not. Fix a typo in what you were given, but
 never file the verdict under an id or sid you were not given, or with a token printed beside
-another source. For anything changed, run `vg handoff` again, **read what it prints now**,
+another source. For anything changed, run `provenance handoff` again, **read what it prints now**,
 and judge that: the new token is only worth passing with a verdict about the text it came
 with.
 Otherwise report what it printed. A moved copy means the context you judged is not the one the
-pipeline now has, so the source needs `vg verify` and a fresh look, not a retry. Your verdict
+pipeline now has, so the source needs `provenance verify` and a fresh look, not a retry. Your verdict
 decides whether the claim can render as verified and whether the source counts toward
 corroboration, so a claim you reject stops being green — which is the entire reason this pass
 exists.
@@ -83,7 +83,7 @@ exists.
 Before you report done, confirm every verdict landed:
 
 ```
-uv run vg judgments --question-id <question_id> --data <run dir>
+uv run provenance judgments --question-id <question_id> --data <run dir>
 ```
 
 Read its last line: `N of M cited source(s) need a verdict (K stale)`. You are done when `N`
@@ -92,8 +92,8 @@ over it has under-reported twice. A `stale` source was judged against an older c
 page — or, for a query citation, an older definition of its query — or against another
 question or answer than its claim gives now, or it was recorded before verdicts named their
 claim (every such verdict is judged again, once). Judge it again against the claim and
-context `vg handoff` prints now. A source listed as having nothing a
-verifier can judge yet (failed, paywalled, never verified, or changed since `vg verify`) is
+context `provenance handoff` prints now. A source listed as having nothing a
+verifier can judge yet (failed, paywalled, never verified, or changed since `provenance verify`) is
 not in `N`, and it is not yours to judge. If the command exits non-zero, you are not done:
 say what it printed.
 
@@ -113,8 +113,8 @@ answer even though every citation check passes.
 Are these two outlets doing their own reporting, or is one reprinting the other? Look for
 wire-service credit lines, identical phrasing, and one story citing the other as its
 source. AP plus a paper running the AP story is **one** source, not two. Say which.
-Your answer is about the pair `vg handoff` printed, and each token names that pair: if a
-source is swapped, added or dropped before you record, `vg judge` refuses, and you judge the
+Your answer is about the pair `provenance handoff` printed, and each token names that pair: if a
+source is swapped, added or dropped before you record, `provenance judge` refuses, and you judge the
 sources it prints now.
 
 ## Bias to flag

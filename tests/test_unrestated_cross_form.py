@@ -18,9 +18,9 @@ import zipfile
 
 import pytest
 
-from vgpipe import calaccess, queries
-from vgpipe.models import QueryCitation, Source, Verification
-from vgpipe.verify import revalidate_from_cache, verify_source
+from provenance import calaccess, queries
+from provenance.models import QueryCitation, Source, Verification
+from provenance.verify import revalidate_from_cache, verify_source
 
 FILER = "7770100"
 SETTLED_460 = "7770101"      # amendments 0 and 1, and amendment 1 restates every row
