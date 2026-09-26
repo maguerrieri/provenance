@@ -79,9 +79,19 @@ BADGE = {
 ROW_KEY_RE = QID_PATTERN.removesuffix("$") + "/[0-9a-f]{12}(/[1-9][0-9]{0,3})?$"
 
 
+def shown_notes(claim: Claim) -> str:
+    """The claim's researcher notes as the review page shows them, or "" for none.
+
+    What doesn't show is folded, so a retry that changes only that clears no check: a line
+    ending (the HTML parser reads CR and CRLF as LF), blanks at the end of a line, and blank
+    space around the whole."""
+    lines = (claim.notes or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    return "\n".join(line.rstrip(" \t") for line in lines).strip()
+
+
 def review_fingerprint(claim: Claim, source: Source) -> str:
     """What a reviewer's "verified by me" on one row attests: this source, as cited and shown,
-    supports this claim.
+    supports this claim, as the claim reads with its researcher notes.
 
     The page counts a row as checked only while some recorded check carries this fingerprint.
     The source id alone covers just the url and snippet, so a check keyed by it counted for
@@ -97,6 +107,12 @@ def review_fingerprint(claim: Claim, source: Source) -> str:
     question id is left out, so a claim moved to another id without changing keeps its check,
     while a reworded one loses it. Pipeline verdicts (status, support) are left out: they don't
     change what was read.
+
+    The claim's notes are shown above its rows and carry what only a person can act on, so a
+    check covers them too, and a note added, changed or removed since clears it. They are a
+    part of their own, after a dot, so the page can tell a changed note from changed evidence
+    and say which. And only when the claim has notes: a claim without them hashes exactly as it
+    did before notes were hashed, so checks saved then still stand.
     """
     v = source.verification
     if source.query is not None:
@@ -111,7 +127,10 @@ def review_fingerprint(claim: Claim, source: Source) -> str:
              *evidence]
     # JSON, not a join: these fields are agent-authored, and a separator one of them contains
     # would let two different rows hash alike.
-    return hashlib.sha256(json.dumps(parts).encode()).hexdigest()[:16]
+    fp = hashlib.sha256(json.dumps(parts).encode()).hexdigest()[:16]
+    if notes := shown_notes(claim):
+        fp += "." + hashlib.sha256(notes.encode()).hexdigest()[:16]
+    return fp
 
 
 def context_html(claim_source) -> Markup | None:
@@ -189,8 +208,9 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "voter guide",
             conflicts=c.conflicts, sources=source_views(c),
             # The researcher's caveats for the person checking this claim: a scan to read by
             # eye, a filing that may not be the newest, a figure a query would not settle.
-            # Agent-authored, so autoescaped like the rest.
-            notes=(c.notes or "").strip(),
+            # Agent-authored, so autoescaped like the rest. What is shown is what a check
+            # covers (review_fingerprint), so both read it through shown_notes().
+            notes=shown_notes(c),
         )
         for c in claims
     ]
