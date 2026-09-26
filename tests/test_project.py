@@ -113,6 +113,17 @@ def test_subjects_must_be_plain_distinct_directories(tmp_path):
     assert "subject 'ng' repeats 'Ng'" in msg, "one directory on a case-insensitive disk"
 
 
+@pytest.mark.parametrize("name", ["pages", "calaccess"])
+def test_a_subject_named_like_the_cache_is_refused_as_a_subject(tmp_path, name):
+    """With cache = ".", a subject called "pages" made the root read as a cache directory,
+    and the refusal blamed `cache`. It is refused by its own name."""
+    write_project(tmp_path, subjects=[name])
+    (tmp_path / name).mkdir()
+    with pytest.raises(project.ProjectError) as e:
+        project.load(tmp_path)
+    assert f"subject {name!r} is a name a run keeps its own files under" in str(e.value)
+
+
 def test_two_subjects_are_never_one_directory(tmp_path):
     """A subject may be a symlink (to another disk, say), so names alone don't keep runs apart:
     one linked to another subject, or to the root, would share its claims, verdicts and
@@ -305,10 +316,13 @@ def test_a_cache_the_project_puts_elsewhere_is_the_one_every_command_uses(tmp_pa
     assert built[0]["sources"][0]["verification"]["status"] == "verified"
 
 
-def test_a_self_contained_root_nested_under_another_is_its_own_project(tmp_path, quiet):
+def test_a_self_contained_root_nested_under_another_is_its_own_project(tmp_path, quiet,
+                                                                      monkeypatch):
     """Inference sent a child of a directory holding a question set to its parent's cache, so a
     scratch root in data/scratch rebuilt the live CAL-ACCESS database. A nested root with its
     own project file is its own project, whatever its parent holds."""
+    from provenance import calaccess
+
     outer = write_project(tmp_path / "data")
     (outer / "questions.json").write_text("[]")
     (outer / "cache" / "calaccess").mkdir(parents=True)
@@ -317,20 +331,60 @@ def test_a_self_contained_root_nested_under_another_is_its_own_project(tmp_path,
     assert cli._cache_root(outer, None) == outer.resolve()
 
     built = []
-    from provenance import calaccess
-
-    orig = calaccess.build
-    try:
-        calaccess.build = lambda root, progress=None: built.append(root) or root
-        cli.calaccess_build(data=scratch)
-    finally:
-        calaccess.build = orig
+    monkeypatch.setattr(calaccess, "build", lambda root, progress=None: built.append(root) or root)
+    cli.calaccess_build(data=scratch)
     assert built == [scratch.resolve()], "the live database is the outer project's"
 
     # And the outer project can't also claim it as a subject: which one is meant is not on disk.
     write_project(outer, subjects=["scratch"])
     with pytest.raises(project.ProjectError, match="holds a provenance.toml of its own"):
         project.load(outer)
+
+
+def test_calaccess_commands_share_the_cache_root_with_queries(tmp_path, monkeypatch):
+    """`provenance query` resolves the CAL-ACCESS database through _cache_root, and so must every
+    `provenance calaccess` command, from a subject's run as from the root's. Otherwise
+    `provenance calaccess build --data <subject>` writes 1.5 GB into a cache that queries then
+    ignore: the database hidden again."""
+    from types import SimpleNamespace
+
+    from provenance import calaccess, queries
+
+    root = write_project(tmp_path / "data", subjects=["cand"])
+    cand = root / "cand"
+    cand.mkdir()
+    seen = []
+    monkeypatch.setattr(calaccess, "build", lambda r, progress=None: seen.append(r) or r)
+    monkeypatch.setattr(calaccess, "find_filers", lambda r, *a, **k: seen.append(r) or [])
+    monkeypatch.setattr(calaccess, "contributions_to", lambda r, *a, **k: seen.append(r) or [])
+    monkeypatch.setattr(calaccess, "independent_expenditures",
+                        lambda r, *a, **k: seen.append(r) or [])
+    monkeypatch.setattr(calaccess, "citable_snapshot",
+                        lambda url, root=None, **k: seen.append(root) or (None, "none"))
+    monkeypatch.setattr(queries, "run", lambda name, params, r: seen.append(r) or SimpleNamespace(
+        found=True, value=1, note="", version=1, export_date="", unsettled="", unrestated=[],
+        late=[]))
+
+    def every_command(**kw):
+        cli.calaccess_build(data=cand, **kw)
+        cli.calaccess_filer("Ko", data=cand, **kw)
+        cli.calaccess_contributions("123", data=cand, **kw)
+        cli.calaccess_ie("Ko", data=cand, first="Dana", **kw)
+        cli.calaccess_cite("123", data=cand, **kw)
+        cli.run_query("contributor_total", param=["filer_id=123"], data=cand, **kw)
+
+    every_command()
+    assert seen == [root.resolve()] * 6
+    # and every one of them takes --cache: the commands a reviewer re-checks a figure with must
+    # reach the database `provenance verify --cache` checked it against
+    seen.clear()
+    every_command(cache=tmp_path / "shared")
+    assert seen == [tmp_path / "shared"] * 6
+    # and --project, from outside the project
+    seen.clear()
+    monkeypatch.chdir(tmp_path)
+    every_command(project=root)
+    assert seen == [root.resolve()] * 6
 
 
 def test_a_project_file_dropped_into_a_declared_subject_is_refused_from_inside_too(tmp_path):
@@ -376,8 +430,52 @@ def test_a_subject_that_is_a_symlink_finds_the_project_it_is_declared_in(tmp_pat
     code, _ = _provenance("status", "--data", root / "ng")
     out = " ".join(quiet.getvalue().split())   # the console is `quiet`'s here
     assert code == 1 and f"{root / 'ng'} is ng's run and has no questions.json" in out, out
-    assert "`provenance new-candidate ng` copies it, retargeted to ng." in out, out
+    assert "`provenance new-candidate ng` copies the project's, retargeted to it." in out, out
     assert "ng-2030's" not in out and "new-candidate ng-2030" not in out, out
+
+
+def _symlinked_subject(tmp_path) -> tuple[Path, Path]:
+    """A project whose subject ng is a symlink to a directory on another disk, with a question
+    set and a claim of its own: (project root, ng as the project declares it)."""
+    root = write_project(tmp_path / "data", subjects=["ng"])
+    real = tmp_path / "other-disk" / "ng"
+    (real / "claims").mkdir(parents=True)
+    (root / "ng").symlink_to(real)
+    (real / "questions.json").write_text(json.dumps([{"id": "q1", "text": "?"}]))
+    (real / "claims" / "q1.json").write_text(
+        Claim(question_id="q1", question="?", answer="a").model_dump_json())
+    return root, root / "ng"
+
+
+def test_check_claim_finds_a_symlinked_subjects_project(tmp_path):
+    """The claim's path is made absolute, not resolved: resolved, it named the real directory,
+    with no project above it, and a researcher on that subject could never pass its last step."""
+    root, ng = _symlinked_subject(tmp_path)
+    code, out = _provenance("check-claim", "ng/claims/q1.json", cwd=root)
+    assert "no provenance.toml at or above" not in out, out
+    # The claim cites nothing, so corroboration is all that fails: its question, checked
+    # against ng's own set, passes.
+    assert out.startswith("corroboration") and "question" not in out, out
+
+
+def test_from_inside_a_symlinked_subject_the_walk_starts_where_the_shell_says(
+        tmp_path, monkeypatch):
+    """os.getcwd() resolves symlinks, so from inside a symlinked subject it named the real
+    directory, and every command was refused for want of a project. The walk starts from $PWD
+    when that is the same directory."""
+    monkeypatch.setattr(cli, "_noted_defaults", set())
+    root, ng = _symlinked_subject(tmp_path)
+    monkeypatch.chdir(ng)
+    monkeypatch.setenv("PWD", str(ng))
+    assert project.working_dir() == ng
+    p, run = project.resolve(None, None)
+    assert p.root == root.resolve() and run == root.resolve()
+    assert project.resolve(Path("."), None)[1] == Path(".")
+    res = CliRunner().invoke(cli.app, ["status"])
+    assert res.exit_code == 0, res.output
+    # A $PWD naming another directory is ignored: the process's own is the one that is right.
+    monkeypatch.setenv("PWD", str(tmp_path))
+    assert project.working_dir() == Path.cwd()
 
 
 def test_the_root_run_is_named_when_defaulted_from_inside_a_subject(tmp_path, monkeypatch):

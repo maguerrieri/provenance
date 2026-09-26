@@ -29,16 +29,23 @@ KEYS = ("name", "sources", "cache", "subjects", "race")
 
 # A subject is a directory name under the project root: no separator, no leading dot, so it
 # is always a direct child. The names a run keeps inside itself are refused, since a subject
-# called "claims" would be the root run's claims directory.
+# called "claims" would be the root run's claims directory, and so are a cache directory's,
+# since with `cache = "."` a subject called "pages" would read as the cache itself.
 SUBJECT_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
-RESERVED = frozenset({"archives.json", "cache", "claims", "claims-archive", "judgments",
-                      "judgments-archive", "judgments-backup", "judgments-backup.partial",
-                      "judgments-backup.discard", "out", "provenance.toml", "questions.json"})
+RESERVED = frozenset({"archives.json", "cache", "calaccess", "claims", "claims-archive",
+                      "judgments", "judgments-archive", "judgments-backup",
+                      "judgments-backup.partial", "judgments-backup.discard", "out", "pages",
+                      "provenance.toml", "questions.json"})
 
 
 class ProjectError(ValueError):
     """No project to be found, a project file that can't be read, or a run the project does
     not declare. Never read as "no project, so infer one": that is the rule this replaced."""
+
+
+class UnreadableProject(ProjectError):
+    """A project file that exists and can't be read as a project. The run it was asked for is
+    still that project's, which a caller clearing the run's output needs to know."""
 
 
 @dataclass(frozen=True)
@@ -61,20 +68,19 @@ class Project:
         """The declared subject whose run `run` is, or None for the root (or any other
         directory). By the name the project declares, not the directory's own, which differs
         for a subject that is a symlink."""
-        at = run.resolve()
-        return next((s for s in self.subjects if self.subject_dir(s).resolve() == at), None)
+        return _subject_at(self.root, self.subjects, run.resolve())
 
 
 def find(start: Path) -> Path | None:
     """The nearest directory at or above `start` that holds a provenance.toml, or None.
 
-    Walks the path as given, made absolute, not the one its symlinks resolve to: a subject that
+    Walks the path as given (`absolute()`), not the one its symlinks resolve to: a subject that
     is a symlink to another disk is declared in the project it sits in, and its real directory
     has no project above it. (A run reached through a symlink from outside its project finds
     no project, or one that does not declare it, and is refused: never a wrong answer.)
     Anything by that name counts, a dangling symlink or a directory included, and `load()`
     refuses it: skipping it would hand the run to a project further up."""
-    here = _absolute(start)
+    here = absolute(start)
     for d in (here, *here.parents):
         if os.path.lexists(d / FILE):
             return d
@@ -91,7 +97,7 @@ def load(root: Path) -> Project:
     try:
         raw = tomllib.loads(path.read_text())
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
-        raise ProjectError(f"unreadable project file {path}: {e}") from e
+        raise UnreadableProject(f"unreadable project file {path}: {e}") from e
     problems: list[str] = []
     if unknown := sorted(set(raw) - set(KEYS)):
         # A typo'd key would otherwise read as the key left out: `subject = [...]` as a
@@ -180,7 +186,7 @@ def load(root: Path) -> Project:
             race_path = _path(root, race)
 
     if problems:
-        raise ProjectError(f"{path} can't be read as a project: " + "; ".join(problems))
+        raise UnreadableProject(f"{path} can't be read as a project: " + "; ".join(problems))
     return Project(root=root, name=name.strip(), sources=tuple(sources), cache=cache_path,
                    subjects=tuple(subjects), race=race_path)
 
@@ -190,9 +196,32 @@ def _path(root: Path, value: str) -> Path:
     return (root / Path(value).expanduser()).resolve()
 
 
-def _absolute(path: Path) -> Path:
-    """`path` made absolute with `..` folded, its symlinks left as they are."""
-    return Path(os.path.abspath(path))
+def working_dir() -> Path:
+    """The working directory as the shell names it ($PWD) where that is the same directory as
+    the process's, else the process's. `os.getcwd()` resolves symlinks, so from inside a
+    subject that is a symlink it names the real directory, which has no project above it."""
+    pwd = os.environ.get("PWD")
+    if pwd and os.path.isabs(pwd):
+        try:
+            if os.path.samefile(pwd, os.getcwd()):
+                return Path(pwd)
+        except OSError:
+            pass
+    return Path.cwd()
+
+
+def absolute(path: Path) -> Path:
+    """`path` made absolute against `working_dir()`, with `..` folded and its symlinks left as
+    they are: the path as given, which is where the walk to a project file starts."""
+    return Path(os.path.normpath(os.path.join(working_dir(), path)))
+
+
+def _subject_at(root: Path, subjects, at: Path) -> str | None:
+    """The one of `subjects` whose directory under `root` is `at` (resolved), or None. The one
+    rule for which directory a subject is: `Project.subject_of()`, `resolve()` and the check
+    on a parent's declaration all ask it."""
+    return next((s for s in subjects if isinstance(s, str) and re.fullmatch(SUBJECT_PATTERN, s)
+                 and (root / s).resolve() == at), None)
 
 
 def _declared_by_parent(root: Path) -> Path | None:
@@ -203,7 +232,8 @@ def _declared_by_parent(root: Path) -> Path | None:
     run over, with a cache and source lists of its own, and the parent project's `load()`
     refuses it only when something runs at the parent. Only the parent can declare it, since a
     subject is a direct child. A parent file that can't be parsed declares nothing: its own
-    commands refuse it."""
+    commands refuse it. Parsed, not `load()`ed, since `load()` refuses the parent for exactly
+    this, and for anything else wrong with it, which is not this run's to fix."""
     parent = root.parent
     try:
         subjects = tomllib.loads((parent / FILE).read_text()).get("subjects", [])
@@ -211,12 +241,7 @@ def _declared_by_parent(root: Path) -> Path | None:
         return None
     if not isinstance(subjects, list):
         return None
-    here = root.resolve()
-    for s in subjects:
-        if isinstance(s, str) and re.fullmatch(SUBJECT_PATTERN, s) \
-                and (parent / s).resolve() == here:
-            return parent
-    return None
+    return parent if _subject_at(parent, subjects, root.resolve()) is not None else None
 
 
 def resolve(run: Path | None, project: Path | None,
@@ -229,15 +254,15 @@ def resolve(run: Path | None, project: Path | None,
     where it used to become a run of its own with a cache of its own.
     """
     if project is not None:
-        root = _absolute(project)
+        root = absolute(project)
         if not os.path.lexists(root / FILE):
             raise ProjectError(f"--project {project} holds no {FILE}")
     else:
-        start = run if run is not None else (cwd or Path.cwd())
+        start = run if run is not None else (cwd or working_dir())
         root = find(start)
         if root is None:
             raise ProjectError(
-                f"no {FILE} at or above {_absolute(start)}. Every command reads its project from "
+                f"no {FILE} at or above {absolute(start)}. Every command reads its project from "
                 f"one: write one at the project's root, or pass --project. It names the project, "
                 f"its source lists, where the cache lives, its subjects and its race (README, "
                 f"\"Projects\"). A directory laid out the old way, with the question set, claims "
@@ -252,7 +277,7 @@ def resolve(run: Path | None, project: Path | None,
     if run is None:
         return p, p.root
     at = run.resolve()
-    if at == p.root or any(at == (p.root / s).resolve() for s in p.subjects):
+    if at == p.root or p.subject_of(run) is not None:
         return p, run
     subjects = ", ".join(p.subjects) or "none"
     raise ProjectError(f"{run} is neither the root of the project in {p.root} nor one of its "

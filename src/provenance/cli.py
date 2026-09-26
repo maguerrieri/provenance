@@ -142,15 +142,36 @@ def _project(data: Path | None, project: Path | None, *,
     except proj.ProjectError as e:
         _refuse(str(e))
     if for_run and data is None:
-        here = Path.cwd().resolve()
-        for s in p.subjects:
-            d = p.subject_dir(s).resolve()
-            if (here == d or d in here.parents) and d not in _noted_defaults:
-                _noted_defaults.add(d)
-                con.print("[yellow]" + escape(_printable(
-                    f"this is the project root's run, not {s}'s, though the working directory "
-                    f"is inside {d}: pass --data {shlex.quote(str(d))} for {s}'s")) + "[/]")
+        _note_root_run(p)
     return p, run
+
+
+def _note_root_run(p: proj.Project) -> None:
+    """Say, once, that a run defaulted from inside a subject's directory is the root's. The
+    subject is named by the path the project declares it at, which a symlinked subject's real
+    directory is not: `--data` naming that would find no project above it."""
+    here = Path.cwd().resolve()
+    for s in p.subjects:
+        d = p.subject_dir(s)
+        real = d.resolve()
+        if (here == real or real in here.parents) and real not in _noted_defaults:
+            _noted_defaults.add(real)
+            con.print("[yellow]" + escape(_printable(
+                f"this is the project root's run, not {s}'s, though the working directory "
+                f"is inside {d}: pass --data {shlex.quote(str(d))} for {s}'s")) + "[/]")
+
+
+def _clear_render_or_exit(out: Path) -> None:
+    """Remove the last render from `out`, or stop: `provenance serve` must not show one a
+    build did not produce."""
+    try:
+        clear_render(out)
+    except OSError as e:
+        con.print("[red]" + escape(_printable(f"could not clear the previous render from "
+                                              f"{out}: {e}", lines=True))
+                  + ". Remove it by hand: `provenance serve` must not show a render this build did not "
+                  "produce.[/]")
+        raise typer.Exit(1) from None
 
 
 def _race(p: proj.Project) -> Race:
@@ -167,9 +188,27 @@ def _race(p: proj.Project) -> Race:
 # progress never mix. The page cache is deliberately NOT per-subject: the same article,
 # filing, or roll call routinely covers more than one, and re-fetching it per run would cost
 # time and, worse, could hand two runs different bytes for the same URL.
-def _cache_root(data: Path | None, cache: Path | None, project: Path | None = None) -> Path:
+def _explicit_cache(cache: Path | None) -> Path | None:
+    """`--cache`, refused if it names a cache directory itself. Asked first by every command
+    that takes it, so a bad one is named before anything reads the project."""
+    if cache is not None and any((cache / d).is_dir() for d in ("pages", "calaccess")):
+        # --cache names the directory that HOLDS cache/. Pointed at cache/ itself — the natural
+        # `--cache data/cache` — a reader looked in data/cache/cache and found nothing, and
+        # fetch or verify quietly created a second cache there. A cache directory holds pages/
+        # or calaccess/; a root holds cache/. Through _printable(): an undecodable byte in argv
+        # arrives as a lone surrogate.
+        con.print("[red]" + escape(_printable(
+            f"--cache {cache} is a cache directory itself. --cache names the directory that "
+            f"holds cache/, so this looks like --cache {cache.resolve().parent}.")) + "[/]")
+        raise typer.Exit(1)
+    return cache
+
+
+def _cache_root(data: Path | None, cache: Path | None, project: Path | None = None, *,
+                resolved: tuple[proj.Project, Path] | None = None) -> Path:
     """Where the shared page cache and CAL-ACCESS database live: `--cache`, else the directory
-    the project's provenance.toml names under `cache`.
+    the project's provenance.toml names under `cache`. A command that has already resolved its
+    project passes it as `resolved`, so the project file is read once.
 
     It used to be inferred. First from whether `data.parent/cache` existed, so an unrelated
     stray `./cache/` at the repo root silently redirected the whole pipeline to a root with no
@@ -180,24 +219,14 @@ def _cache_root(data: Path | None, cache: Path | None, project: Path | None = No
     no directory that happens to exist changes the answer.
     """
     if cache is not None:
-        # --cache names the directory that HOLDS cache/. Pointed at cache/ itself — the natural
-        # `--cache data/cache` — a reader looked in data/cache/cache and found nothing, and
-        # fetch or verify quietly created a second cache there. A cache directory holds pages/
-        # or calaccess/; a root holds cache/.
-        if any((cache / d).is_dir() for d in ("pages", "calaccess")):
-            # Through _printable(): an undecodable byte in argv arrives as a lone surrogate.
-            con.print("[red]" + escape(_printable(
-                f"--cache {cache} is a cache directory itself. --cache names the directory that "
-                f"holds cache/, so this looks like --cache {cache.resolve().parent}.")) + "[/]")
-            raise typer.Exit(1)
-        return cache
-    p, run = _project(data, project, for_run=False)
+        return _explicit_cache(cache)
+    p, run = resolved or _project(data, project, for_run=False)
     # A stray is never used, however it got there: an earlier rule ("the run's own cache wins
     # if it exists") was self-fulfilling, so one fetch with --data data/<candidate> created
     # data/<candidate>/cache, the stray became authoritative, and it hid the CAL-ACCESS
-    # database, failing all 14 query citations at once. It is named, once per run (`status` and
-    # `archive` resolve the root per source, and a warning repeated 150 times scrolls away the
-    # output it annotates), so someone moves what it holds.
+    # database, failing all 14 query citations at once. It is named, once per run in a process
+    # (a warning repeated wherever the root is asked for scrolls away the output it annotates),
+    # so someone moves what it holds.
     stray, shared = run / "cache", p.cache / "cache"
     if (stray.exists() and stray.resolve() != shared.resolve()
             and (key := run.resolve()) not in _warned_strays):
@@ -244,8 +273,8 @@ def _warn_unrecorded_snapshots(claims_dir: Path, records: dict[str, dict]) -> No
                   f"it is ignored. Run `provenance archive` to snapshot them.[/]")
 
 
-def _verdict_cache_root(data: Path | None, cache: Path | None,
-                        project: Path | None = None) -> Path:
+def _verdict_cache_root(data: Path | None, cache: Path | None, project: Path | None = None, *,
+                        resolved: tuple[proj.Project, Path] | None = None) -> Path:
     """`_cache_root()` for a command that only READS pages to check verdicts against them:
     judge, judgments, build, status.
 
@@ -257,7 +286,7 @@ def _verdict_cache_root(data: Path | None, cache: Path | None,
     create the cache on first use and do not come through here. Only `cache/` is required,
     not `cache/pages`: a run citing only queries needs the CAL-ACCESS database and no pages.
     """
-    root = _cache_root(data, cache, project)
+    root = _cache_root(data, cache, project, resolved=resolved)
     if (root / "cache").is_dir():
         return root
     if cache is not None:
@@ -472,8 +501,9 @@ def races():
 def verify(data: Path = None, cache: Path = None, refresh: bool = False, qid: str = "",
            project: Path = None):
     """Run deterministic verification over all claims."""
-    cache_root = _cache_root(data, cache, project)
+    _explicit_cache(cache)
     p, data = _project(data, project)
+    cache_root = _cache_root(data, cache, resolved=(p, data))
     rules = load_rules(p.sources)
     claims_dir = data / "claims"
     claims = [c for c in _load_or_exit(claims_dir)   # never trust: this run decides status
@@ -572,7 +602,8 @@ def _report_older_exports(claims: list[Claim], cache_root: Path,
 @app.command()
 def archive(data: Path = None, cache: Path = None, delay: float = 3.0, project: Path = None):
     """Snapshot every cited URL to web.archive.org."""
-    _, data = _project(data, project)
+    _explicit_cache(cache)
+    p, data = _project(data, project)
     claims_dir = data / "claims"
     # Trusted only to carry existing verification statuses through. No archive field is read
     # from a claim file even so: one may be agent-authored, and keeping it where Save Page Now
@@ -604,7 +635,7 @@ def archive(data: Path = None, cache: Path = None, delay: float = 3.0, project: 
                   f"rate-limits hard; a full run left 58 of ~150 URLs unarchived)[/]\n"
                   f"  For a higher quota, get keys at https://archive.org/account/s3.php and "
                   f"export {arch.ACCESS_KEY_ENV} and {arch.SECRET_KEY_ENV}.")
-    cache_root = _cache_root(data, cache, project)
+    cache_root = _cache_root(data, cache, resolved=(p, data))
 
     def unusable(u: str, snapshot: str) -> bool:
         """Whether an earlier snapshot of ours is already known not to be the cited page — a
@@ -758,22 +789,28 @@ def _settle(claims: list[Claim], data: Path, cache_root: Path,
 def _no_own_set(p: proj.Project, run: Path) -> str:
     """Why a subject's run has no question set to be checked against, or "".
 
-    A subject's run never reads the project's set, which is worded for another subject. So
-    where the project has one and the subject has none, its claims can't be checked, and that
-    fails like a set that can't be read. Checking nothing and saying so would be a prose rule
-    with no gate: a subject moved from the old layout without its copy would render claims on
-    retired or reworded ids that the fallback used to leave out."""
+    A subject's run never reads another run's set, each worded for its own subject. So where
+    any run in the project has one and this subject has none, its claims can't be checked, and
+    that fails like a set that can't be read. Checking nothing and saying so would be a prose
+    rule with no gate: a subject moved from the old layout without its copy, or one whose copy
+    was lost, would render claims on retired or reworded ids. Only a project with no set
+    anywhere (before its questions are written) checks nothing, and says so."""
     from . import questions
 
     # By the name the project declares: a symlinked subject's directory has another, and a
     # command naming that one would be refused.
     subject = p.subject_of(run)
-    if subject is None or questions.find(run) is not None or questions.find(p.root) is None:
+    if subject is None or questions.find(run) is not None:
         return ""
+    others = [p.root] + [p.subject_dir(s) for s in p.subjects if s != subject]
+    if not any(questions.find(d) is not None for d in others):
+        return ""
+    fix = (f"`provenance new-candidate {subject}` copies the project's, retargeted to it"
+           if questions.find(p.root) is not None else
+           f"restore it: it is the set {subject}'s claims were researched against")
     return (f"{run} is {subject}'s run and has no {questions.FILE} of its own, so no claim in it "
-            f"can be checked against the question its id names. The project's "
-            f"{p.root / questions.FILE} is not read instead: it is worded for another subject. "
-            f"`provenance new-candidate {subject}` copies it, retargeted to {subject}.")
+            f"can be checked against the question its id names. No other run's set is read "
+            f"instead: each is worded for its own subject. {fix[0].upper()}{fix[1:]}.")
 
 
 def _question_ids(data: Path, claims: list[Claim], p: proj.Project) -> set[str] | None:
@@ -861,27 +898,31 @@ def build(data: Path = None, cache: Path = None, candidate: str = "", title: str
     """Detect conflicts and render the review app."""
     from .races import candidate as find_candidate
 
-    # First, so that every way this build can stop short (a refusal below, a crash, a kill)
-    # leaves no earlier render for `provenance serve` to show as if it were this one. Before the
-    # project file is read, too, since one that can't be read is a refusal like any other: the
-    # run is found without reading it (`--data`, else the root holding it).
-    run = data if data is not None else project if project is not None else proj.find(Path.cwd())
-    if run is not None:
-        try:
-            clear_render(run / "out")
-        except OSError as e:
-            con.print("[red]" + escape(_printable(f"could not clear the previous render from "
-                                                  f"{run / 'out'}: {e}", lines=True))
-                      + ". Remove it by hand: `provenance serve` must not show a render this build did not "
-                      "produce.[/]")
-            raise typer.Exit(1) from None
-    p, data = _project(data, project)
+    # The run's last render goes first, so that every way this build can stop short (a refusal
+    # below, a crash, a kill) leaves no earlier render for `provenance serve` to show as if it
+    # were this one. A project file that can't be read is one such refusal, and the run it was
+    # asked for is still that project's (`--data`, else the root holding the file), so its
+    # render goes too. A directory the project doesn't declare, or one in no project, is no run:
+    # its out/ is none of the project's, and nothing in it is touched.
+    given = data
+    try:
+        p, data = proj.resolve(data, project)
+    except proj.ProjectError as e:
+        run = (given if given is not None else project if project is not None
+               else proj.find(proj.working_dir()))
+        if isinstance(e, proj.UnreadableProject) and run is not None:
+            _clear_render_or_exit(run / "out")
+        _refuse(str(e))
+    if given is None:
+        _note_root_run(p)
+    _clear_render_or_exit(data / "out")
+    _explicit_cache(cache)
     r = _race(p)
     # The title also keys the review app's saved progress, so it must name the candidate:
     # two candidates sharing a key would show each other's checkmarks.
     if not title:
         title = f"{find_candidate(r, candidate).name} — {r.title}" if candidate else r.title
-    cache_root = _verdict_cache_root(data, cache, project)
+    cache_root = _verdict_cache_root(data, cache, resolved=(p, data))
     rules = load_rules(p.sources)
 
     # Trusted, then immediately re-checked: _settle() discards any status that cannot be
@@ -1462,8 +1503,9 @@ def handoff(question_id: str, data: Path = None, cache: Path = None, project: Pa
     judge` would refuse now gets its reason instead of a token. Read-only.
     """
     _qid_or_exit(question_id)
-    cache_root = _verdict_cache_root(data, cache, project)
+    _explicit_cache(cache)
     p, data = _project(data, project)
+    cache_root = _verdict_cache_root(data, cache, resolved=(p, data))
     claim, _ = _claim_or_exit(data, question_id, "so what it cites cannot be shown")
     _apply_archive_rows(data, claim.sources, cache_root)
     _print_handoff(_handed(claim, cache_root, rules=load_rules(p.sources)),
@@ -1552,8 +1594,9 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
         # First, with the id: a mistake in the command itself is named before any check of what
         # it refers to, so one call with two mistakes does not take two refusals to fix.
         _refuse(f"{verdict} is not a verdict: use one of {', '.join(judgments.VERDICTS)}")
-    cache_root = _verdict_cache_root(data, cache, project)
+    _explicit_cache(cache)
     p, data = _project(data, project)
+    cache_root = _verdict_cache_root(data, cache, resolved=(p, data))
     rules = load_rules(p.sources)
     claim, claims = _claim_or_exit(data, question_id,
                                    f"so whether it cites {sid} cannot be checked")
@@ -1652,8 +1695,9 @@ def show_judgments(data: Path = None, question_id: str = "",
                                        ("--moved", moved), ("--gone", gone)) if on]
         _retired(f"`provenance judgments {' '.join(given)}`")
 
-    cache_root = _verdict_cache_root(data, cache, project)
+    _explicit_cache(cache)
     p, data = _project(data, project)
+    cache_root = _verdict_cache_root(data, cache, resolved=(p, data))
     rules = load_rules(p.sources)
     skipped: list[str] = []
     claims = _load_or_exit(data / "claims", trust_machine_fields=True, skipped=skipped)
@@ -2163,12 +2207,14 @@ def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path
     # The run `provenance build` will check this claim in: the directory holding the claim's
     # claims/, and the project that run is in. Not --data alone: a researcher on a subject's run
     # checks with no --data, which is the project root, whose set is the template, not the
-    # subject's retargeted copy. Resolved: `provenance check-claim q1.json` from inside claims/
-    # has "" for a parent name.
-    at = path.resolve()
+    # subject's retargeted copy. Made absolute, so `provenance check-claim q1.json` from inside
+    # claims/ has a parent name, but not resolved: a subject that is a symlink has no project
+    # above its real directory (`project.find()`).
+    at = proj.absolute(path)
+    _explicit_cache(cache)
     p, run = _project(at.parent.parent if at.parent.name == "claims" else data, project)
     rules = load_rules(p.sources)
-    cache_root = _cache_root(run, cache, project)
+    cache_root = _cache_root(run, cache, resolved=(p, run))
     try:
         raw = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as e:
@@ -2363,7 +2409,7 @@ def status(data: Path = None, cache: Path = None, project: Path = None):
 
     # The lists build checks against: the project's, as build reads them.
     rules = load_rules(p.sources)
-    cache_root = _verdict_cache_root(data, cache, project)
+    cache_root = _verdict_cache_root(data, cache, resolved=(p, data))
     _settle(claims, data, cache_root, rules, _archive_records(data))
     t = Table("qid", "type", "status", "sources", "corroboration", "conflicts", box=None)
     for c in claims:

@@ -212,12 +212,21 @@ def test_a_subject_run_reads_its_own_question_set_and_never_the_projects(tmp_pat
         code, out = _provenance(*args)
         assert code == 1, (args, out)
         assert f"{run} is cand's run and has no questions.json of its own" in out, (args, out)
-        assert "`provenance new-candidate cand` copies it" in out, (args, out)
+        assert "`provenance new-candidate cand` copies the project's, retargeted to it" in out
         assert "another question than" not in out, (args, out)
     assert not (run / "out" / "review.html").exists()
 
-    # With no set anywhere in the project, a subject is like any run with none: said, and passed.
+    # With no template, another subject's set still says the project has questions, and so
+    # that this one lost its own: restore it, since new-candidate has nothing to copy.
     (root / "questions.json").unlink()
+    write_project(root, subjects=["cand", "other"])
+    (root / "other").mkdir()
+    (root / "other" / "questions.json").write_text(json.dumps([{"id": "q1", "text": "?"}]))
+    code, out = _provenance("build", "--data", run)
+    assert code == 1 and "Restore it: it is the set cand's claims were researched" in out, out
+
+    # With no set anywhere in the project, a subject is like any run with none: said, and passed.
+    (root / "other" / "questions.json").unlink()
     code, out = _provenance("build", "--data", run)
     assert code == 0 and f"no questions.json in {run}, so no claim was checked" in out, out
 
