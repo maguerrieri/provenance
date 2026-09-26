@@ -2652,7 +2652,11 @@ def _cache_setting(cache: str | None, default: str, root: Path) -> str:
         _refuse("--cache must name a directory")
     if cache.startswith("~") or os.path.isabs(cache):
         return cache
-    return os.path.relpath(proj.absolute(Path(cache)).resolve(), root.resolve())
+    try:
+        return os.path.relpath(proj.absolute(Path(cache)).resolve(), root.resolve())
+    except (RuntimeError, OSError) as e:
+        # A symlink loop, which resolve() raises on: refused, never a traceback.
+        _refuse(f"--cache {cache} can't be resolved from {root}: {e}")
 
 
 def _missing_dirs(path: Path) -> list[Path]:
@@ -2680,16 +2684,30 @@ def _scaffold(root: Path, name: str, sources: list[str], cache: str,
     directory created for it that is still empty. Read back through `project.resolve()`, so it
     is refused for anything any command would refuse it for, a subject of another project's
     included. Each file is created exclusively: `new` and `ask` only create a project, and never
-    write over a file, however one got there."""
-    created = _missing_dirs(root)
+    write over a file, however one got there.
+
+    A directory that does not exist yet is built beside its name and renamed into place, so an
+    interrupted run leaves the project whole or absent, never half of one a retry is refused
+    over. Into one that exists (`new`, beside its template), the project file is written last,
+    so an interrupted run leaves no project file, and the retry finds the same template."""
+    import os
+
+    fresh = not os.path.lexists(root)
+    created = _missing_dirs(root.parent) if fresh else []
+    stage = root.parent / f".{root.name}.provenance-{os.getpid()}" if fresh else root
     written: list[Path] = []
     text = _PROJECT_FILE.format(name=_toml_string(name), sources=json.dumps(sources),
                                 cache=_toml_string(cache))
 
-    def undo() -> None:
+    def undo(at: Path) -> None:
         for f in reversed(written):
             try:
-                f.unlink()
+                (at / f.name).unlink()
+            except OSError:
+                pass
+        if fresh:
+            try:
+                at.rmdir()
             except OSError:
                 pass
         for d in created:
@@ -2699,29 +2717,41 @@ def _scaffold(root: Path, name: str, sources: list[str], cache: str,
                 break
 
     try:
-        root.mkdir(parents=True, exist_ok=True)
+        if fresh:
+            root.parent.mkdir(parents=True, exist_ok=True)
+            stage.mkdir()
     except OSError as e:
         # FileExistsError too: a part of the path that exists and is not a directory.
-        undo()
+        undo(stage)
         _refuse(f"could not create {root}: {e}")
-    for rel, body in {proj.FILE: text, **files}.items():
-        path = root / rel
+    for rel, body in {**files, proj.FILE: text}.items():
+        path = stage / rel
         try:
             with open(path, "x", encoding="utf-8") as f:
                 written.append(path)
                 f.write(body)
         except FileExistsError:
-            undo()
+            undo(stage)
             if rel == proj.FILE:
                 _already_a_project(root)
-            _refuse(f"{path} exists: `provenance new` and `provenance ask` write over no file")
+            _refuse(f"{root / rel} exists: `provenance new` and `provenance ask` write over no "
+                    f"file")
         except OSError as e:
-            undo()
-            _refuse(f"could not write {path}: {e}. Nothing was written.")
+            undo(stage)
+            _refuse(f"could not write {root / rel}: {e}. Nothing was written.")
+    if fresh:
+        try:
+            if os.path.lexists(root):
+                # rename() would put the project over an empty directory made meanwhile.
+                raise FileExistsError(f"{root} was created meanwhile")
+            os.rename(stage, root)
+        except OSError as e:
+            undo(stage)
+            _refuse(f"could not create {root}: {e}. Nothing was written.")
     try:
         p, _ = proj.resolve(None, root)
     except proj.ProjectError as e:
-        undo()
+        undo(root)
         _refuse(f"{e}. Nothing was written.")
     return p
 
@@ -2777,6 +2807,11 @@ def new(directory: Annotated[Path, typer.Argument(
         _refuse(f"--from {from_} can't be read as a template: {e}")
     if not template.strip():
         _refuse(f"--from {from_} is empty: the template is the research questions to split")
+    if os.path.islink(root):
+        # Written through, the project file would land in the link's target, which can be
+        # another project's subject: whether one declares it is asked of the path as given, and
+        # a subject is declared by the directory above it, which the link's is not.
+        _refuse(f"{root} is a symlink: name the directory it points to")
     if os.path.lexists(root) and not root.is_dir():
         _refuse(f"{root} is not a directory")
     if os.path.lexists(root / proj.FILE):
@@ -2811,18 +2846,22 @@ def new(directory: Annotated[Path, typer.Argument(
 
 
 def _ask_dir(question: str) -> Path | None:
-    """`ask-<the question's first distinctive words>`, in the working directory: the words
-    every such question shares (`_ASK_FILLER`) are left out. Accents are folded, a possessive
-    `'s` dropped, and anything else outside [a-z0-9] separates words, so the name is plain on
-    any disk. None for a question with no such word: it has no default, and `provenance ask`
-    asks for `--dir`."""
+    """`ask-<the question's first distinctive words>-<a hash of it>`, in the working directory:
+    the words every such question shares (`_ASK_FILLER`) are left out. Accents are folded, a
+    possessive `'s` dropped, and anything else outside [a-z0-9] separates words, so the name is
+    plain on any disk. The words are cut short, and two questions can share them: the hash
+    keeps the directory, and the project's name with it, one question's. The same question
+    asked again gets the same directory, and is refused. None for a question with no such word:
+    it has no default, and `provenance ask` asks for `--dir`."""
+    import hashlib
     import unicodedata
 
     folded = unicodedata.normalize("NFKD", question).encode("ascii", "ignore").decode().lower()
     words = [w for w in re.findall(r"[a-z0-9]+", re.sub(r"'s\b", "", folded))
              if w not in _ASK_FILLER]
     slug = "-".join(words[:6])[:48].rstrip("-")
-    return Path(f"ask-{slug}") if slug else None
+    digest = hashlib.sha256(question.encode()).hexdigest()[:6]
+    return Path(f"ask-{slug}-{digest}") if slug else None
 
 
 @app.command(name="ask")
@@ -2832,7 +2871,8 @@ def ask(question: Annotated[str, typer.Argument(
             help="A source list the citations are checked against. Repeat for each.")] = None,
         dir_: Annotated[Path | None, typer.Option(
             "--dir", help="The new project's directory, which must not exist. Defaults to "
-                          "ask-<the question's first distinctive words>, here.")] = None,
+                          "ask-<the question's first distinctive words>-<a hash of it>, "
+                          "here.")] = None,
         name: Annotated[str, typer.Option(
             help="The project's name: its review progress is kept under it. Defaults to the "
                  "directory's name.")] = "",
