@@ -26,9 +26,10 @@ URL = "https://portal.example/api/search?name=Doe"
 
 
 def test_the_data_is_found_in_the_package():
-    assert report.TEMPLATES == PACKAGE / "templates"
-    assert sources.SOURCES_DIR == PACKAGE / "source_lists"
-    assert access.REGISTRY == PACKAGE / "source_access"
+    # Resolved on both sides: a clone under a symlinked path (macOS /tmp) is found unresolved.
+    assert report.TEMPLATES.resolve() == PACKAGE / "templates"
+    assert sources.SOURCES_DIR.resolve() == PACKAGE / "source_lists"
+    assert access.REGISTRY.resolve() == PACKAGE / "source_access"
     assert (report.TEMPLATES / "review.html.j2").is_file()
     assert {"us", "ca"} <= set(sources.available())
     assert access.load_all(), "the shipped access registry reads as empty"
@@ -106,6 +107,35 @@ def test_an_installed_copy_prints_a_note_instead_of_writing_it(installed):
     assert "not written: this provenance is an installed copy" in r.output
     assert "src/provenance/source_access/portal.example.yaml" in r.output
     assert "host: portal.example" in r.output and "findings: needs a session" in r.output
+
+
+def test_a_host_with_an_entry_is_merged_not_replaced(installed):
+    """Printed from an installed copy, the entry is that install's copy with the note added. The
+    repo's may have findings the install lacks, so pasting it over the file would drop them."""
+    installed.mkdir()
+    (installed / "portal.example.yaml").write_text("host: portal.example\nfindings: older\n")
+    r = CliRunner().invoke(cli.app, ["source-note", "portal.example", "newer"],
+                           terminal_width=200)
+    assert r.exit_code == 1, r.output
+    assert "merge what is new into src/provenance/source_access/portal.example.yaml" in r.output
+    assert "older" in r.output and "newer" in r.output
+    assert (installed / "portal.example.yaml").read_text().endswith("findings: older\n")
+
+
+@pytest.mark.parametrize("host", ["../outside", "../../outside", "sub/outside", "/tmp/outside"])
+def test_a_host_that_is_a_path_names_no_entry(installed, tmp_path, host):
+    """source-note joins the host into a file name. With a "/" in it, the file was outside the
+    registry: read, printed in full by the installed-copy refusal, or rewritten in a checkout."""
+    outside = tmp_path / "outside.yaml"
+    outside.write_text("secret: canary-value\n")
+    for installed_copy in (True, False):
+        with pytest.MonkeyPatch.context() as m:
+            m.setattr(access, "installed_copy", lambda: installed_copy)
+            r = CliRunner().invoke(cli.app, ["source-note", host, "x"], terminal_width=200)
+        assert r.exit_code == 1, r.output
+        assert "is not a host name" in r.output
+        assert "canary-value" not in r.output
+        assert outside.read_text() == "secret: canary-value\n"
 
 
 def test_an_installed_copy_prints_an_import_instead_of_writing_it(installed, tmp_path):

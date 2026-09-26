@@ -1198,8 +1198,12 @@ it without a word: a finding recorded and lost. `access.installed_copy()` asks t
 (PEP 610's `direct_url.json`: `uv sync` installs a checkout editable), and anything it can't
 read counts as installed. There, `source-note` and `source-import-curl` exit 1 and print the
 entry, with where it goes in the tool's repo. They print at the point of the write, so the entry
-has passed every check a write does: printing is no way around them. A registry of a project's
-own, layered over the shipped one, is #165.
+has passed every check a write does: printing is no way around them. For a host that already
+has an entry, the printed one is the install's copy with the change applied, so the message says
+to merge it by hand, not replace the repo's newer file. Printing also made `source-note`'s host a
+way to read files: the host is joined into a file name, and one holding `/` or `..` named a YAML
+file outside the registry, printed whole. It is refused before anything is read (a checkout
+rewrote that file). A registry of a project's own, layered over the shipped one, is #165.
 
 **Credentials never enter the registry.** The importer drops session headers and `run()`
 refuses a recipe carrying them, because an endpoint that only works with someone's session is

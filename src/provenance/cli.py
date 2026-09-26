@@ -1923,12 +1923,17 @@ def source_access(host: str = typer.Argument(""), run_recipe: str = "",
 def _registry_write_refused(dest: Path, text: str) -> NoReturn:
     """Print the entry instead of writing it, in an installed copy: the registry ships inside
     the package there, and the next install would delete the file (access.installed_copy()).
-    Called where the write would be, so the entry has passed every check a write does."""
+    Called where the write would be, so the entry has passed every check a write does. For a
+    host that already has an entry, what is printed is this install's copy with the change
+    applied, and the repo's may be newer, so it says to merge rather than replace."""
+    where = f"src/provenance/source_access/{_printable(dest.name)}"
+    how = (f"The tool already has an entry for this host: merge what is new into {where} by "
+           "hand rather than replacing the file, since the repo's copy may be newer than this "
+           "install's." if dest.exists() else f"Add it as {where}.")
     con.print(Text("not written: this provenance is an installed copy, and the access registry "
-                   "ships inside it, so the next install would delete the entry. Add it to the "
-                   "tool's repo instead, from a clone of https://github.com/maguerrieri/provenance, "
-                   f"as src/provenance/source_access/{_printable(dest.name)}:", style="yellow"),
-              soft_wrap=True)
+                   "ships inside it, so the next install would delete the entry. Record it in the "
+                   "tool's repo instead, from a clone of https://github.com/maguerrieri/provenance. "
+                   + how, style="yellow"), soft_wrap=True)
     _print_copied(text)
     raise typer.Exit(1)
 
@@ -1944,6 +1949,12 @@ def source_note(host: str, note: str, access: str = "", verified: str = ""):
     from . import access as access_mod
 
     entry_path = access_mod.REGISTRY / f"{access_mod._norm_host(host)}.yaml"
+    if entry_path.parent != access_mod.REGISTRY:
+        # A "/" or ".." in the host names a file outside the registry, which would be read,
+        # printed and rewritten. Refused before anything reads it.
+        con.print(Text(f"refused: {_printable(host)} is not a host name, so it names no "
+                       f"registry entry", style="red"), soft_wrap=True)
+        raise typer.Exit(1)
     if entry_path.exists():
         data = yaml.safe_load(entry_path.read_text()) or {}
     else:
