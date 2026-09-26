@@ -111,9 +111,13 @@ def load_rules(names: tuple[str, ...] = ("us",), sources_dir: str | None = None,
                                  f"{', '.join(map(repr, bad))} (write `example.gov`: no "
                                  f"scheme, path, port or `www.`, and not an IP address)")
             merged[k].extend(map(bare_host, hosts))
-    # Read here, where they join the rules, not only in project.load(): one given any other way
-    # (a Project built in code) would otherwise be compared as written, and match nothing.
-    merged["primary_document"].extend(h for h in map(bare_host, primary_hosts) if h)
+    # Read and checked here, where they join the rules, not only in project.load(): one given any
+    # other way (a Project built in code) would otherwise be compared as written and match
+    # nothing, or reclass a news outlet the lists name. One the rule refuses is left out, so its
+    # records read as copies: the side that fails toward review.
+    lists = {k: tuple(dict.fromkeys(v)) for k, v in merged.items()}
+    merged["primary_document"].extend(
+        h for h in map(bare_host, primary_hosts) if h and why_not_nameable(h, lists) is None)
     return {k: tuple(dict.fromkeys(v)) for k, v in merged.items()}
 
 

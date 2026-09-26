@@ -212,7 +212,9 @@ nearest one at or above the run it is given (`--data`, else the working director
 name = "example"
 title = "Example County Assessor"   # optional: the review page's title, `name` if left out
 sources = ["us", "ca"]              # the source lists citations are checked against
-primary_hosts = ["records.example.gov"]   # optional: hosts that issue this project's records
+primary_hosts = [                   # optional: hosts that issue this project's own records
+  "records.example.gov",
+]
 cache = "."                         # the directory that holds cache/, as --cache names it
 subjects = [                        # optional: a run for each, in its own subdirectory
   {id = "lind", name = "Avery Lind"},
@@ -230,11 +232,12 @@ completeness_check = """
   source lists leave out: an agency's records site, a standards body's document tracker. A
   `primary_document`, `official_record` or `official_analysis` cited from a host neither names
   is a copy: `provenance check-claim` fails it, and `provenance build` fails its claim's
-  corroboration, until it carries `secondary_host_ack`. Each entry is a bare
-  host (`records.example.gov`, no scheme, path or `www.`) and covers its subdomains, so name the
-  authority's own host, never a suffix shared with others. A host the lists already class
-  (excluded, a lead generator, campaign material, a news outlet) is refused: the project adds
-  authorities, and can't reclass a host. The project file is a person's to edit: a researcher
+  corroboration, until it carries `secondary_host_ack`. Each entry is a bare host
+  (`records.example.gov`: no scheme, path, port or `www.`, and not an IP address) and covers
+  its subdomains, so name the authority's own host, never a suffix shared with others. A host
+  the lists already class (excluded, a lead generator, campaign material, a news outlet) is
+  refused, and so is a host above a listed news outlet: the project adds authorities, and can't
+  reclass a host. The project file is a person's to edit: a researcher
   that names its own issuing authorities can pass off any copy as the record, so one that meets
   an unlisted authority hands the claim on with a note instead. Once a person adds the host,
   the next `provenance build` releases the claim.

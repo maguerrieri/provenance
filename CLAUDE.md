@@ -1422,7 +1422,8 @@ as a copy. Passing unlisted hosts instead would reopen the substitution this exi
   reclass `news.example.com`. `project.load()` refuses all three. A host above an excluded
   one is allowed: the most restrictive class still wins there. The rule is one function,
   `sources.why_not_nameable()`, which check-claim and the review page ask before offering
-  `primary_hosts` too. Each first had a partial copy (the host's own class), and both offered a
+  `primary_hosts` too, and which `load_rules()` applies where the hosts join the rules, leaving
+  out a host it refuses, so a Project built in code can't reclass an outlet either. Each first had a partial copy (the host's own class), and both offered a
   host above a listed outlet that the project file then refused.
 - **The brief says which hosts count, and what to do about any other.** `researcher_brief()`
   gives the merged list and `cli.ISSUING_AUTHORITIES` beside the source lists' notes, so a

@@ -502,6 +502,15 @@ def test_the_rules_read_a_host_however_it_was_given():
     assert "gov" not in rules["primary_document"] and "0.1" not in rules["primary_document"]
 
 
+def test_the_rules_never_let_a_named_host_reclass_a_listed_outlet(synthetic_lists):
+    """The naming rule is applied where the hosts join the rules too, so a Project built without
+    project.load() can't turn a news outlet, or a host above one, into an issuing authority."""
+    rules = load_rules(("xx",), primary_hosts=("news.example.com", "example.com", AUTHORITY))
+    assert classify("https://news.example.com/x", rules) == "bylined_journalism"
+    assert classify("https://example.com/x", rules) == "unknown"
+    assert classify(URL, rules) == "primary_document"
+
+
 def test_a_misnamed_list_does_not_hide_what_the_others_say(tmp_path, synthetic_lists):
     """Every problem in one message: the host is checked against the lists that exist."""
     msg = _refusal(tmp_path, '["news.example.com"]', ("xx", "nosuchlist"))
