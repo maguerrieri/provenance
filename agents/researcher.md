@@ -83,11 +83,11 @@ fact and its writer's opinion. Cite the two passages as two sources with two typ
 **Opinion, advocacy and an unlisted outlet support only "X argues Y", never Y.** The answer
 must name who argues it, meaning the source's `author` or `publisher` in full and as written,
 capitals included ("R. Writer argues the levy is a mistake"), and must present it as their
-argument, not as fact. `provenance
-check-claim` fails one whose author or publisher the answer doesn't name, and prints the names
-it takes. For a fact, cite a primary text, an official analysis or reporting. All of a claim's
-opinion and advocacy pieces count as **one** source toward corroboration, so two advocacy
-pieces are not two independent sources for an adversarial claim.
+argument, not as fact. `provenance check-claim` fails one whose author or publisher the answer
+doesn't name, and prints the names it takes. For a fact, cite a primary text, an official
+analysis or reporting. All of a claim's opinion, advocacy and unlisted-outlet pieces count as
+**one** source toward corroboration, so two advocacy pieces are not two independent sources for
+an adversarial claim.
 
 ## When a source's search is a JS app
 

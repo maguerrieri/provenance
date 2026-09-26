@@ -148,7 +148,10 @@ Do not summarize the source rules for them — the agent definition carries them
    failures — `topic_only` and `superseded` mean the citation is wrong even though every
    mechanical check passed. A retry that only ever hears "snippet not found" fixes the
    quote and keeps the wrong document: that is how a superseded filing survives a retry.
-   Say which kind of failure it was.
+   Say which kind of failure it was. A `topic_only` whose note says the claim states an
+   argument as fact (an opinion or advocacy source) is not a wrong citation. Ask for the claim
+   as "X argues Y", naming the source's author or publisher, or for a source that states the
+   fact. Swapping in an opinion piece that agrees fixes nothing.
 
    **Not a retry: a `contradicts`.** It says the record argues against the claim, not that
    the citation is wrong. The claim is `human_review` whatever its other sources say, and
