@@ -197,8 +197,8 @@ or a regulation:
    states it ("operative 2025-01-01", "as amended by <act>, effective <date>", "current through
    <law>"). `provenance check-claim` fails a citation on a host that publishes legal text
    (your project's source lists name them) without one, or with a placeholder such as
-   "n/a". A legislature's host serves bills, votes and analyses too, and the rule covers them:
-   give a bill's version, or the date of the action or analysis you cite.
+   "n/a" or "current". A legislature's host serves bills, votes and analyses too, and the
+   rule covers them: give a bill's version, or the date of the action or analysis you cite.
 3. An amendment that is pending, or enacted and not yet operative, is part of the answer: say
    so, and cite it.
 4. Statutes define terms by pointing to other sections ("as defined in Section …"). When the

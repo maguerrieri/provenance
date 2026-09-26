@@ -970,13 +970,18 @@ def missing_legal_version(src: Source, rules: dict[str, tuple[str, ...]] | None 
 
 # What fills `date` and names no date, as "staff" fills `author` and names no one. Which date a
 # real one is (the version's, or only the day it was read) is the verifier's to judge.
-_NO_DATE = frozenset({"", "n/a", "na", "none", "null", "unknown", "undated", "no date", "-",
-                      "\u2013", "\u2014", "?", "tbd"})
+# Compared with the punctuation and spaces around them dropped, so "N/A." is "n/a" and "n.d."
+# is "n.d". "current" and "in force" are here because they are what legal text is most often
+# dated with by someone who didn't look: they name no version, which is the whole question.
+_NO_DATE = frozenset({"", "n/a", "na", "n.a", "n.d", "nd", "none", "null", "unknown", "undated",
+                      "no date", "not stated", "not given", "tbd", "current", "latest",
+                      "in force", "present"})
+_AROUND = " \t\n.,;:!?-()[]\"'\u2013\u2014"
 
 
 def _undated(src: Source) -> bool:
     """A series citation's `date` is empty, or a placeholder that says there is none."""
-    return (src.date or "").strip().lower() in _NO_DATE
+    return " ".join((src.date or "").lower().split()).strip(_AROUND) in _NO_DATE
 
 
 def _input_order(by_id: dict[str, Claim]) -> list[list[Claim]]:

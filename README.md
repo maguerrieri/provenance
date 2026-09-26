@@ -307,10 +307,10 @@ still pass if they carry a named or institutional author — so an unlisted loca
 degrades gracefully instead of being rejected. A list also names, under `legal_text`, the hosts
 that publish the text of law (statutes, codes, regulations), whatever their class. Legal text is
 a series, so `provenance check-claim` fails a citation on one of them that doesn't give the
-effective date or version it quotes in `date` (a placeholder such as `n/a` gives none). A list
-that isn't exactly these keys, each a list of bare host names (`example.gov`: no scheme, path,
-port or `www.`), is refused, and every command names it as a problem with the project.
-A new list is a change to the tool: add it under
+effective date or version it quotes in `date` (a placeholder such as `n/a` or `current` gives
+none). A list that isn't exactly these keys, each a list of bare host names (`example.gov`: no
+scheme, path, port or `www.`), is refused, and every command names it as a problem with the
+project. A new list is a change to the tool: add it under
 `src/provenance/source_lists/` in a clone, since an installed copy's lists are replaced on the
 next install.
 

@@ -47,7 +47,8 @@ def test_an_undated_citation_on_a_legal_text_host_is_missing_its_version(tmp_pat
                     "2025-01-01"):
         assert not missing_legal_version(_source(date=version), rules), version
     # A placeholder fills the field and names no version, as "staff" names no author.
-    for placeholder in ("n/a", "N/A", "none", "Unknown", "undated", "-", "\u2014", "?", "TBD"):
+    for placeholder in ("n/a", "N/A", "N/A.", "n.d.", "(none)", "Unknown", "undated", "-",
+                        "\u2014", "?", "TBD", "current", "Latest", " in  force ", "not stated"):
         assert missing_legal_version(_source(date=placeholder), rules), placeholder
     # Not every host is legal text: an undated article is untidy, not a series defect.
     assert not missing_legal_version(_source(url="https://news.example/a"), rules)
@@ -76,6 +77,10 @@ def test_which_hosts_publish_legal_text_is_list_data_not_code(tmp_path):
     assert missing_legal_version(_source(url="https://uscode.house.gov/view.xhtml?req=x"),
                                  shipped)
     assert not missing_legal_version(_source(), shipped), "codes.example.gov is on no list"
+    # The office that compiles the federal code issues it; eCFR says it is not an official
+    # edition, so citing it as a primary document still needs its acknowledgment.
+    assert sources.classify("https://uscode.house.gov/x", shipped) == "primary_document"
+    assert sources.classify("https://www.ecfr.gov/x", shipped) == "unknown"
 
 
 def test_a_legal_text_host_keeps_the_class_another_key_gives_it(tmp_path):
@@ -144,9 +149,32 @@ def test_a_source_list_that_cannot_be_read_is_refused_the_same_way(tmp_path, mak
         sources.load_rules(("x",), str(d))
 
 
+def test_a_host_is_listed_as_its_urls_spell_it(tmp_path):
+    """`domain()` returns a host as the URL spells it, Unicode included, so a list can name one
+    that way."""
+    rules = sources.load_rules(("x",), _lists(tmp_path, "legal_text:\n  - b\u00fccher.example\n"))
+    assert missing_legal_version(_source(url="https://b\u00fccher.example/code/1"), rules)
+
+
 def test_an_empty_key_lists_no_host(tmp_path):
     rules = sources.load_rules(("x",), _lists(tmp_path, "legal_text:\nprimary_document: []\n"))
     assert rules[sources.LEGAL_TEXT] == () and rules["primary_document"] == ()
+
+
+def test_a_list_that_is_gone_is_a_problem_with_the_project(tmp_path, monkeypatch):
+    """A dangling symlink is listed by `available()`, so the project names it, and then
+    `load_rules()` can't find it: that is named too, not a traceback."""
+    from provenance import project
+
+    d = tmp_path / "lists"
+    d.mkdir()
+    (d / "x-sources.yaml").symlink_to(tmp_path / "moved-away.yaml")
+    monkeypatch.setattr(sources, "SOURCES_DIR", d)
+    sources.load_rules.cache_clear()
+    root = write_project(tmp_path / "p", sources=("x",))
+    with pytest.raises(project.UnreadableProject, match=re.escape("no source list 'x'")):
+        project.load(root)
+    sources.load_rules.cache_clear()
 
 
 def test_a_malformed_list_is_a_problem_with_the_project(tmp_path, monkeypatch):

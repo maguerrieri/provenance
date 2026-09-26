@@ -1338,8 +1338,9 @@ in force. So:
   date or version ("operative …", "as amended by …", "current through …").
 - `missing_legal_version()` is the checkable precondition: `check-claim` fails a citation on a
   legal-text host with no `date`, as `missing_filing_date()` fails an undated filing. Both read
-  a placeholder (`n/a`, `unknown`, `-`) as no date, as `check_source_class()` reads an author of
-  `staff` as no author. Only `check-claim` enforces either (#183).
+  a placeholder (`n/a`, `n.d.`, `unknown`, `current`) as no date, as `check_source_class()` reads
+  an author of `staff` as no author. `current` is the one to watch on legal text: it is what
+  someone who didn't look writes, and it names no version. Only `check-claim` enforces either (#183).
 - `verifier.md` checks for a newer version (`superseded`), and reads the definitions a quote's
   terms point to. Statutes define terms by reference to other sections, so a quote can match
   exactly and still mean something else. That is judgment, not matching.
@@ -1352,9 +1353,10 @@ is told that such a record is not a version of the law, so it doesn't look for a
 Three choices worth keeping:
 - **The hosts are source-list data, not code.** `legal_text` in a `<region>-sources.yaml` is not
   a class: a host there keeps whatever class another key gives it, and a code publisher serving
-  many jurisdictions is listed there without becoming `primary_document` (#40). The offices that
-  compile a code are listed as `primary_document` too, so citing their text needs no
-  `secondary_host_ack`. Nothing in the core may name a jurisdiction's legal hosts.
+  many jurisdictions is listed there without becoming `primary_document` (#40). An office that
+  compiles a code and publishes it as the code is listed as `primary_document` too, so citing
+  its text needs no `secondary_host_ack`: the US Code's is, and eCFR, which says it is not an
+  official edition, is not. Nothing in the core may name a jurisdiction's legal hosts.
   `FILING_HOSTS` predates this and is still a constant in `verify.py` (#180).
 - **A list that can't be read as intended is refused, not read past**, and each way of reading
   past fails open: a misspelled key lists no host; a repeated key (PyYAML keeps the last)
