@@ -114,9 +114,11 @@ def test_a_value_encoded_past_reading_is_refused_not_read_no_further(registry):
     # Any header, not only origin and referer: the send path holds what the registry does.
     Recipe(id="r", method="GET", url="https://x.example/api",
            headers={"X-Endpoint": f"https://{LOGIN}@y.example/"}),
+    Recipe(id="r", method="GET", url="https://x.example/api", notes=f"//{LOGIN}@y.example"),
 ])
 def test_run_refuses_a_login_in_a_nested_url(recipe, registry):
-    with pytest.raises(Refused, match="carries a username or password") as e:
+    """`run()` checks a recipe as `check_entry()` does, since one built by hand reaches it too."""
+    with pytest.raises(Refused, match="username or password") as e:
         run(recipe, {"next": f"https://{LOGIN}@y.example/"})
     _clean(str(e.value))
 
@@ -233,7 +235,11 @@ def _recipe(**fields) -> dict:
     (_entry(**_recipe(headers={"Origin": f"https://{LOGIN}@portal.example"})),
      "origin header's URL carries"),
     (_entry(**_recipe(headers={"user-agent": f"probe https://{LOGIN}@portal.example/"})),
-     "a URL in its user-agent header carries a username"),
+     "its user-agent header holds a username"),
+    (_entry(**_recipe(headers={"x-endpoint": f"https://portal.example/?api_key={CANARY}"})),
+     r"its x-endpoint header holds a URL carrying .* \(api_key\)"),
+    (_entry(**_recipe(notes=f"see https://{LOGIN}@portal.example/")),
+     "in recipe 'search', its field notes holds a username"),
     (_entry(**_recipe(body=json.dumps({"q": {"next": f"https://{LOGIN}@y.example/"}}))),
      "carries a username"),
     (_entry(**_recipe(body=f"q=1&csrf_token={CANARY}")), r"its body \(csrf_token\)"),
@@ -307,6 +313,20 @@ def test_a_hand_edited_registry_file_is_refused_on_every_read(text, registry):
         code, out = _invoke(*args)
         assert code == 1 and "registry's entry for portal.example can't be used" in out, out
         _clean(out)
+
+
+def test_an_entry_whose_host_field_names_another_host_is_refused(registry):
+    """`load_all()` serves an entry under its file's name, so a `host:` naming another host
+    served that host's recipes under this one."""
+    with pytest.raises(Refused, match="names another host than the file it is in"):
+        check_entry(_entry(host="other.example"), "portal.example")
+    check_entry(_entry(host="WWW.Portal.example"), "portal.example")
+    registry.mkdir()
+    (registry / "portal.example.yaml").write_text("host: other.example\n")
+    code, out = _invoke("source-access", "portal.example")
+    assert code == 1 and "names another host" in out, out
+    code, out = _invoke("source-note", "portal.example", "a finding")
+    assert code == 1 and "names another host" in out, out
 
 
 def test_a_registry_file_not_named_for_a_host_is_refused_without_its_name(registry):

@@ -27,7 +27,7 @@ import os
 import re
 import shlex
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, distribution
 from importlib.resources import files
@@ -399,23 +399,23 @@ def _credential_params(url: str, headers: dict[str, str], body: str | None) -> l
 def _check_request(url: str, headers: dict[str, str], body: str | None) -> None:
     """The check a request passes wherever it is recorded or sent: `check_entry()` for every
     recipe, `run()` after filling one, and `parse_curl()` for the request a paste becomes.
-    Refuses credential headers, a login in the URL or in any URL a header's value holds, and,
-    through `_credential_params()`, credential parameters and a login anywhere in them. Names
-    what it found, never a value."""
+    Refuses credential headers, a login in the URL, and, through `_credential_params()`,
+    credential parameters and a login anywhere in the URL, the body and the `origin` and
+    `referer` URLs. Every header's value is also read as text is (`_check_text()`), for a login
+    or credential parameters in any URL it holds: a header was once read only if it was one of
+    those two. Names what it found, never a value."""
     if bad := [k for k in headers if credential_header(k)]:
         raise Refused(f"it carries credential headers ({_names_shown(bad)})")
     for k, v in headers.items():
         if k.lower() in _URL_HEADERS and _has_login(v, f"its {k.lower()} header's URL"):
             raise Refused(f"its {k.lower()} header's URL carries a username or password")
-        # Any header, not only the two that hold a URL: `run()` sends what a recipe built by
-        # hand holds, and `check_entry()` reads every value in an entry.
-        if _login_in(v):
-            raise Refused(f"a URL in its {_names_shown([k])} header carries a username or "
-                          "password")
     if _has_login(url, "its URL"):
         raise Refused("its URL carries a username or password")
     if found := _credential_params(url, headers, body):
         raise Refused(f"it carries what look like credentials in {'; '.join(found)}")
+    for k, v in headers.items():
+        if k.lower() not in _URL_HEADERS:   # read whole, above
+            _check_text(v, f"its {_names_shown([k])} header")
 
 
 _REDACTED = "[redacted]"
@@ -594,18 +594,17 @@ def check_entry(entry, host: str | None = None) -> None:
     """The one check every registry entry passes, whatever wrote it. `save()`, `dump_entry()` and
     `load_all()` call it, so an entry a command writes, one printed to be pasted into a file,
     and one a person edited by hand are all held to it. Refuses, naming where and never what:
-    - a host that holds a login, or is not a host name: `host` (the file's), and its `host:`;
-    - each recipe's request as `run()` would send it (`_check_request()`): credential headers,
-      a login in its URL or in any header's value, and credential parameters or a login in its
-      URL, its `origin` and `referer` and its body, a URL nested in any of them included;
-    - a recipe param named like a credential, since a recipe that asks for one at run time is
-      a manual retrieval;
+    - a host that holds a login, or is not a host name: `host` (the file's), and its `host:`,
+      which must name the same host, since the file's name is the host `load_all()` serves;
+    - each recipe, as `_check_recipe()` checks the one `run()` sends;
     - a field named like a credential, at any depth, and a login in any string, prose included.
     """
     if not isinstance(entry, dict):
         raise Refused("an entry is a mapping of fields")
-    for h in ([host] if host is not None else []) + ([entry["host"]] if "host" in entry else []):
-        _registry_host(str(h))
+    hosts = {_registry_host(str(h)) for h in
+             ([host] if host is not None else []) + ([entry["host"]] if "host" in entry else [])}
+    if len(hosts) > 1:
+        raise Refused("its host field names another host than the file it is in")
     recipes = entry.get("recipes") or []
     if not isinstance(recipes, list):
         raise Refused("its recipes are not a list")
@@ -613,24 +612,37 @@ def check_entry(entry, host: str | None = None) -> None:
         if not isinstance(r, dict):
             raise Refused(f"its recipe {n} is not a mapping")
         rid = r.get("id")
-        where = f"recipe {rid!r}" if isinstance(rid, str) and _shown(rid) else f"recipe {n}"
+        _check_recipe(r, f"recipe {rid!r}" if isinstance(rid, str) and _shown(rid)
+                      else f"recipe {n}")
+    _check_fields({k: v for k, v in entry.items() if k != "recipes"})
+
+
+def _check_recipe(r: dict, where: str) -> None:
+    """One recipe, as `check_entry()` checks each it holds and `run()` checks the one it sends,
+    so the two can't come to disagree about one:
+    - its request, read as it will be sent (`_template()`), by `_check_request()`: credential
+      headers, a login in its URL, credential parameters or a login in its URL, its body or any
+      URL a header's value holds, nested at any depth;
+    - a param named like a credential: a recipe that asks for one at run time is a manual
+      retrieval;
+    - every other field, as `_check_fields()` reads an entry's.
+    Never `name: reason`: to the redactor that reads as a field and its value, and a recipe
+    called `token` lost its reason."""
+    try:
         headers = r.get("headers") or {}
         if not isinstance(headers, dict):
-            raise Refused(f"{where}'s headers are not a mapping")
+            raise Refused("its headers are not a mapping")
         params = r.get("params") or []
         params = [str(p) for p in (params if isinstance(params, list) else [params])]
         if bad := [p for p in params if credential_param(p)]:
-            raise Refused(f"{where} asks for what look like credentials ({_names_shown(bad)})")
+            raise Refused(f"it asks for what look like credentials ({_names_shown(bad)})")
         body = r.get("body")
-        try:
-            _check_request(_template(str(r.get("url") or ""), params),
-                           {str(k): str(v) for k, v in headers.items()},
-                           None if body is None else _template(str(body), params))
-        except Refused as e:
-            # Never `name: reason`: to the redactor that reads as a field and its value, and a
-            # recipe called `token` would lose its reason.
-            raise Refused(f"in {where}, {e}") from None
-    _check_fields(entry)
+        _check_request(_template(str(r.get("url") or ""), params),
+                       {str(k): str(v) for k, v in headers.items()},
+                       None if body is None else _template(str(body), params))
+        _check_fields(r)
+    except Refused as e:
+        raise Refused(f"in {where}, {e}") from None
 
 
 @_refusing
@@ -769,22 +781,23 @@ def _template(text: str, params: list[str]) -> str:
 def run(recipe: Recipe, params: dict[str, str], *, timeout: float = 45.0) -> httpx.Response:
     """Execute a recipe. Credential headers and parameters are refused, not stripped: a
     recipe that needs one is describing a manual retrieval and should be recorded as such.
-    Checked with `_check_request()`, as `check_entry()` checks it, before filling and again
-    after: a param can put a login in the host, or a whole `name=value` pair in the query."""
-    def checked(url: str, body: str | None) -> None:
-        try:
-            _check_request(url, recipe.headers, body)
-        except Refused as e:
-            raise Refused(f"in recipe {recipe.id!r}, {e}; {_MANUAL_RECIPE}") from None
-
-    checked(_template(recipe.url, recipe.params),
-            _template(recipe.body, recipe.params) if recipe.body else None)
+    Checked as `check_entry()` checks a recipe (`_check_recipe()`), since one built by hand
+    reaches here too, and then its request again once filled: a param can put a login in the
+    host, or a whole `name=value` pair in the query."""
+    where = f"recipe {recipe.id!r}"
+    try:
+        _check_recipe(asdict(recipe), where)
+    except Refused as e:
+        raise Refused(f"{e}; {_MANUAL_RECIPE}") from None
     missing = [p for p in recipe.params if p not in params]
     if missing:
-        raise Refused(f"recipe {recipe.id!r} needs {', '.join(missing)}")
+        raise Refused(f"{where} needs {', '.join(missing)}")
     url = _fill(recipe.url, {p: params[p] for p in recipe.params})
     body = _fill(recipe.body, {p: params[p] for p in recipe.params}) if recipe.body else None
-    checked(url, body)
+    try:
+        _check_request(url, recipe.headers, body)
+    except Refused as e:
+        raise Refused(f"in {where}, {e}; {_MANUAL_RECIPE}") from None
     headers = {"user-agent": "Mozilla/5.0", **recipe.headers}
     try:
         return httpx.request(recipe.method.upper(), url, timeout=timeout, follow_redirects=True,
