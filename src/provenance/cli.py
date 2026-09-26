@@ -45,8 +45,8 @@ from .verify import (
     missing_legal_version,
     page_list,
     revalidate_from_cache,
-    secondary_host,
     snippet_problem,
+    unacked_copy,
     unattributed,
     verify_against_archive,
     verify_source,
@@ -1485,9 +1485,11 @@ def _handed(claim, cache_root: Path, *, rules: dict[str, tuple[str, ...]], judge
             context = judgments.HandedContext(v.context, run and judgments.HandedRun(
                 s.query.name, run.version, queries.dataset(s.query.name), run.export_date,
                 str(Path(run.cache_root).resolve())))
+        # The tier as well as the type: a type labeled reporting is an unlisted outlet on a host
+        # the lists don't name, and the verifier judges an argued tier's claim form.
         sources.append(judgments.HandedSource(
-            s.sid, v.status, s.publisher, s.author, s.date, s.source_type, s.url, s.page,
-            s.snippet, context, why))
+            s.sid, v.status, s.publisher, s.author, s.date, s.source_type,
+            TIER_LABEL[tier(s, rules)], s.url, s.page, s.snippet, context, why))
     return judgments.Handoff(claim.question_id, claim.claim_type, claim.required_sources,
                              claim.question, claim.answer, tuple(sources))
 
@@ -1566,7 +1568,7 @@ def _print_handoff(h, run_args: str) -> None:
         line(f"[{n}/{len(h.sources)}] sid {s.sid}  "
              + (f"context token {token}" if token else "nothing to judge yet"), "bold")
         byline = _printable(" · ".join((s.publisher, s.author, s.date or "undated")))
-        line(f"  {byline} · {s.source_type}")
+        line(f"  {byline} · {s.source_type} · tier: {s.tier}")
         # `_http_only()` refuses C0 controls and whitespace in a URL, not a C1 control or a
         # bidi override.
         line(f"  {_printable(s.url)}" + (f"  (page {s.page})" if s.page else ""))
@@ -2315,7 +2317,7 @@ def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path
                 con.print(f"  [red]{st}[/] " + escape(
                     f"{cited}\n      {_printable(src_.verification.reason or '')}"))
         for src_ in claim.sources:
-            if secondary_host(src_, rules) and not (src_.secondary_host_ack or "").strip():
+            if unacked_copy(src_, rules):
                 ok = False
                 con.print(f"  [red]secondary host[/] {escape(_printable(domain(src_.url)))} is "
                           f"not the "

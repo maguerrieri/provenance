@@ -367,7 +367,8 @@ def _shown(*sources: judgments.HandedSource, **claim) -> judgments.Handoff:
 
 def _shown_source(sid="a" * 12, **kw) -> judgments.HandedSource:
     d = dict(sid=sid, status="verified", publisher="Bay Courier", author="M. Reporter",
-             date="2030-03-04", source_type="bylined_journalism", url=URL, page=3,
+             date="2030-03-04", source_type="bylined_journalism", tier="reporting", url=URL,
+             page=3,
              snippet=SNIPPET, context=judgments.HandedContext(STORY, None), unjudgeable="")
     d.update(kw)
     return judgments.HandedSource(**d)

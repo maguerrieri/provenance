@@ -801,6 +801,7 @@ class HandedSource:
     author: str
     date: str | None
     source_type: str
+    tier: str                       # `sources.TIER_LABEL`: what the type carries on this host
     url: str
     page: int | None
     snippet: str
