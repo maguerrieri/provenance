@@ -1335,9 +1335,10 @@ mechanical layer. Give it to the judgment layer and make the precondition checka
 before its last amendment is still served, on the same host, and verifies exactly like the one
 in force. So:
 - `researcher.md` says to cite the version the claim is about and to set `date` to its effective
-  date or version ("operative …", "as amended by …", "current through …"). Which codes and bills
-  a jurisdiction's hosts serve is domain content, so it is in that list's notes
-  (`ca-notes.md`, "What comes in series here"), not the agents.
+  date or version ("operative …", "as amended by …", "current through …"). Which hosts serve a
+  jurisdiction's codes and bills, and what `date` holds for each kind of page there, is specific
+  to that jurisdiction, so it is in its list's notes (`ca-notes.md`, "The legislature's host"),
+  not the agents.
 - `missing_legal_version()` is the checkable precondition: `check-claim` fails a citation on a
   legal-text host with no `date`, as `missing_filing_date()` fails an undated filing. Both read
   a placeholder (`n/a`, `n.d.`, `unknown`, `current`) as no date, as `check_source_class()` reads
