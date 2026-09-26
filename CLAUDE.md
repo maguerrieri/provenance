@@ -1192,6 +1192,15 @@ and `provenance source-import-curl` turns a browser "copy as cURL" into an entry
 belong here too — "probed, needs a session, retrieve by hand" stops the next run from
 re-litigating it and from substituting silently.
 
+**Only a checkout writes to the registry.** It ships inside the package, so from a `uv tool
+install` a write would land in the tool's own environment, and the next install would delete
+it without a word: a finding recorded and lost. `access.installed_copy()` asks the install
+(PEP 610's `direct_url.json`: `uv sync` installs a checkout editable), and anything it can't
+read counts as installed. There, `source-note` and `source-import-curl` exit 1 and print the
+entry, with where it goes in the tool's repo. They print at the point of the write, so the entry
+has passed every check a write does: printing is no way around them. A registry of a project's
+own, layered over the shipped one, is #165.
+
 **Credentials never enter the registry.** The importer drops session headers and `run()`
 refuses a recipe carrying them, because an endpoint that only works with someone's session is
 a manual retrieval, not a pipeline capability — recording it as one would be both a leak and a

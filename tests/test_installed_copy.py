@@ -1,9 +1,11 @@
 """An installed copy (`uv tool install`) runs from outside the repo, so what it reads ships in
-the package.
+the package, and what the access registry commands would write into it is printed instead.
 
 The review page's template and the source lists and access registry were found beside the
 checkout (`parents[2]`), which a wheel doesn't have. They are package data now, found through
-importlib.resources.
+importlib.resources. The registry is also written to, by `source-note` and
+`source-import-curl`, and in an installed copy that write would land in the tool's own
+environment, where the next install deletes it without a word.
 """
 
 import os
@@ -13,12 +15,14 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
-from provenance import access, report, sources
+from provenance import access, cli, report, sources
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "src" / "provenance"
 DATA = ("templates", "source_lists", "source_access")
+URL = "https://portal.example/api/search?name=Doe"
 
 
 def test_the_data_is_found_in_the_package():
@@ -47,3 +51,91 @@ def test_the_wheel_carries_the_data(tmp_path):
             for d in DATA for p in (PACKAGE / d).rglob("*") if p.is_file()}
     assert want and want <= names, sorted(want - names)
 
+
+def _install(monkeypatch, direct_url):
+    class Dist:
+        def read_text(self, name):
+            assert name == "direct_url.json"
+            return direct_url
+    monkeypatch.setattr(access, "distribution", lambda name: Dist())
+
+
+@pytest.mark.parametrize("direct_url, installed", [
+    ('{"url": "file:///src/provenance", "dir_info": {"editable": true}}', False),
+    ('{"url": "https://github.com/maguerrieri/provenance", "vcs_info": {"vcs": "git"}}', True),
+    ('{"url": "file:///src/provenance", "dir_info": {}}', True),
+    ('{"url": "file:///src/provenance", "dir_info": {"editable": "true"}}', True),
+    (None, True),
+    ("not json", True),
+    ("[]", True),
+])
+def test_only_an_editable_install_is_a_checkout(monkeypatch, direct_url, installed):
+    """`uv sync` installs the checkout editable; `uv tool install git+…` records the git
+    source. Anything the install can't say reads as installed: a refused write costs a paste,
+    and a lost one costs the finding."""
+    _install(monkeypatch, direct_url)
+    assert access.installed_copy() is installed
+
+
+def test_this_checkout_is_one():
+    assert access.installed_copy() is False, "uv sync installs the checkout editable"
+
+
+@pytest.fixture
+def installed(tmp_path, monkeypatch):
+    reg = tmp_path / "access"
+    monkeypatch.setattr(access, "REGISTRY", reg)
+    monkeypatch.setattr(access, "installed_copy", lambda: True)
+    return reg
+
+
+def test_an_installed_copy_prints_a_note_instead_of_writing_it(installed):
+    r = CliRunner().invoke(cli.app, ["source-note", "portal.example", "needs a session"],
+                           terminal_width=200)
+    assert r.exit_code == 1, r.output
+    assert not installed.exists()
+    assert "not written: this provenance is an installed copy" in r.output
+    assert "src/provenance/source_access/portal.example.yaml" in r.output
+    assert "host: portal.example" in r.output and "findings: needs a session" in r.output
+
+
+def test_an_installed_copy_prints_an_import_instead_of_writing_it(installed, tmp_path):
+    paste = tmp_path / "paste.txt"
+    paste.write_text(f"curl '{URL}' -H 'X-CSRF-Token: fake session value' -H 'accept: */*'\n")
+    r = CliRunner().invoke(cli.app, ["source-import-curl", str(paste)], terminal_width=200)
+    assert r.exit_code == 1, r.output
+    assert not installed.exists()
+    assert "src/provenance/source_access/portal.example.yaml" in r.output
+    assert "https://portal.example/api/search" in r.output
+    # printed only after every check a write passes: the session header is dropped from it
+    assert "fake session value" not in r.output
+
+
+def test_printing_is_no_way_past_a_refused_paste(installed, tmp_path):
+    paste = tmp_path / "paste.txt"
+    paste.write_text(f"curl --user canary-user:changeme {URL}\n")
+    r = CliRunner().invoke(cli.app, ["source-import-curl", str(paste)], terminal_width=200)
+    assert r.exit_code == 1, r.output
+    assert "changeme" not in r.output
+    assert "not written" not in r.output, "refused by the import's own check, before any print"
+    assert not installed.exists()
+
+
+def test_no_write_still_prints_in_an_installed_copy(installed, tmp_path):
+    paste = tmp_path / "paste.txt"
+    paste.write_text(f"curl '{URL}'\n")
+    r = CliRunner().invoke(cli.app, ["source-import-curl", str(paste), "--no-write"],
+                           terminal_width=200)
+    assert r.exit_code == 0, r.output
+    assert "not written" not in r.output
+    assert "https://portal.example/api/search" in r.output
+
+
+def test_the_refusal_prints_the_host_as_data(installed, monkeypatch):
+    """The host is typed by a person or an agent, and the refusal names the file it would be."""
+    monkeypatch.setattr(cli.con, "_color_system", None)   # rich's own escapes, not the host's
+    r = CliRunner().invoke(cli.app, ["source-note", "portal\x1b[2K.example", "x"],
+                           terminal_width=200)
+    assert r.exit_code == 1, r.output
+    assert "\x1b" not in r.output
+    assert "source_access/portal\\x1b[2k.example.yaml" in r.output
