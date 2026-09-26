@@ -340,6 +340,10 @@ def test_a_miss_whose_every_match_was_left_out_says_so(root, monkeypatch):
     assert v.status == "human_review", "no parameters can make it reproduce; a person opens it"
     assert v.reason.startswith("the query counts nothing") and PHRASE in v.reason
     assert f"but {UNSETTLED}: it " in v.reason, "the skill tells this row by it, too"
+    s.verification = Verification(status="verified")
+    rebuilt = revalidate_from_cache(s, root).verification
+    assert rebuilt.status == "human_review" and f"; {UNSETTLED}: it " in rebuilt.reason, \
+        "build's miss is the same unsettled record, and says so the same way"
     assert "nothing here reproduces the claimed '700'" in v.reason, "the claim is named too"
     assert calaccess.filing_url(GAP_460) in v.reason and "provenance query" in v.reason
     s.verification = Verification(status="verified")
