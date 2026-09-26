@@ -227,7 +227,8 @@ def test_ask_writes_a_project_holding_the_one_question(tmp_path, home, monkeypat
     code, out = _provenance("ask", QUESTION, "--source", "us", cwd=tmp_path,
                             monkeypatch=monkeypatch)
     assert code == 0, out
-    root = tmp_path / "ask-county-road-repair-bond"
+    [root] = tmp_path.glob("ask-*")
+    assert re.fullmatch(r"ask-county-road-repair-bond-[0-9a-f]{6}", root.name), root.name
     assert json.loads((root / "questions.json").read_text()) == [
         {"id": "q1", "text": QUESTION, "claim_type": "mechanical", "parent": None,
          "rationale": "asked with provenance ask"}]
@@ -260,7 +261,22 @@ def test_record_questions_about_different_things_get_different_directories(tmp_p
         code, out = _provenance("ask", q, "--source", "us", cwd=tmp_path,
                                 monkeypatch=monkeypatch)
         assert code == 0, out
-    assert sorted(p.name for p in tmp_path.glob("ask-*")) == ["ask-bond", "ask-levy"]
+    names = sorted(p.name for p in tmp_path.glob("ask-*"))
+    assert [re.sub(r"-[0-9a-f]{6}$", "", n) for n in names] == ["ask-bond", "ask-levy"], names
+
+
+def test_questions_sharing_their_first_words_get_different_directories(tmp_path, home,
+                                                                       monkeypatch):
+    """The words are cut at six, so two questions can share them: the hash of the whole
+    question keeps each its own directory and project name."""
+    stem = "What does the record show about the county road repair bond vote"
+    for q in (f"{stem} in 2029?", f"{stem} in 2030?"):
+        code, out = _provenance("ask", q, "--source", "us", cwd=tmp_path,
+                                monkeypatch=monkeypatch)
+        assert code == 0, out
+    names = [p.name for p in tmp_path.glob("ask-*")]
+    assert len(names) == 2 and all(n.startswith("ask-county-road-repair-bond-vote-")
+                                   for n in names), names
 
 
 @pytest.mark.parametrize("kind", ["new", "ask"])
@@ -297,6 +313,38 @@ def test_ask_takes_back_the_whole_project_when_it_is_refused(tmp_path, home):
                             "--cache", tmp_path / "f")
     assert code == 1 and "Nothing was written" in out, out
     assert not (tmp_path / "a").exists()
+    assert not list(tmp_path.glob(".*")), "the staging directory is taken back too"
+
+
+def test_ask_builds_its_project_beside_its_name_and_renames_it_into_place(tmp_path, home):
+    """So an interrupted ask leaves the project whole or absent, never a directory a retry is
+    refused over. What is left once it's done is the project and nothing beside it."""
+    code, out = _provenance("ask", QUESTION, "--source", "us", "--dir", tmp_path / "q")
+    assert code == 0, out
+    assert sorted(p.name for p in (tmp_path / "q").iterdir()) == ["provenance.toml",
+                                                                   "questions.json"]
+    assert not list(tmp_path.glob(".*"))
+
+
+def test_new_refuses_a_symlink_to_another_projects_subject(tmp_path):
+    """Written through the link, the project file landed in the other project's subject, which
+    then refused every command at the other project. Whether a project declares a directory is
+    asked of the path as given, and the link's parent declares nothing."""
+    parent = write_project(tmp_path / "parent", subjects=["lind"])
+    (parent / "lind").mkdir()
+    (tmp_path / "alias").symlink_to(parent / "lind")
+    code, out = _provenance("new", tmp_path / "alias", "--from", _template(tmp_path),
+                            "--source", "us")
+    assert code == 1 and "is a symlink" in out, out
+    assert list((parent / "lind").iterdir()) == []
+
+
+def test_a_cache_in_a_symlink_loop_is_refused_not_a_traceback(tmp_path, home, monkeypatch):
+    (tmp_path / "loop").symlink_to(tmp_path / "loop")
+    code, out = _provenance("ask", QUESTION, "--source", "us", "--dir", "q", "--cache", "loop",
+                            cwd=tmp_path, monkeypatch=monkeypatch)
+    assert code == 1 and "--cache loop can't be resolved" in out, out
+    assert not (tmp_path / "q").exists()
 
 
 def test_a_directory_that_cannot_be_made_is_refused_as_such(tmp_path, home):
@@ -339,7 +387,7 @@ def test_asks_default_directory_folds_accents(tmp_path, home, monkeypatch):
     code, out = _provenance("ask", "¿Qué muestra el registro sobre la ordenanza?", "--source",
                             "us", cwd=tmp_path, monkeypatch=monkeypatch)
     assert code == 0, out
-    assert (tmp_path / "ask-que-muestra-el-registro-sobre-la").is_dir()
+    assert len(list(tmp_path.glob("ask-que-muestra-el-registro-sobre-la-*"))) == 1
 
 
 @pytest.mark.parametrize(("args", "said"), [

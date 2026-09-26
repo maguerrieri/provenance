@@ -228,11 +228,11 @@ provenance ask "What does the record show about the county's flood-control levy?
   on, add where the records are to `context`, and list the project's `subjects` if it has more
   than one (see [Projects](#projects)).
 - **`provenance ask "<question>"`** is for one question, with no template. It creates a new
-  project in `--dir`, by default `ask-<the question's first distinctive words>` in the working
-  directory, which must not exist yet. The project holds just the question, as `q1`. The skill gives it
-  one researcher and one fresh verifier, then builds its review page. Pass `--adversarial` for
-  a question negative or contested about someone or something: its claim then needs two
-  independent sources.
+  project in `--dir`, by default `ask-<the question's first distinctive words>-<a hash of it>`
+  in the working directory, which must not exist yet. The project holds just the question, as
+  `q1`. The skill gives it one researcher and one fresh verifier, then builds its review page.
+  Pass `--adversarial` for a question negative or contested about someone or something: its
+  claim then needs two independent sources.
 
 Both keep a full run's guarantees. The question asks what the record shows, never the answer
 it expects: for one that does, the skill proposes a rewording, as a new `provenance ask`.
