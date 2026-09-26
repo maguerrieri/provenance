@@ -39,7 +39,8 @@ Never reconstruct a quote from memory. Copy it from the page, character for char
 ## Source rules (not guidelines)
 
 The authoritative lists ship with the tool (`src/provenance/source_lists/` in its repo), the project
-names which apply, and `provenance check-claim` checks your sources against them.
+names which apply and the hosts that issue its own records, and `provenance check-claim` checks
+your sources against them.
 
 **Citable as source-of-record:**
 - Bylined journalism — national (AP, Politico) plus the outlets the project's regional list
@@ -52,7 +53,9 @@ names which apply, and `provenance check-claim` checks your sources against them
 - Primary documents / official records — an *institutional* author-of-record counts as
   human-written: certified results and official filings, legislative roll calls, statutes and
   code, disclosure forms, court filings, analysts' and auditors' reports, governing-board
-  minutes. Your brief names the specific hosts for your project.
+  minutes. Your brief names the hosts that issue your project's records (its "Issuing
+  authorities" line), and what to do with a record cited from any other host, including one
+  whose host is the issuing authority but isn't named.
 
 **Lead-generators only — never the citation of record:** Wikipedia, and the others the source
 lists name (`provenance check-claim` tells you). Use them to find the underlying document,
@@ -132,8 +135,8 @@ above, instead of as a quote that isn't there. If it isn't, the miss is real.
 The `[[page N]]` lines `provenance fetch` prints are the pipeline's page locators, not the document's
 text: never quote one, or a span running across one. Put the page number in `page`.
 
-A kept scan still fails `provenance check-claim`, because nothing mechanical can check it. That one
-failure is the exception to "not finished until it exits clean": hand the claim on with
+A kept scan still fails `provenance check-claim`, because nothing mechanical can check it. That
+failure is an exception to "not finished until it exits clean": hand the claim on with
 `notes` saying which source is a scan and which page to read, and it goes to `human_review`
 for a person. Never swap in a different document to get a clean exit.
 
@@ -256,7 +259,8 @@ provenance check-claim <run dir>/claims/<question_id>.json
 will: snippet present, present exactly once, long enough to be distinctive, source class
 allowed, corroboration satisfied, and your `question` the one the run asks at your id. Every
 failure it prints is one you would have gotten back as a retry anyway — this just saves the
-round trip and tells you precisely what to fix.
+round trip and tells you precisely what to fix. Two failures are handed on instead of fixed: a
+kept scan (above), and an issuing authority the brief doesn't name (the brief says how).
 
 To test a single snippet before you commit to it:
 

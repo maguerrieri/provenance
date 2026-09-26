@@ -173,6 +173,16 @@ Do not summarize the source rules for them — the agent definition carries them
    that page. Retrying it only invites a researcher to swap in a readable copy. Retry it only
    to ask for the missing `page`.
 
+   **Not a retry: an issuing authority the project doesn't name.** A researcher whose
+   `notes` say its primary text or official analysis comes from the body that issues it, though
+   its claim fails corroboration because the project doesn't name that host as an issuing
+   authority, has done what its instructions say. Retrying it only invites it to acknowledge a
+   copy that isn't one, or to relabel the source. Hand the host to the human: whether it is the
+   issuing authority is theirs to decide, and if it is, they add it to `primary_hosts` in the
+   project's `provenance.toml` and `provenance build` runs again. Never
+   add it yourself: an agent that names its own issuing authorities can pass off any copy as the
+   record.
+
    **Not a retry either: a query figure whose record isn't settled.** A `human_review` on a
    query citation whose reason (from `provenance verify` or `provenance build`) says "the
    record is unsettled" is a correct citation of an unsettled record, whatever the dataset.
@@ -246,13 +256,14 @@ A run that skips it produces green rows nobody has actually checked.
 
 **Run `provenance brief` for the run** (with `--subject <id>` for a subject's run) **and paste
 its output verbatim into every researcher and verifier prompt.** It prints the project, the
-run's subject and the project's `context` from its `provenance.toml`: everything
-project-specific a researcher needs, such as which bodies keep minutes and which hosts serve
-which records. Do not summarize it. The project's `sources` names which of the source lists
-that ship with the tool apply, and the brief ends with the notes that ship beside each of
-them: how that list's records behave, such as which filings come in series and which portals
-answer only through a bulk export. The notes are yours too. Read them in the brief before
-Phase 0, and again before deciding a retry: some name failures that are not one.
+run's subject, the project's `context` from its `provenance.toml`, and the hosts that issue its
+records: everything project-specific a researcher needs, such as which bodies keep minutes and
+which hosts serve which records. Do not summarize it. The project's `sources` names which of the
+source lists that ship with the tool apply, and its `primary_hosts` the issuing authorities
+those lists leave out. The brief ends with the notes that ship beside each list: how that
+list's records behave, such as which filings come in series and which portals answer only
+through a bulk export. The notes are yours too. Read them in the brief before Phase 0, and again
+before deciding a retry: some name failures that are not one.
 
 **Never paste the project's `completeness_check` into a researcher prompt**, and never paste
 `provenance.toml` itself or tell a researcher to read it: the researcher's instructions say to
