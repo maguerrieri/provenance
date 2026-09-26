@@ -241,6 +241,14 @@ def test_check_claim_fails_legal_text_with_no_effective_date_or_version(tmp_path
     assert code == 0 and "All sources check out." in out, out
 
 
+def test_a_lists_notes_name_every_legal_text_host_it_has():
+    """A list's notes are where its researchers learn which of its hosts need a version in
+    `date`. A host added to the list and not to its notes is a gate nobody was told about."""
+    for name, text in sources.notes(tuple(sources.available())):
+        for host in sources.load_rules((name,))[sources.LEGAL_TEXT]:
+            assert f"`{host}`" in text, f"{name}-notes.md doesn't name {host}"
+
+
 def test_the_verifier_checks_the_version_and_reads_the_definitions():
     """The half no check can do. Pinned, since it is prose an edit could drop."""
     verifier = " ".join((ROOT / "agents" / "verifier.md").read_text().split())
