@@ -929,6 +929,36 @@ getting there:
 A new snapshot does clear a check on a row with no excerpt, by the same rule the verdict layer
 uses: a fresh snapshot is a different copy.
 
+**A claim's researcher notes are part of what was shown.** The page shows them above the
+claim's rows, and they carry what only a person can act on: a scan to read by eye, a filing
+that may not be the newest. The fingerprint left them out, so a note added after every row was
+checked left the claim done, dimmed and out of "Unchecked only", and the reviewer who had signed
+off never saw it (#174). Now every row's fingerprint covers its claim's notes as the page shows
+them (`report.shown_notes()`, which the view reads too), so a note added, changed or removed
+clears every check on the claim. Line endings and blanks at a line's end are folded first:
+they don't show, and a check lost to one teaches re-ticking. The choices in it:
+- **The notes are a part of their own, after a dot** (`<evidence>.<notes>`). A saved check that
+  no row shows, but that matches a row on everything before the dot, is a note change, so the
+  row says the note is what changed, and the claim says its note is new, changed or removed.
+  That keeps small the cost "Hash identity, not display" warns about (a reworded note clears
+  checks): the row sends the reviewer to reread the note, not the excerpts, which did not
+  change. Where the evidence changed too, the row gives the general warning.
+- **Matched by what the row shows, not the row it names.** The first cut compared a lapsed check
+  with the row whose key it carried. A claim moved to another id, or whose two citations of one
+  source swapped places, then got the general warning or none, though only its note changed.
+  Everything before the dot is content, not position, so it finds the row wherever it sits.
+- **Only when there are notes.** A claim without them hashes exactly as it did before notes were
+  hashed (a test pins one fingerprint), so checks saved then still stand and nothing is cleared
+  wholesale. An old key reads as a check made with no note. On a claim that has one now it
+  lapses once, with the note named as why: which note a reviewer saw is on no disk, and a check
+  that may predate the note is the false green this closes. Unknown fails toward re-checking,
+  as a verdict with no fingerprint does.
+- **A new storage key** (`:v3`, `v: 3`), though only the fingerprint pattern widened. Under the
+  old key, a page from before (a `provenance serve` from another checkout on the same port reads
+  the same localStorage) took this progress as its own version's, whitelisted away every
+  two-part check and saved over it: the silent delete the paragraph below forbids. The `:v2`
+  progress is only read, when `:v3` is absent, and its checks carry over whole.
+
 Flags and notes stay per source, shown wherever the source is cited. They are warnings, not
 attestations: shared, one fails toward a second look, while keyed per row they vanished when a
 claim moved.
@@ -943,6 +973,10 @@ cleared since, and reading it as empty is a delete, since the first save writes 
 imported file is held to the same rule and refused.
 When you change what a stored key means, decide what each old key means under the new rule.
 Otherwise the whitelist discards them silently, or a loose lookup matches them to every row.
+It runs the other way too: widening what the store may hold is such a change, since a page
+from before still reads it with the old whitelist. Give the new progress a new storage key, and
+read the old one only as the older version's (`:v2` is kept aside as unreadable otherwise, as
+the current store is).
 
 The tests run the page's own script under node (`tests/review_app_harness.js`) against a
 minimal DOM that supports single-class selectors only and throws on anything else, so a
