@@ -2125,8 +2125,6 @@ def source_import_curl(path: Path, name: str = "", write: bool = True):
         parsed = access.parse_curl(path.read_text())
         entry = parsed["entry"]
         entry["name"] = name or entry["name"]
-        # Checked before anything is printed: `--name` is text of its own.
-        text = access.dump_entry(entry)
         dropped = parsed["dropped_credentials"]
         if dropped:
             con.print(f"[yellow]dropped credentials:[/] {escape(_printable(', '.join(dropped)))}"
@@ -2138,14 +2136,16 @@ def source_import_curl(path: Path, name: str = "", write: bool = True):
                       f" — if the endpoint needs one and it is not a credential, add it by hand")
 
         # The entry is the pasted request, and YAML to be copied into a file: allow_unicode
-        # leaves a bidi override or NEL in it as it was pasted.
+        # leaves a bidi override or NEL in it as it was pasted. Printed or written, it is
+        # checked once, `--name` included (`dump_entry()`, or `save()` through it).
         if not write:
-            _print_copied(text)
+            _print_copied(access.dump_entry(entry))
             return
         dest = access.entry_path(entry["host"])
         if access.installed_copy():
             _registry_write_refused(dest, text)
         if dest.exists():
+            text = access.dump_entry(entry)
             con.print(f"[yellow]{escape(_printable(str(dest)))} exists — printing instead of "
                       f"overwriting[/]\n")
             _print_copied(text)

@@ -228,7 +228,7 @@ def _refused_unrepeated(call, where: str) -> str:
     (f"curl -H 'Origin: https://{UNREADABLE_LOGIN}' https://x.example/", "its origin header's URL"),
 ])
 def test_a_url_whose_host_cant_be_parsed_is_refused_without_repeating_it(curl, where):
-    msg = _refused_unrepeated(lambda: parse_curl(curl), f"the pasted request: {where}")
+    msg = _refused_unrepeated(lambda: parse_curl(curl), f"in the pasted request, {where}")
     assert "record the endpoint by hand" in msg
 
 
