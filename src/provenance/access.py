@@ -181,8 +181,13 @@ def _login_in(text: str) -> bool:
     an `@` in its authority (`https://user:x@host/`, `//user@host`). It fails toward refusing:
     a URL nested in a parameter, a body field or a note is a login wherever it sits and whatever
     the field is called. An `@` in a path (`https://host/@user`) or an email address is not
-    one."""
-    return any("@" in m.group(1) for r in _readings(text) for m in _AUTHORITY.finditer(r))
+    one.
+
+    Each authority is found in each reading and then read in every decoding itself: decoded
+    first, `https://user:pw%2Fx%40host/` ends its authority at the `/` the `%2F` became, before
+    the `@`, and found only raw, its `%40` is no `@`."""
+    return any("@" in a for r in _readings(text) for m in _AUTHORITY.finditer(r)
+               for a in _readings(m.group(1)))
 
 
 def _has_login(url: str, where: str) -> bool:
@@ -293,6 +298,9 @@ def _pair_names(text: str) -> list[str]:
     for separators in ("[&]", "[&;]"):
         for segment in re.split(separators, text):
             name, eq, value = segment.partition("=")
+            # As sent, too: decoded, `%2F…%40` puts the end of an authority before its `@`.
+            if eq and _login_in(value):
+                raise Refused("a URL in a parameter carries a username or password")
             if eq:
                 names |= dict.fromkeys((unquote_plus(name), *_value_names(unquote_plus(value))))
     return list(names)
