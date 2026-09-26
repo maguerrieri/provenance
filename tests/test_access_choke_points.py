@@ -249,6 +249,11 @@ def _recipe(**fields) -> dict:
     (_entry(api_key=CANARY), "field named like a credential"),
     (_entry(extra={"session_token": CANARY}), "field named like a credential"),
     (_entry(cookie=f"session={CANARY}"), r"field named like a credential \(cookie\)"),
+    # A field's name is prose too, at any depth, and so is a header's.
+    (_entry(**{f"{LOGIN}@portal.example": "x"}), "field named like a credential"),
+    (_entry(extra={"deeper": {f"{LOGIN}@portal.example": 1}}), "field named like a credential"),
+    (_entry(**_recipe(headers={f"{LOGIN}@portal.example": "x"})),
+     "a header's name holds a username or password"),
     (_entry(extra={"Set-Cookie": CANARY}), "field named like a credential"),
     (_entry(**_recipe(url=f"https://{LOGIN}@portal.example/api")), "its URL carries a username"),
     (_entry(**_recipe(url=f"https://portal.example/api?token={CANARY}")), r"its URL \(token\)"),
