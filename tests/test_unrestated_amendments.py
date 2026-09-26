@@ -262,8 +262,8 @@ def test_build_downgrades_a_row_verified_before_it_asked(root):
 
 
 def test_both_paths_write_the_phrase_the_skill_matches(root):
-    """The research skill does not retry an unsettled figure, and tells one by this phrase in
-    its reason. `provenance verify` and `provenance build` word the rest of their reasons differently."""
+    """The research skill does not retry an unsettled figure, and the `ca` notes quote this
+    phrase in its reason for it (tests/test_source_notes.py). `provenance verify` and `provenance build` word the rest of their reasons differently."""
     phrase = "it counts rows a later amendment may have withdrawn"
     s = cited("calaccess.ie_total", IE_PARAMS, "4200")
     assert phrase in verify_source(s, root).verification.reason

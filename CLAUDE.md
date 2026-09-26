@@ -1037,8 +1037,8 @@ answer finds that answer and stops — so a second incident, a bigger donor, a m
 filing never surfaces, and the corroboration you get back is the pipeline agreeing with
 itself.
 
-**Project context is thin on purpose.** `context` goes verbatim into every researcher prompt,
-through `provenance brief`, and it is unverified by construction — no snippet, no source,
+**Project context is thin on purpose.** `context` goes verbatim into every researcher and
+verifier prompt, through `provenance brief`, and it is unverified by construction — no snippet, no source,
 `provenance verify` never looks at it. So a factual claim placed there is believed by every
 researcher and checked by none. Context earns its place by helping *find records* (which
 bodies keep minutes on this office, which LegInfo host covers which years); anything else is a

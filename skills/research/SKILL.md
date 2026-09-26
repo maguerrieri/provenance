@@ -169,12 +169,13 @@ Do not summarize the source rules for them — the agent definition carries them
    to ask for the missing `page`.
 
    **Not a retry either: a query figure whose record isn't settled.** A `human_review` on a
-   query citation whose reason says the query reproduces the figure, or counts nothing, *but*
-   the record behind it isn't settled (from `provenance verify` or `provenance build`), is a
-   correct citation of an unsettled record. The notes in the brief quote the reasons their
-   datasets give. The reason names each filing or name to open, and a person checks the claim
-   against them. Retrying it only invites a researcher to change the parameters or cite a
-   mirror until the filings or names drop out.
+   query citation whose reason (from `provenance verify` or `provenance build`) gives the
+   figure the query returns, or says it counts nothing, and then says *but* the record behind
+   it isn't settled, naming each filing or name to open, is a correct citation of an unsettled
+   record. A person checks the claim against those filings or names. The notes in the brief
+   quote the reasons their datasets give, but the rule holds for any query, named by a note or
+   not. Retrying it only invites a researcher to change the parameters or cite a mirror until
+   the filings or names drop out.
 
    **A retry with no failing source: an answer whose figures no snippet carries.** The claim
    is `human_review` with every source green, and its conflict line names the dollar figures
