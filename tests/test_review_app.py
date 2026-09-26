@@ -270,8 +270,12 @@ def test_the_fingerprint_covers_the_claims_researcher_notes():
     two = with_notes("The filing cited may not be the newest.\nPage 3 is a scan.")
     for same in ("The filing cited may not be the newest.\r\nPage 3 is a scan.",
                  "The filing cited may not be the newest.\rPage 3 is a scan.",
-                 "The filing cited may not be the newest. \t\nPage 3 is a scan."):
-        assert with_notes(same) == two, "a line ending or trailing blank doesn't show"
+                 "The filing cited may not be the newest. \t\nPage 3 is a scan.",
+                 "The filing cited may not be the newest." + chr(0xA0) + chr(0x0C)
+                 + "\nPage 3 is a scan."):
+        assert with_notes(same) == two, "a line ending or trailing white space doesn't show"
+    # A lone surrogate survives json.loads; it is hashed as the rest of the fingerprint is.
+    assert "." in with_notes("Page 3 is a scan" + chr(0xD800))
     assert with_notes("The filing cited may not be the newest; page 3 is a scan.") != noted
     assert with_notes("The filing cited  may not be the newest.") != noted, \
         "the note shows its spacing, so a change in it is a change in what was read"
@@ -529,59 +533,51 @@ def test_a_note_added_after_checking_clears_the_claims_checks(tmp_path):
     assert rows(mixed)[k3]["stale"] and rows(mixed)[k3]["noteStale"]
 
 
-def test_a_note_change_is_found_by_what_the_row_shows_not_where(tmp_path):
-    """A lapsed check names the row it was made on. When the claim has moved since (to another
-    question id, or its citations reordered), that row shows something else or nothing, and
-    the note change must still land on the row showing what was checked."""
+def test_a_note_change_is_told_by_the_row_the_check_was_made_on(tmp_path):
+    """A check names the row it was made on, and says what changed there. A claim moved to
+    another id keeps its check (it follows what it attests), so a note changed in a later
+    rebuild is told on the new row. Moved and given a new note in one rebuild, it shows nothing
+    the check recorded and nothing says where it went: finding it by content sent the warning to
+    a twin instead. So it reads unchecked without a reason, and no other row is blamed."""
     answer = "The council approved the levy."
     sid = cited().sid
 
     def build(qid, notes, *sources):
-        c = claim(qid, answer, *sources)
+        c = claim(qid, answer, *(sources or (cited(page=3), cited(page=7))))
         c.notes = notes
         return c
 
-    checked = run(tmp_path, [build("q3", NOTE, cited(page=3), cited(page=7))],
+    checked = run(tmp_path, [build("q3", NOTE)],
                   actions=[{"do": "tick", "row": f"q3/{sid}", "checked": True},
                            {"do": "tick", "row": f"q3/{sid}/2", "checked": True}])
     assert checked["claims"][0]["done"]
 
-    # Moved to another id, and the note reworded.
-    other = claim("q3", "The levy failed.", question="Did the levy fail?")
-    moved = run(tmp_path, [other, build("q7", "Page 3 is a scan.", cited(page=3), cited(page=7))],
-                storage=checked["storage"])
-    for key in (f"q7/{sid}", f"q7/{sid}/2"):
-        assert rows(moved)[key]["noteStale"] and not rows(moved)[key]["stale"], key
-    left = rows(moved)[f"q3/{sid}"]
-    assert not (left["checked"] or left["stale"] or left["noteStale"]), \
-        "the claim now on the old id was never checked, and nothing it shows changed"
-    assert [c["noteChanged"] for c in moved["claims"]] == [False, True]
+    moved = run(tmp_path, [build("q7", NOTE)], storage=checked["storage"])
+    assert moved["claims"][0]["done"]
+    renoted = run(tmp_path, [build("q7", "Page 3 is a scan.")], storage=moved["storage"])
+    assert all(r["noteStale"] and not r["stale"] for r in renoted["rows"])
 
-    # Its two citations swapped, and the note reworded: each warning follows its page.
+    both = run(tmp_path, [build("q7", "Page 3 is a scan.")], storage=checked["storage"])
+    assert not both["claims"][0]["done"]
+    assert not any(r["checked"] or r["noteStale"] or r["stale"] for r in both["rows"])
+
+    # Its two citations swapped and the note reworded: each row now shows other evidence than
+    # its check was made on, so each says the claim or evidence changed.
     swapped = run(tmp_path, [build("q3", "Page 3 is a scan.", cited(page=7), cited(page=3))],
                   storage=checked["storage"])
-    assert all(r["noteStale"] and not r["stale"] for r in swapped["rows"])
-
-    # Checking the row where it now sits settles the check made where it was.
-    settled = run(tmp_path, [other, build("q7", "Page 3 is a scan.", cited(page=3),
-                                          cited(page=7))],
-                  storage=checked["storage"],
-                  actions=[{"do": "tick", "row": f"q7/{sid}", "checked": True},
-                           {"do": "tick", "row": f"q7/{sid}/2", "checked": True}])
-    assert [c["done"] for c in settled["claims"]] == [False, True]
-    assert sorted(stored(settled)["checked"].values()) == [f"q7/{sid}", f"q7/{sid}/2"]
+    assert all(r["stale"] and not r["noteStale"] for r in swapped["rows"])
 
 
 def test_a_note_change_on_one_claim_is_not_its_twins(tmp_path):
     """Two claims can ask and answer the same thing from the same citation (twins), so their
-    rows' fingerprints match up to the notes. A note change on one is that claim's: its twin's
-    row gets no warning, and a tick there doesn't settle it."""
+    rows' fingerprints match up to the notes. What changes on one is that claim's: its twin's row
+    gets no warning, and a tick there settles nothing on the other."""
     answer = "The council approved the levy."
     one, two = f"q1/{cited().sid}", f"q2/{cited().sid}"
 
-    def build(q1_notes):
-        first, twin = claim("q1", answer), claim("q2", answer)
-        first.notes, twin.notes = q1_notes, "Page 3 is a scan."
+    def build(q1_notes, q2_notes="Page 3 is a scan.", q1_answer=answer):
+        first, twin = claim("q1", q1_answer), claim("q2", answer)
+        first.notes, twin.notes = q1_notes, q2_notes
         return [first, twin]
 
     checked = run(tmp_path, build(NOTE), actions=[{"do": "tick", "row": one, "checked": True}])
@@ -593,6 +589,26 @@ def test_a_note_change_on_one_claim_is_not_its_twins(tmp_path):
     ticked = run(tmp_path, build("The filing cited is superseded."), storage=checked["storage"],
                  actions=[{"do": "tick", "row": two, "checked": True}])
     assert rows(ticked)[two]["checked"] and rows(ticked)[one]["noteStale"]
+
+    # A reworded answer on the checked one is its own change, not a note change on the twin.
+    reworded = run(tmp_path, build(NOTE, q1_answer="The council rejected the levy."),
+                   storage=checked["storage"])
+    assert rows(reworded)[one]["stale"] and not rows(reworded)[one]["noteStale"]
+    assert not (rows(reworded)[two]["noteStale"] or rows(reworded)[two]["stale"])
+
+    # Twins with the same note share one check. It stays on the row it was ticked on, so when
+    # that claim's note changes, that row says so and its twin keeps the check; checking the
+    # row again doesn't take the check from the twin.
+    shared = run(tmp_path, build(NOTE, NOTE), actions=[{"do": "tick", "row": one, "checked": True}])
+    assert all(r["checked"] for r in shared["rows"])
+    split = run(tmp_path, build("Page 3 is a scan.", NOTE), storage=shared["storage"])
+    assert rows(split)[one]["noteStale"] and rows(split)[two]["checked"]
+    again = run(tmp_path, build("Page 3 is a scan.", NOTE), storage=shared["storage"],
+                actions=[{"do": "tick", "row": one, "checked": True}])
+    assert rows(again)[one]["checked"] and rows(again)[two]["checked"]
+    apart = run(tmp_path, build("Page 3 is a scan.", "The filing cited is superseded."),
+                storage=shared["storage"])
+    assert rows(apart)[one]["noteStale"], "the row it was ticked on says so, whatever row is last"
 
 
 def test_a_note_change_warns_every_row_one_check_covered(tmp_path):

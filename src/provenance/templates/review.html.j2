@@ -127,10 +127,10 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
     {% if c.conflicts %}<span class="b bad">conflict</span>{% endif %}
   </div>
   {% for x in c.conflicts %}<div class="conf">{{ x }}</div>{% endfor %}
-  <div class="meta nchanged hidden" style="color:var(--warn)">{% if c.notes %}The researcher's
-    note below is new, or has changed, since you checked this claim's sources.{% else %}This
-    claim had a researcher's note when you checked its sources, and it has been removed
-    since.{% endif %}</div>
+  <div class="meta nchanged hidden" style="color:var(--warn)">{% if c.notes %}You checked this
+    claim's sources when the researcher's note below read differently, or before this page
+    recorded notes with checks.{% else %}This claim had a researcher's note when you checked its
+    sources, and it has been removed since.{% endif %}</div>
   {% if c.notes %}<div class="rnote"><b>Researcher's note (unverified):</b> {{ c.notes }}</div>{% endif %}
 
   {% for s in c.sources %}
@@ -173,9 +173,9 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
     </div>
     <div class="meta stale hidden" style="color:var(--warn)">You checked this row, but the claim or
       the evidence shown for it has changed since. Check it again.</div>
-    <div class="meta nstale hidden" style="color:var(--warn)">You checked this row, but the
-      researcher's note on this claim has been added, changed or removed since. Read the claim as
-      it is now, then check the row again.</div>
+    <div class="meta nstale hidden" style="color:var(--warn)">You checked this row when the
+      claim's researcher note read differently, or before this page recorded notes with checks.
+      Read the claim as it is now, then check the row again.</div>
     <input class="note hidden" placeholder="note on this source, shown wherever it is cited (saved with your progress)">
   </div>
   {% endfor %}
@@ -194,14 +194,13 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
 // recorded by the row's fingerprint (report.review_fingerprint), which covers exactly that. A
 // row reads checked while its fingerprint is recorded. Another question citing the same source
 // has another fingerprint, and so does this row once its claim or evidence changes; a claim
-// moved to another question id without changing keeps it. Beside each check is the row showing
-// it (every row has its own key: report.ROW_KEY_RE), so a row whose evidence changed can say
-// so. A claim with researcher notes adds them to the fingerprint as a part of its own, after a
-// dot. A check that no row shows, but that matches a row on everything before the dot, is on
-// that row's claim and evidence under other notes, so the row says the note is what changed
-// (rowsOf). A claim without notes has no such part, as before notes were hashed. A flag or note
-// is a warning about the source, not an attestation, so it stays per source and shows wherever
-// the source is cited.
+// moved to another question id without changing keeps it. Beside each check is the row it was
+// made on (every row has its own key: report.ROW_KEY_RE), so a row whose evidence changed can
+// say so. A claim with researcher notes adds them to the fingerprint as a part of its own, after
+// a dot, so a check whose row still shows the same claim and evidence under other notes says the
+// note is what changed (lapse). A claim without notes has no such part, as before notes were
+// hashed. A flag or note is a warning about the source, not an attestation, so it stays per
+// source and shows wherever the source is cited.
 //
 // V2 holds what the page saved before notes were hashed: this shape, with v: 2 and one-part
 // fingerprints. A one-part check means now what it meant then, a check on a claim with no note,
@@ -222,24 +221,29 @@ const FP_RE = /^[0-9a-f]{16}(\.[0-9a-f]{16})?$/;
 const FP_V2_RE = /^[0-9a-f]{16}$/;      // before notes were hashed, a fingerprint had one part
 const SID_RE = /^[0-9a-f]{12}$/;
 const srcs = [...document.querySelectorAll('.src')];
-const shown = new Set(srcs.map(el => el.dataset.fp));
 const byKey = new Map(srcs.map(el => [el.dataset.key, el]));
+// Rows by fingerprint. Rows showing exactly the same thing share one, and one check covers them.
+const byFp = new Map();
+for (const el of srcs) byFp.set(el.dataset.fp, [...(byFp.get(el.dataset.fp) || []), el]);
 // A fingerprint without its notes part: the claim and the evidence the row shows.
 function evidence(fp){ return fp.split('.')[0]; }
-function lapsed(){ return Object.keys(state.checked).filter(f => !shown.has(f)); }
-// The rows a check no row shows was on, under other notes: the row it names, while that row
-// shows the same claim and evidence, with any row showing exactly what it shows (one check
-// covers rows that share a fingerprint, and names only one). Only when it doesn't (the claim
-// moved to another id, or its citations were reordered) every row showing them, since the check
-// can't say which. Matching by content alone first sent a note change on one claim to its twin
-// (another claim asking and answering the same thing from the same citation) and let a tick
-// there settle it. None: the claim or evidence changed.
-function rowsOf(f){
-  const named = byKey.get(state.checked[f]);
-  if (named && evidence(named.dataset.fp) === evidence(f)) {
-    return srcs.filter(el => el.dataset.fp === named.dataset.fp);
-  }
-  return srcs.filter(el => evidence(el.dataset.fp) === evidence(f));
+// What a recorded check says about the rows now, or null. It names the row it was made on, and
+// render() keeps it there while that row shows the same claim and evidence. If that row's notes
+// differ, the note changed, on that row and every row sharing its fingerprint. If its claim or
+// evidence differs, that row says so. Nothing when the row shows what was checked, or is gone.
+// Guessing the row from content instead (a claim moved to another id and given a new note in one
+// rebuild) sent the warning to a twin, another claim asking and answering the same thing from
+// the same citation, so that case reads unchecked without saying why.
+function lapse(f){
+  const el = byKey.get(state.checked[f]);
+  if (!el || el.dataset.fp === f) return null;
+  return evidence(el.dataset.fp) === evidence(f) ? {note: true, rows: byFp.get(el.dataset.fp)}
+                                                 : {note: false, rows: [el]};
+}
+// Moves a check to the first row showing what it attests, and reports whether any row does.
+function repoint(f){
+  if (byFp.has(f)) state.checked[f] = byFp.get(f)[0].dataset.key;
+  return byFp.has(f);
 }
 let cur = 0;
 
@@ -336,31 +340,34 @@ function ann(el){
 function isChecked(el){ return el.dataset.fp in state.checked; }
 function setChecked(el, on){
   const row = el.dataset.key, fp = el.dataset.fp;
-  // Either way, a check no row shows any more that this row made, or that was on this row under
-  // other notes, is settled now.
-  for (const f of lapsed()) {
-    if (state.checked[f] === row || rowsOf(f).includes(el)) delete state.checked[f];
+  // Either way, what a check said about this row is settled now. One that another row still
+  // shows moves there and stays a check; any other is dropped.
+  for (const f of Object.keys(state.checked)) {
+    if (lapse(f)?.rows.includes(el) && !repoint(f)) delete state.checked[f];
   }
   if (on) state.checked[fp] = row; else delete state.checked[fp];
 }
 
 function render(){
-  // A check follows its claim, so it names the row showing it now: when a claim moves to another
+  // A check stays on the row it was made on while that row shows the same claim and evidence.
+  // Otherwise it follows what it attests to a row showing it now: when a claim moves to another
   // question id, a check made under its old row key moves to the new one.
-  for (const el of srcs) if (isChecked(el)) state.checked[el.dataset.fp] = el.dataset.key;
-  // Checks no row shows now: a note change on the rows they were on (rowsOf), and otherwise a
-  // change to the claim or evidence of the row they name.
+  for (const f of Object.keys(state.checked)){
+    const el = byKey.get(state.checked[f]);
+    if (!el || evidence(el.dataset.fp) !== evidence(f)) repoint(f);
+  }
+  // What each check says about the rows: their note changed, or their claim or evidence did.
   const noteRows = new Set(), changed = new Set();
-  for (const f of lapsed()){
-    const on = rowsOf(f);
-    if (on.length) on.forEach(el => noteRows.add(el)); else changed.add(state.checked[f]);
+  for (const f of Object.keys(state.checked)){
+    const l = lapse(f);
+    if (l) for (const el of l.rows) (l.note ? noteRows : changed).add(el);
   }
   const noteStale = el => !isChecked(el) && noteRows.has(el);
   let done = 0;
   for (const el of srcs){
     const a = ann(el), ok = isChecked(el);
     el.querySelector('.cb').checked = ok;
-    el.querySelector('.stale').classList.toggle('hidden', ok || !changed.has(el.dataset.key));
+    el.querySelector('.stale').classList.toggle('hidden', ok || !changed.has(el));
     el.querySelector('.nstale').classList.toggle('hidden', !noteStale(el));
     el.classList.toggle('flagged', a.flag);
     const n = el.querySelector('.note');

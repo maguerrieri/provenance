@@ -83,10 +83,10 @@ def shown_notes(claim: Claim) -> str:
     """The claim's researcher notes as the review page shows them, or "" for none.
 
     What doesn't show is folded, so a retry that changes only that clears no check: a line
-    ending (the HTML parser reads CR and CRLF as LF), blanks at the end of a line, and blank
-    space around the whole."""
+    ending (the HTML parser reads CR and CRLF as LF), and white space at the end of a line or
+    around the whole, both read as `str.strip()` reads it."""
     lines = (claim.notes or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    return "\n".join(line.rstrip(" \t") for line in lines).strip()
+    return "\n".join(line.rstrip() for line in lines).strip()
 
 
 def review_fingerprint(claim: Claim, source: Source) -> str:
@@ -129,7 +129,7 @@ def review_fingerprint(claim: Claim, source: Source) -> str:
     # would let two different rows hash alike.
     fp = hashlib.sha256(json.dumps(parts).encode()).hexdigest()[:16]
     if notes := shown_notes(claim):
-        fp += "." + hashlib.sha256(notes.encode()).hexdigest()[:16]
+        fp += "." + hashlib.sha256(json.dumps(notes).encode()).hexdigest()[:16]
     return fp
 
 
