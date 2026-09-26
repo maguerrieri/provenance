@@ -27,7 +27,8 @@ Never reconstruct a quote from memory. Copy it from the page, character for char
 
 ## Source rules (not guidelines)
 
-The authoritative lists are the tool's `source_lists/*-sources.yaml`; the race file names which apply.
+The authoritative lists ship with the tool (`src/provenance/source_lists/` in its repo), the race file names
+which apply, and `provenance check-claim` checks your sources against them.
 
 **Citable as source-of-record:**
 - Bylined journalism — national (AP, Politico) plus the outlets the race's regional list
@@ -72,6 +73,9 @@ keeping it in your head — the next researcher will hit the same wall:
 ```
 provenance source-import-curl <file>          # from a browser "copy as cURL"
 ```
+
+If it exits 1 with `not written` and prints the entry, this copy of the tool can't record it:
+copy the printed entry into your claim's `notes`, so the human can add it to the tool's repo.
 
 If it is genuinely closed, that is a finding too. Say so, give the human a precise retrieval
 instruction (what to search, on which portal), and either return `not_found` or cite a copy

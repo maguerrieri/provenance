@@ -2427,7 +2427,8 @@ git+https://github.com/maguerrieri/provenance@v<version>`), so four things follo
   registry are package data under `src/provenance/`, found through `importlib.resources`.
   They were found beside the checkout (`Path(__file__).parents[2]`), which a wheel doesn't have,
   and every test passed, because tests run from the checkout. A test builds the wheel and checks
-  the files are in it. Nothing the package reads may be looked up relative to the repo root.
+  the files are in it. Nothing the package reads may be looked up relative to the repo root;
+  `races/` is the one left, until #8 replaces it (`tests/test_installed_copy.py` names it).
   A file the package *writes* can't live there either: see "Only a checkout writes to the
   registry".
 - **One version for the plugin and the command.** Claude Code caches a plugin by the
