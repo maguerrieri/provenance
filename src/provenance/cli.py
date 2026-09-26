@@ -42,6 +42,7 @@ from .verify import (
     check_snippet,
     junk_capture,
     missing_filing_date,
+    missing_legal_version,
     page_list,
     revalidate_from_cache,
     secondary_host,
@@ -2327,6 +2328,15 @@ def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path
                 con.print(f"  [red]no filing date[/] {escape(_printable(src_.url))}\n"
                           f"      periodic filings are a series — set `date` to the filing's "
                           f"own date, and make sure it is the most recent one")
+            if missing_legal_version(src_, rules):
+                ok = False
+                con.print(f"  [red]no effective date or version[/] "
+                          f"{escape(_printable(src_.url))}\n"
+                          f"      this host publishes legal text, which is a series — set "
+                          f"`date` to the effective date or version of what you quoted (a "
+                          f"code section's history or currency note says which; for a bill, "
+                          f"its version, or the date of the action you cite), and make sure "
+                          f"it is the version the claim is about")
         check_corroboration(claim)
         if claim.corroboration_ok is False:
             ok = False

@@ -12,6 +12,12 @@ bylined_journalism:
   - apnews.com
   - politico.com
 
+primary_document:
+  # The federal code and regulations from the offices that compile them: citing their text
+  # there is not a copy (see legal_text below).
+  - uscode.house.gov
+  - ecfr.gov
+
 lead_generator_only:
   - ballotpedia.org
   - wikipedia.org
@@ -22,3 +28,18 @@ excluded:
   - grokipedia.com
   - ballotblog.com
   - digitalchew.com
+
+# legal_text: hosts that publish the text of law (statutes, codes, regulations). Not a class:
+# a host here keeps whatever class another key gives it, or none. Legal text is a series, so a
+# citation on one of these hosts must carry the effective date or version it quotes in `date`
+# (`provenance check-claim` fails it otherwise), and the verifier checks for a newer version.
+# The code publishers serve many jurisdictions' codes from one host, which is why they are
+# listed here and not as primary_document (#40).
+legal_text:
+  - uscode.house.gov        # the United States Code, from the office that compiles it
+  - ecfr.gov                # the Code of Federal Regulations, as currently in force
+  - law.cornell.edu         # a widely cited copy of the federal code and regulations
+  - municode.com            # municipal and county code publishers
+  - amlegal.com
+  - ecode360.com
+  - codepublishing.com

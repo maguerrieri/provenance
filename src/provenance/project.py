@@ -129,7 +129,7 @@ def find(start: Path) -> Path | None:
 def load(root: Path) -> Project:
     """Read `root`/provenance.toml, refusing anything it can't read as a project. Every problem
     is named in one message, so a repair is not a loop of re-runs."""
-    from .sources import available
+    from .sources import available, load_rules
 
     root = _real(root) or absolute(root)
     path = root / FILE
@@ -172,6 +172,13 @@ def load(root: Path) -> Project:
     elif missing := [s for s in sources if s not in available()]:
         problems.append(f"`sources` names no such source list: {', '.join(map(repr, missing))} "
                         f"(there are {', '.join(available()) or 'none'})")
+    else:
+        # Read here, so a malformed list is a problem with the project every command names,
+        # not a traceback from whichever command loads the rules first.
+        try:
+            load_rules(tuple(sources))
+        except ValueError as e:
+            problems.append(str(e))
 
     cache = raw.get("cache")
     cache_path = None
