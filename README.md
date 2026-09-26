@@ -14,8 +14,9 @@ Agents find sources and make judgment calls. Deterministic code decides whether 
 Imported from the private project where it was built, for one kind of research: candidates in
 an election. Its core no longer assumes that. A project researches one or more subjects, and a
 subject can be a person, a pending proposal or a document. The rest of the generalization is
-tracked as an epic in this repo's issues. The tool ships with no project: write one (see
-[Projects](#projects)) before running a command in it.
+tracked as an epic in this repo's issues. The tool ships with no project: start one with
+`provenance new` or `provenance ask` (see [Starting a project](#starting-a-project)) before
+running a command in it.
 
 Nothing project-specific lives in the pipeline itself: a project's subjects, and what its
 researchers are told, are in its own `provenance.toml`.
@@ -55,8 +56,14 @@ PyPI belongs to an unrelated project, so don't install it by name.
 uv tool install git+https://github.com/maguerrieri/provenance@v0.1.0
 ```
 
-Then run it from your research project's directory, the one holding its `provenance.toml`
-(write one first: see [Projects](#projects)):
+Start a project from a template of research questions, and hand it to the plugin's skill
+(see [Starting a project](#starting-a-project)):
+
+```bash
+provenance new my-project --from template.md --source us
+```
+
+Then run it from your research project's directory, the one holding its `provenance.toml`:
 
 ```bash
 provenance --version                                                    # provenance 0.1.0
@@ -202,6 +209,41 @@ fabricated quote, repeated snippet, smart-quote drift, excluded aggregator. The 
 tests run the page's own script under Node, so they need `node` on the PATH; without it they
 skip, except in CI, where they fail.
 
+## Starting a project
+
+Two commands start one. Each writes a new project, and prints the command that opens Claude
+Code in it with the plugin's skill invoked (see "The Claude Code plugin"). The skill does the
+research. Neither command changes a project that exists.
+
+```bash
+provenance new my-project --from template.md --source us --source ca
+provenance ask "What does the record show about the county's flood-control levy?" --source us
+```
+
+- **`provenance new <dir> --from <template>`** is for a set of questions. It writes
+  `<dir>/provenance.toml` and copies the template to `<dir>/template.md`. The template is the
+  research questions, in prose. The skill splits it into atomic questions, shows you the split
+  to approve, then researches each one. `<dir>` may already exist, holding the template, but
+  not a `provenance.toml` or a run's files (a question set, claims, a cache). Before handing it
+  on, add where the records are to `context`, and list the project's `subjects` if it has more
+  than one (see [Projects](#projects)).
+- **`provenance ask "<question>"`** is for one question, with no template. It creates a new
+  project in `--dir`, by default `ask-<the question's first words>` in the working directory,
+  which must not exist yet. The project holds just the question, as `q1`. The skill gives it
+  one researcher and one fresh verifier, then builds its review page. Pass `--adversarial` for
+  a question negative or contested about someone or something: its claim then needs two
+  independent sources.
+
+Both keep a full run's guarantees. The question asks what the record shows, never the answer
+it expects: the skill proposes a rewording for one that does. Each claim passes
+`provenance check-claim`, and a verifier that did not write it judges every source.
+
+`--source` is required, once for each source list the citations are checked against (see
+[Source lists](#source-lists)). `us` holds the rules that apply everywhere. `--cache` sets
+`cache`: `.` for a `new` project, and `~/.cache/provenance` for every `ask` project, so a
+question asked again doesn't fetch its pages again. `new` takes `--name`, the project's name,
+which defaults to the directory's.
+
 ## Projects
 
 A project is a directory holding a `provenance.toml`. Every command finds it the same way: the
@@ -227,7 +269,8 @@ completeness_check = """
 
 - **`cache`** is where the shared page cache and the CAL-ACCESS database live, relative to the
   file, with `~` expanded. `"."` keeps them beside it. The same path in several projects, such
-  as `"~/.cache/provenance"`, shares one cache between them. `--cache` overrides it.
+  as `"~/.cache/provenance"`, shares one cache between them: every `provenance ask` project
+  is written with that one. `--cache` overrides it.
 - **`subjects`** lists the project's separate runs, each in its own subdirectory with its own
   claims, verdicts, question set and review progress. A subject is an `id`, its directory, and
   a `name`, what the questions call it. It need not be a person: a pending proposal or a
