@@ -645,9 +645,11 @@ def test_a_started_project_runs_end_to_end(tmp_path, home, kind):
     _cache(tmp_path / "shared")
     (root / "claims").mkdir()
     claim = root / "claims" / "q1.json"
+    # The outlet is on no source list, so the answer states what it reports, not the fact alone.
     claim.write_text(Claim(
         question_id="q1", question=QUESTION,
-        answer="The supervisors approved it 4-1 and sent it to the ballot.",
+        answer="The Harbor Ledger reports the supervisors approved it 4-1, sending it to the "
+               "ballot.",
         sources=[Source(url=URL, publisher="Harbor Ledger", author="R. Reporter",
                         date="2030-05-06", source_type="bylined_journalism", snippet=SNIPPET)],
     ).model_dump_json())
