@@ -1295,11 +1295,16 @@ check each way:
   deeper through. A scheme-less `user:x@host` counts only where a host is expected, since in a query
   it reads the same as a search (`from:alice@agency.example`); there any `@` is refused (a host
   argument, which `.hostname` never cleaned without a `://`, so `source-note` wrote the login
-  into a file name, #161). Each recipe's request gets `_check_request()`, which `run()` also
-  calls after filling and `parse_curl()` on the request it records; a template is read with a
-  neutral value in each placeholder, since `{"year": {year}}` is no JSON until it is filled. A
-  field or recipe param named like a credential is refused, and the host must be a host name
-  (a port is dropped), since it names the file (`../x` wrote outside the registry).
+  into a file name, #161). Each recipe gets `_check_recipe()`, which `run()` also calls, since a
+  recipe built by hand reaches it too; the two paths disagreed twice in review, about a login
+  and then a key in a header other than `origin` and `referer`, until they shared the one
+  function. Its request gets `_check_request()`, which `run()` calls again after filling and
+  `parse_curl()` on the request it records, and which reads every header's value as text. A
+  template is read with a neutral value in each placeholder, since `{"year": {year}}` is no
+  JSON until it is filled. A field or recipe param named like a credential is refused, and the
+  host must be a host name (a port is dropped), since it names the file (`../x` wrote outside
+  the registry), and a `host:` field must name the file's host, which is the one it is served
+  under.
 - **Out: `redact()`.** Every exception `access.py` raises is a `Refused`, whose message is made
   through it, and `_refusing` turns a library's error into one at every function the CLI calls.
   The access commands run inside `cli._access_refusals()`, which prints through
