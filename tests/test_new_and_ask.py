@@ -331,8 +331,8 @@ def test_a_directory_made_meanwhile_is_refused_and_left_alone(tmp_path, home, mo
 
     def racing(path):
         missing = real(path)
-        path.mkdir()
-        (path / "theirs.txt").write_text("another writer's file")
+        (tmp_path / "q").mkdir()
+        (tmp_path / "q" / "theirs.txt").write_text("another writer's file")
         return missing
 
     monkeypatch.setattr(cli, "_missing_dirs", racing)
@@ -400,6 +400,66 @@ def test_a_filesystem_without_hard_links_still_gets_its_project(tmp_path, monkey
                                                                    "template.md"]
 
 
+def test_a_failed_write_on_a_filesystem_without_hard_links_leaves_no_partial_file(
+        tmp_path, monkeypatch):
+    import errno
+    import os
+
+    real_fsync, calls = os.fsync, []
+
+    def no_links(src, dst, *a, **kw):
+        raise OSError(errno.ENOTSUP, "Operation not supported")
+
+    def fsync(fd):
+        calls.append(fd)
+        if len(calls) == 2:   # the temporary file's goes through; the fallback's fails
+            raise OSError(errno.EIO, "Input/output error")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "link", no_links)
+    monkeypatch.setattr(os, "fsync", fsync)
+    code, out = _provenance("new", tmp_path / "p", "--from", _template(tmp_path),
+                            "--source", "us")
+    assert code == 1 and "could not write" in out, out
+    assert not (tmp_path / "p").exists(), "the partial template and the directory are gone"
+
+
+def test_a_parent_another_process_made_meanwhile_is_left_to_it(tmp_path, home, monkeypatch):
+    """Only the directories this run made are taken back when it is refused."""
+    real = cli._missing_dirs
+
+    def racing(path):
+        missing = real(path)
+        if path == tmp_path / "theirs":
+            (tmp_path / "theirs").mkdir()
+        return missing
+
+    (tmp_path / "f").write_text("a file where the cache would go")
+    monkeypatch.setattr(cli, "_missing_dirs", racing)
+    code, out = _provenance("ask", QUESTION, "--source", "us", "--dir",
+                            tmp_path / "theirs" / "q", "--cache", tmp_path / "f")
+    assert code == 1 and "Nothing was written" in out, out
+    assert (tmp_path / "theirs").is_dir() and not (tmp_path / "theirs" / "q").exists()
+
+
+def test_run_files_that_appear_before_the_project_file_are_not_adopted(tmp_path, monkeypatch):
+    """A run's files that appeared after `new` looked, by the time its project file did, take
+    the project back: writing it beside them would adopt them."""
+    root = tmp_path / "p"
+    root.mkdir()
+    real = cli._install
+
+    def racing(path, body):
+        real(path, body)
+        if path.name == "template.md":
+            (root / "claims").mkdir()
+
+    monkeypatch.setattr(cli, "_install", racing)
+    code, out = _provenance("new", root, "--from", _template(tmp_path), "--source", "us")
+    assert code == 1 and "holds a run's files already (claims)" in out, out
+    assert sorted(p.name for p in root.iterdir()) == ["claims"]
+
+
 def test_a_new_directory_made_meanwhile_is_refused_not_written_into(tmp_path, monkeypatch):
     """`new` found no directory, so it creates one, exclusively: one made since, holding a run's
     files, is not a directory `new` checked, and a project file beside them would adopt them."""
@@ -407,7 +467,7 @@ def test_a_new_directory_made_meanwhile_is_refused_not_written_into(tmp_path, mo
 
     def racing(path):
         missing = real(path)
-        (path / "claims").mkdir(parents=True)
+        (tmp_path / "p" / "claims").mkdir(parents=True)
         return missing
 
     monkeypatch.setattr(cli, "_missing_dirs", racing)

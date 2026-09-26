@@ -1308,6 +1308,26 @@ Lessons from it that still apply:
   directly read rich's output at 80 columns, so where a line wraps depends on how long the tmp
   path is (#63).
 
+## `new` and `ask` only create a project, and leave none half-made
+
+`provenance new` writes a project for a template, and `provenance ask` a scratch project for one
+question. Neither changes a project that exists. `new` refuses a directory holding a project file
+or a run's files, which would adopt an old layout, and `ask` refuses any directory that exists.
+Four review rounds on #10 turned up the ways a scaffold breaks that promise, each one quietly:
+- **A check before writing is not exclusivity.** A directory the command found absent is created
+  with `os.mkdir()`, never `mkdir(exist_ok=True)` and never a check-then-rename, since POSIX
+  `rename()` replaces an empty directory made in between. Only directories this run made are
+  removed on a refusal.
+- **An interrupted run must leave no project.** Each file is written beside its name, fsynced
+  and hard-linked into place (`_install()`), and the project file goes last. A partial
+  `provenance.toml` would be read as the project, and a partial template refuses the retry.
+- **The path as given, not the one it resolves to.** A symlinked target would write through into
+  another project's subject, so it is refused. A symlinked ancestor is fine, because the parent's
+  declaration is read through it, as `project.resolve()` reads it for every command.
+- **A run's files that appear by the time the project file does take it back.** These are
+  checks, not a lock: nothing in the pipeline takes one, and no local check stops another
+  process writing into a directory.
+
 ## A real citation to the wrong document passes every check
 
 Form 700s and campaign finance forms are **series**. A 2024 filing verifies exactly as well
