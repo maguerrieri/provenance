@@ -2913,7 +2913,7 @@ def _ask_dir(question: str) -> Path | None:
     words = [w for w in re.findall(r"[a-z0-9]+", re.sub(r"'s\b", "", folded))
              if w not in _ASK_FILLER]
     slug = "-".join(words[:6])[:48].rstrip("-")
-    digest = hashlib.sha256(question.encode()).hexdigest()[:6]
+    digest = hashlib.sha256(question.encode()).hexdigest()[:16]
     return Path(f"ask-{slug}-{digest}") if slug else None
 
 

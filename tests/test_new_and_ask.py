@@ -228,7 +228,7 @@ def test_ask_writes_a_project_holding_the_one_question(tmp_path, home, monkeypat
                             monkeypatch=monkeypatch)
     assert code == 0, out
     [root] = tmp_path.glob("ask-*")
-    assert re.fullmatch(r"ask-county-road-repair-bond-[0-9a-f]{6}", root.name), root.name
+    assert re.fullmatch(r"ask-county-road-repair-bond-[0-9a-f]{16}", root.name), root.name
     assert json.loads((root / "questions.json").read_text()) == [
         {"id": "q1", "text": QUESTION, "claim_type": "mechanical", "parent": None,
          "rationale": "asked with provenance ask"}]
@@ -262,7 +262,7 @@ def test_record_questions_about_different_things_get_different_directories(tmp_p
                                 monkeypatch=monkeypatch)
         assert code == 0, out
     names = sorted(p.name for p in tmp_path.glob("ask-*"))
-    assert [re.sub(r"-[0-9a-f]{6}$", "", n) for n in names] == ["ask-bond", "ask-levy"], names
+    assert [re.sub(r"-[0-9a-f]{16}$", "", n) for n in names] == ["ask-bond", "ask-levy"], names
 
 
 def test_questions_sharing_their_first_words_get_different_directories(tmp_path, home,
@@ -277,6 +277,13 @@ def test_questions_sharing_their_first_words_get_different_directories(tmp_path,
     names = [p.name for p in tmp_path.glob("ask-*")]
     assert len(names) == 2 and all(n.startswith("ask-county-road-repair-bond-vote-")
                                    for n in names), names
+
+
+def test_the_hash_is_long_enough_that_questions_do_not_collide_on_it():
+    """Cut to 24 bits, the hash put these two on one directory: their digests share their first
+    six hex digits."""
+    stem = "What does the record show about levy candidate county road repair bond vote"
+    assert cli._ask_dir(f"{stem} 1198?") != cli._ask_dir(f"{stem} 9253?")
 
 
 @pytest.mark.parametrize("kind", ["new", "ask"])
