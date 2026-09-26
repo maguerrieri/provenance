@@ -32,3 +32,8 @@ primary_document:
   - courts.ca.gov
 
 campaign_statement_only: []
+
+# The California codes, and bills in each of their amended versions. See us-sources.yaml.
+legal_text:
+  - leginfo.legislature.ca.gov
+  - leginfo.ca.gov

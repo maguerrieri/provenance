@@ -2,12 +2,15 @@
 
 Rules live in `source_lists/<name>-sources.yaml` and are selected per project, so a California
 project loads `us` + `ca`, and a future city project could add a city list. The lists merge; a
-domain in any loaded list counts. A list can ship notes beside it (`<name>-notes.md`), which
-`provenance brief` hands to researchers and verifiers (`notes()`).
+domain in any loaded list counts. Besides the classes, a list names the hosts that publish legal
+text (`legal_text`), whose citations must carry the version they quote. A list can ship notes
+beside it (`<name>-notes.md`), which `provenance brief` hands to researchers and verifiers
+(`notes()`).
 """
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from importlib.resources import files
 from pathlib import Path
@@ -21,6 +24,32 @@ from .models import Source
 SOURCES_DIR = Path(files(__package__) / "source_lists")
 CATEGORIES = ("excluded", "lead_generator_only", "campaign_statement_only",
               "primary_document", "bylined_journalism")
+# Not a category: a host that publishes the text of law (statutes, codes, regulations), whatever
+# its class. Legal text is a series, like a filing: the version before the last amendment
+# verifies exactly like the one in force, so a citation there must say which version it quotes
+# (`verify.missing_legal_version()`). Which hosts those are is list data, per jurisdiction.
+LEGAL_TEXT = "legal_text"
+KEYS = (*CATEGORIES, LEGAL_TEXT)
+# What `domain()` can return for a URL: a bare, lowercase host, never starting with `www.`,
+# which it strips. An entry of any other shape (a scheme, a path, a port) matches nothing.
+_HOST = re.compile(r"(?!www\.)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+")
+
+
+class _OneOfEachKey(yaml.SafeLoader):
+    """`yaml.safe_load()`, except that a repeated key is refused. PyYAML keeps the last of two
+    equal keys, so a second `legal_text:` block appended to a list would replace the first one's
+    hosts without a word. A SafeLoader still: it constructs no Python object a tag names."""
+
+    def construct_mapping(self, node, deep=False):
+        seen: set = set()
+        for key, _ in node.value:
+            if not isinstance(key, yaml.ScalarNode):
+                continue   # not a key a list can use; the unknown-key check names it
+            if key.value in seen:
+                raise yaml.constructor.ConstructorError(
+                    None, None, f"{key.value!r} is given twice", key.start_mark)
+            seen.add(key.value)
+        return super().construct_mapping(node, deep)
 
 
 def available(sources_dir: Path | None = None) -> list[str]:
@@ -32,18 +61,43 @@ def available(sources_dir: Path | None = None) -> list[str]:
 def load_rules(names: tuple[str, ...] = ("us",), sources_dir: str | None = None) -> dict[str, tuple[str, ...]]:
     """Merge the named source lists. Order doesn't matter — classification checks the
     most restrictive category first, so a domain listed as excluded stays excluded even
-    if another list also names it."""
+    if another list also names it.
+
+    A list that can't be read as exactly these keys, each a list of hosts, is refused with a
+    ValueError naming it (`project.load()` reports it as a problem with the project). Read past,
+    each of these fails open: a misspelled or repeated `legal_text` lists no host, or only some,
+    and every undated statute on the rest passes; a host written without the list's `-` is read
+    one letter at a time; and a host with a scheme, a path or `www.` matches no URL."""
     d = Path(sources_dir) if sources_dir else SOURCES_DIR
-    merged: dict[str, list[str]] = {c: [] for c in CATEGORIES}
+    merged: dict[str, list[str]] = {k: [] for k in KEYS}
     for name in names:
         p = d / f"{name}-sources.yaml"
         if not p.exists():
             raise FileNotFoundError(
                 f"no source list {name!r} in {d} (have: {', '.join(available(d)) or 'none'})")
-        data = yaml.safe_load(p.read_text()) or {}
-        for c in CATEGORIES:
-            merged[c].extend(data.get(c) or [])
-    return {c: tuple(dict.fromkeys(v)) for c, v in merged.items()}
+        try:
+            data = yaml.load(p.read_text(), Loader=_OneOfEachKey)
+        except yaml.YAMLError as e:
+            raise ValueError(f"source list {p} can't be read: {e}") from None
+        if data is None:
+            data = {}
+        if not isinstance(data, dict):
+            raise ValueError(f"source list {p} is not a mapping of {', '.join(KEYS)}")
+        if unknown := [k for k in data if k not in KEYS]:
+            raise ValueError(f"source list {p} has key(s) it can't use: "
+                             f"{', '.join(map(repr, unknown))} (known: {', '.join(KEYS)})")
+        for k in KEYS:
+            hosts = data.get(k)
+            hosts = [] if hosts is None else hosts   # `key:` with nothing under it lists none
+            if not isinstance(hosts, list):
+                raise ValueError(f"source list {p}: {k!r} must be a list of host names")
+            if bad := [h for h in hosts
+                       if not isinstance(h, str) or not _HOST.fullmatch(h.strip().lower())]:
+                raise ValueError(f"source list {p}: {k!r} holds what is not a bare host name: "
+                                 f"{', '.join(map(repr, bad))} (write `example.gov`: no "
+                                 f"scheme, path, port or `www.`)")
+            merged[k].extend(h.strip().lower() for h in hosts)
+    return {k: tuple(dict.fromkeys(v)) for k, v in merged.items()}
 
 
 def notes(names: tuple[str, ...], sources_dir: str | Path | None = None) -> list[tuple[str, str]]:
@@ -99,6 +153,12 @@ def classify(url: str, rules: dict[str, tuple[str, ...]] | None = None) -> str:
         if _matches(host, r.get(key, ())):
             return key
     return "unknown"
+
+
+def publishes_legal_text(url: str, rules: dict[str, tuple[str, ...]] | None = None) -> bool:
+    """True when `url` is on a host a loaded list names under `legal_text`."""
+    r = rules if rules is not None else default_rules()
+    return _matches(domain(url), r.get(LEGAL_TEXT, ()))
 
 
 def check_source_class(src: Source, rules: dict[str, tuple[str, ...]] | None = None) -> tuple[bool, str | None]:

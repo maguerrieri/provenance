@@ -304,7 +304,13 @@ everywhere — lead-generators (Ballotpedia, Wikipedia) and excluded AI aggregat
 Regional lists (`ca-sources.yaml`, and any county or city list added to the tool) hold local outlets and
 primary-document hosts. Lists merge, most-restrictive category wins, and unlisted domains
 still pass if they carry a named or institutional author — so an unlisted local paper
-degrades gracefully instead of being rejected. A new list is a change to the tool: add it under
+degrades gracefully instead of being rejected. A list also names, under `legal_text`, the hosts
+that publish the text of law (statutes, codes, regulations), whatever their class. Legal text is
+a series, so `provenance check-claim` fails a citation on one of them that doesn't give the
+effective date or version it quotes in `date` (a placeholder such as `n/a` gives none). A list
+that isn't exactly these keys, each a list of bare host names (`example.gov`: no scheme, path,
+port or `www.`), is refused, and every command names it as a problem with the project.
+A new list is a change to the tool: add it under
 `src/provenance/source_lists/` in a clone, since an installed copy's lists are replaced on the
 next install.
 

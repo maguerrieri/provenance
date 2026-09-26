@@ -33,7 +33,7 @@ from .models import (
     check_archive_url,
 )
 from .normalize import context_window, dehyphenate, find_all, normalize
-from .sources import check_source_class, classify, domain
+from .sources import check_source_class, classify, domain, publishes_legal_text
 
 # Every reason for a query figure whose record isn't settled (`QueryResult.unsettled`) says
 # this, whichever path writes it. The research skill quotes it to leave such a row for a person
@@ -952,7 +952,31 @@ def missing_filing_date(src: Source) -> bool:
     """
     host = domain(src.url)
     on_filing_host = any(host == h or host.endswith("." + h) for h in FILING_HOSTS)
-    return on_filing_host and not (src.date or "").strip()
+    return on_filing_host and _undated(src)
+
+
+def missing_legal_version(src: Source, rules: dict[str, tuple[str, ...]] | None = None) -> bool:
+    """True when a citation to legal text carries no effective date or version.
+
+    A statute, code section or regulation is a series, like a filing: the section as it read
+    before its last amendment verifies exactly like the one in force, same host, same authority,
+    quote genuinely present. Its `date` is the effective date or version the text is cited as
+    ("operative 2025-01-01", "as amended by <act>"), without which the verifier cannot ask
+    whether a newer version exists. Which hosts publish legal text is source-list data
+    (`legal_text`), so a project elsewhere names its own; nothing here knows a jurisdiction.
+    """
+    return publishes_legal_text(src.url, rules) and _undated(src)
+
+
+# What fills `date` and names no date, as "staff" fills `author` and names no one. Which date a
+# real one is (the version's, or only the day it was read) is the verifier's to judge.
+_NO_DATE = frozenset({"", "n/a", "na", "none", "null", "unknown", "undated", "no date", "-",
+                      "\u2013", "\u2014", "?", "tbd"})
+
+
+def _undated(src: Source) -> bool:
+    """A series citation's `date` is empty, or a placeholder that says there is none."""
+    return (src.date or "").strip().lower() in _NO_DATE
 
 
 def _input_order(by_id: dict[str, Claim]) -> list[list[Claim]]:
