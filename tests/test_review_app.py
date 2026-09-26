@@ -595,6 +595,19 @@ def test_a_note_change_on_one_claim_is_not_its_twins(tmp_path):
     assert rows(ticked)[two]["checked"] and rows(ticked)[one]["noteStale"]
 
 
+def test_a_note_change_warns_every_row_one_check_covered(tmp_path):
+    """Rows that show exactly the same thing share a fingerprint, so one check covers them all
+    and names only one. When the claim's note changes, each of them says so, not just the one
+    the check names."""
+    c = claim("q1", "The council approved the levy.", cited(), cited())
+    key = f"q1/{c.sources[0].sid}"
+    checked = run(tmp_path, [c], actions=[{"do": "tick", "row": key, "checked": True}])
+    assert all(r["checked"] for r in checked["rows"]), "one fingerprint, one check"
+    c.notes = NOTE
+    changed = run(tmp_path, [c], storage=checked["storage"])
+    assert all(r["noteStale"] and not r["checked"] for r in changed["rows"])
+
+
 def test_progress_saved_before_notes_were_hashed_lapses_only_on_noted_claims(tmp_path):
     """Checks saved before this change recorded no note. A claim without notes hashes as it did,
     so its check stands and nothing is cleared wholesale. A claim that has notes now reads as

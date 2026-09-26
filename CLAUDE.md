@@ -949,7 +949,12 @@ they don't show, and a check lost to one teaches re-ticking. The choices in it:
   though only its note changed. The second matched by content alone, and sent a note change on
   one claim to its twin (another claim asking and answering the same thing from the same
   citation), where a tick then settled it. So a lapsed check is on the row it names while that
-  row shows the same claim and evidence, and only otherwise on every row that does.
+  row shows the same claim and evidence (and on any row sharing that row's fingerprint, which
+  the one check also covered), and only otherwise on every row that does. One case stays
+  unexplained: twins with identical notes share one check, and when only one's note changes, the
+  check still stands for the other, so the changed row reads unchecked without saying why. It
+  never reads checked, and telling it from a twin nobody checked would take a list of rows per
+  check in the store.
 - **Only when there are notes.** A claim without them hashes exactly as it did before notes were
   hashed (a test pins one fingerprint), so checks saved then still stand and nothing is cleared
   wholesale. An old key reads as a check made with no note. On a claim that has one now it

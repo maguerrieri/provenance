@@ -228,14 +228,17 @@ const byKey = new Map(srcs.map(el => [el.dataset.key, el]));
 function evidence(fp){ return fp.split('.')[0]; }
 function lapsed(){ return Object.keys(state.checked).filter(f => !shown.has(f)); }
 // The rows a check no row shows was on, under other notes: the row it names, while that row
-// shows the same claim and evidence. Only when it doesn't (the claim moved to another id, or its
-// citations were reordered) every row showing them, since the check can't say which. Matching by
-// content alone first sent a note change on one claim to its twin (another claim asking and
-// answering the same thing from the same citation) and let a tick there settle it. None: the
-// claim or evidence changed.
+// shows the same claim and evidence, with any row showing exactly what it shows (one check
+// covers rows that share a fingerprint, and names only one). Only when it doesn't (the claim
+// moved to another id, or its citations were reordered) every row showing them, since the check
+// can't say which. Matching by content alone first sent a note change on one claim to its twin
+// (another claim asking and answering the same thing from the same citation) and let a tick
+// there settle it. None: the claim or evidence changed.
 function rowsOf(f){
   const named = byKey.get(state.checked[f]);
-  if (named && evidence(named.dataset.fp) === evidence(f)) return [named];
+  if (named && evidence(named.dataset.fp) === evidence(f)) {
+    return srcs.filter(el => el.dataset.fp === named.dataset.fp);
+  }
   return srcs.filter(el => evidence(el.dataset.fp) === evidence(f));
 }
 let cur = 0;
