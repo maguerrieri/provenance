@@ -155,6 +155,25 @@ def test_a_cache_naming_a_cache_directory_itself_is_refused(tmp_path):
         project.load(tmp_path)
 
 
+def test_a_symlink_loop_is_refused_by_name_never_a_traceback(tmp_path):
+    """`Path.resolve()` raises on a symlink loop, and a project file with one in a subject, the
+    cache or the race escaped load() as a traceback. So does a --data in one."""
+    (tmp_path / "a").symlink_to(tmp_path / "b")
+    (tmp_path / "b").symlink_to(tmp_path / "a")
+    write_project(tmp_path, subjects=["a"], cache="b/x", race="a/race.md")
+    with pytest.raises(project.ProjectError) as e:
+        project.load(tmp_path)
+    msg = str(e.value)
+    assert "subject 'a' can't be resolved (a symlink loop)" in msg
+    assert "`cache` is 'b/x', which can't be resolved (a symlink loop)" in msg
+    assert "`race` is 'a/race.md', which can't be resolved (a symlink loop)" in msg
+
+    write_project(tmp_path)
+    with pytest.raises(project.ProjectError, match="can't be resolved"):
+        project.resolve(tmp_path / "a", None)
+    assert not project.lists_run(tmp_path, tmp_path / "a")
+
+
 def test_a_tilde_naming_no_user_is_refused_by_key(tmp_path):
     """`expanduser()` raises for an unknown ~user, and the traceback named neither the project
     file nor the key."""

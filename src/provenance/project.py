@@ -72,7 +72,8 @@ class Project:
         """The declared subject whose run `run` is, or None for the root (or any other
         directory). By the name the project declares, not the directory's own, which differs
         for a subject that is a symlink."""
-        return _subject_at(self.root, self.subjects, run.resolve())
+        at = _real(run)
+        return None if at is None else _subject_at(self.root, self.subjects, at)
 
 
 def find(start: Path) -> Path | None:
@@ -96,7 +97,7 @@ def load(root: Path) -> Project:
     is named in one message, so a repair is not a loop of re-runs."""
     from .sources import available
 
-    root = root.resolve()
+    root = _real(root) or absolute(root)
     path = root / FILE
     try:
         raw = tomllib.loads(path.read_text())
@@ -160,7 +161,9 @@ def load(root: Path) -> Project:
         elif (first := folded.get(s.casefold())) is not None:
             # One directory on a case-insensitive disk (macOS's default), so one run.
             problems.append(f"subject {s!r} repeats {first!r}")
-        elif (d := (root / s).resolve()) == root:
+        elif (d := _real(root / s)) is None:
+            problems.append(f"subject {s!r} can't be resolved (a symlink loop)")
+        elif d == root:
             # A symlink to the root: its run would be the root's, claims and verdicts shared.
             problems.append(f"subject {s!r} is the project root itself")
         elif os.path.lexists(root / s) and not (root / s).is_dir():
@@ -197,14 +200,27 @@ def load(root: Path) -> Project:
 
 def _path(root: Path, value: str, key: str, problems: list[str]) -> Path | None:
     """A path from the project file's `key`: `~` expanded, relative to the file, resolved. None,
-    with the problem named, for a `~user` that names no user: `expanduser()` raises there, and
-    the traceback named neither the file nor the key."""
+    with the problem named, for a `~user` that names no user or a path in a symlink loop:
+    `expanduser()` and `resolve()` raise there, and the traceback named neither the file nor
+    the key."""
     try:
         expanded = Path(value).expanduser()
     except RuntimeError:
         problems.append(f"`{key}` is {value!r}, whose ~ names no user on this machine")
         return None
-    return (root / expanded).resolve()
+    if (path := _real(root / expanded)) is None:
+        problems.append(f"`{key}` is {value!r}, which can't be resolved (a symlink loop)")
+    return path
+
+
+def _real(path: Path) -> Path | None:
+    """`path.resolve()`, or None where it can't be resolved: a symlink loop raises. Every
+    resolve in this module goes through it, so a loop is a refusal naming the path, never a
+    traceback."""
+    try:
+        return path.resolve()
+    except (RuntimeError, OSError):
+        return None
 
 
 def working_dir() -> Path:
@@ -232,7 +248,7 @@ def _subject_at(root: Path, subjects, at: Path) -> str | None:
     rule for which directory a subject is: `Project.subject_of()`, `resolve()` and the check
     on a parent's declaration all ask it."""
     return next((s for s in subjects if isinstance(s, str) and re.fullmatch(SUBJECT_PATTERN, s)
-                 and (root / s).resolve() == at), None)
+                 and _real(root / s) == at), None)
 
 
 def _raw_subjects(root: Path) -> list:
@@ -248,9 +264,10 @@ def _raw_subjects(root: Path) -> list:
 def lists_run(root: Path, run: Path) -> bool:
     """Whether `run` is `root` or a subject root's project file lists, for a project file
     `load()` refuses: as far as that file can say, it is one of the project's runs. A file that
-    can't be parsed at all lists only its root."""
-    at = run.resolve()
-    return at == root.resolve() or _subject_at(root, _raw_subjects(root), at) is not None
+    can't be parsed at all lists only its root. A run that can't be resolved is none."""
+    if (at := _real(run)) is None:
+        return False
+    return at == _real(root) or _subject_at(root, _raw_subjects(root), at) is not None
 
 
 def _declared_by_parent(root: Path) -> Path | None:
@@ -263,8 +280,8 @@ def _declared_by_parent(root: Path) -> Path | None:
     subject is a direct child. A parent file that can't be parsed declares nothing: its own
     commands refuse it. Parsed, not `load()`ed, since `load()` refuses the parent for exactly
     this, and for anything else wrong with it, which is not this run's to fix."""
-    parent = root.parent
-    return parent if _subject_at(parent, _raw_subjects(parent), root.resolve()) else None
+    parent, at = root.parent, _real(root)
+    return parent if at is not None and _subject_at(parent, _raw_subjects(parent), at) else None
 
 
 def resolve(run: Path | None, project: Path | None,
@@ -299,7 +316,8 @@ def resolve(run: Path | None, project: Path | None,
     p = load(root)
     if run is None:
         return p, p.root
-    at = run.resolve()
+    if (at := _real(run)) is None:
+        raise ProjectError(f"{run} can't be resolved (a symlink loop), so it is no run")
     if at == p.root or p.subject_of(run) is not None:
         return p, run
     subjects = ", ".join(p.subjects) or "none"
