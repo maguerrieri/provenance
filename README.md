@@ -127,7 +127,10 @@ A check belongs to one claim: a source cited by two questions is checked under e
 separately. It also clears itself when what you checked changes, and the row says so: the
 claim (a reworded answer), the excerpt you read (a re-fetch that changes its text or
 highlight), or, on a row with no excerpt, the snapshot offered instead (a new one from
-`provenance archive`). Your flags and notes are about the source, and show wherever it is cited.
+`provenance archive`). A researcher's note added, changed or removed after you checked a
+claim clears your checks on it too: each row you had checked says the note is why, and the
+note is marked new.
+Your flags and notes are about the source, and show wherever it is cited.
 
 Serve it rather than opening `review.html` directly — several browsers disable
 `localStorage` on `file://` origins, which silently loses your progress. Export/import
