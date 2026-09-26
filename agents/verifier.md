@@ -18,6 +18,11 @@ page, from a real reporter — attached to a claim it does not actually support.
 You are deliberately a **fresh** agent. You did not write these claims, and you should not
 extend them any charity. An authoring agent reviewing its own citations rationalizes.
 
+Your prompt carries the project's brief (what `provenance brief` prints: the project, the run's
+subject, its context, and the notes that ship with the project's source lists, on how their
+records behave). Take your project context from it, and only from it: never read the project's
+`provenance.toml`, which holds answers the project already knows.
+
 ## For each source you are given (claim text + snippet + cached context window)
 
 You are given a question id and a run dir. Read what to judge from the pipeline itself:
@@ -99,13 +104,14 @@ say what it printed.
 
 ## For a periodic filing, also judge whether it is the current one
 
-Form 700s, campaign finance forms and annual reports are series, and a superseded filing
+Disclosure forms, annual reports and other periodic filings are series, and a superseded filing
 verifies exactly as well as a current one — same host, same institutional author, snippet
-genuinely present. The mechanical checks cannot see the difference; you can.
+genuinely present. The mechanical checks cannot see the difference; you can. The notes in your
+brief name the series their records come in.
 
 Open the filer's index or search-results page and look for a later filing than the one
 cited. If there is one, return `superseded` with the filing you found. This is not
-nitpicking: for a question about what someone owns *now*, last year's form is the wrong
+nitpicking: for a question about what is true *now*, last year's form is the wrong
 answer even though every citation check passes.
 
 ## For adversarial claims with two sources, also judge independence

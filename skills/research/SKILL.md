@@ -53,15 +53,15 @@ are two subjects.
    anyone researches it.
 3. Write the project root's `questions.json` as `[{"id", "text", "claim_type", "parent", "rationale"}]`.
 4. Mark `claim_type: "adversarial"` for anything negative or contested about a subject
-   (settlements, donor influence, opposition to a popular measure). Adversarial claims
+   (an allegation, a settlement, a conflict of interest). Adversarial claims
    need two independent sources, so this classification changes what gets researched.
 5. **Show the operator the split and get approval before fanning out.** A bad split silently
    changes the question being answered — cheapest possible place to catch it.
 
 ## Phase 1 — research fan-out, in dependency order
 
-Some questions are **comparisons**, not retrievals: "how does their housing position compare
-to the platform the project measures against?" reasons from two other claims. Those declare `derives_from` in
+Some questions are **comparisons**, not retrievals: "how does the subject's position on a topic
+compare to the reference document the project measures against?" reasons from two other claims. Those declare `derives_from` in
 questions.json, and the rule is simple — **research the inputs first, in a wave, then the
 conclusions.** A comparison written before its inputs exist is guesswork wearing citations.
 
@@ -69,8 +69,8 @@ conclusions.** A comparison written before its inputs exist is guesswork wearing
 verified is `human_review`, however well its own sources check out. So spawning the comparison
 early does not save time; it just produces a row that cannot go green.
 
-For the platform comparison, cite the reference document's section by its anchor URL.
-Where it has no section on a topic, say so: "the platform takes no position here" is a real
+For a comparison with a reference document, cite its section by its anchor URL.
+Where it has no section on a topic, say so: "the document takes no position here" is a real
 finding, and stretching a nearby section to cover it is not.
 
 
@@ -94,8 +94,10 @@ Do not summarize the source rules for them — the agent definition carries them
    detection. No model in this loop.
 2. Spawn one `provenance:verifier` subagent per claim that passed the mechanical checks, for the
    judgment half: does the cached context actually support *this* claim, and (for
-   adversarial claims) are the two sources genuinely independent? Give it the question id
-   and the run dir, not a copy of the claim: it reads the claim and each source's context
+   adversarial claims) are the two sources genuinely independent? Give it the run's brief,
+   verbatim, as for a researcher (its source lists' notes say which records come in series),
+   and the question id and the run dir, not a copy of the claim: it reads the claim and each
+   source's context
    from `provenance handoff <qid> --data <run>`, which prints every context with its sid and a
    **context token** naming the whole hand-off: the claim (its type included), and every
    source printed with it, each with its citation, its context and, for a query citation, the
@@ -134,15 +136,16 @@ Do not summarize the source rules for them — the agent definition carries them
    offline checks `provenance build` does, so the two counts together are what the review app will
    show without a verdict. The command exits 0 only when the pass is done: it exits 1 while
    `N` is above 0, and also when a claim file couldn't be read.
-   For periodic filings (Form 700, campaign finance forms, annual reports), the verifier
-   also checks the filer's index for a **newer** filing and returns `superseded` if one
-   exists — a stale form verifies perfectly, so nothing mechanical can catch it.
+   For periodic filings (disclosure forms, annual reports, and the series the brief's notes
+   name), the verifier also checks the filer's index for a **newer** filing and returns
+   `superseded` if one exists — a stale form verifies perfectly, so nothing mechanical can
+   catch it.
 
    **Never** route a claim to the same agent that authored it.
 3. **Retry loop.** Retry on the *verifier agent's* verdicts too, not only mechanical
    failures — `topic_only` and `superseded` mean the citation is wrong even though every
    mechanical check passed. A retry that only ever hears "snippet not found" fixes the
-   quote and keeps the wrong document: that is how a superseded Form 700 survives a retry.
+   quote and keeps the wrong document: that is how a superseded filing survives a retry.
    Say which kind of failure it was.
 
    **Not a retry: a `contradicts`.** It says the record argues against the claim, not that
@@ -155,7 +158,7 @@ Do not summarize the source rules for them — the agent definition carries them
 
    For each failing source, hand the failure reason back to a fresh
    `provenance:researcher` for that question — "your snippet was not on the page", "your snippet
-   appears 3 times, pick a distinctive span", "ballotpedia is a lead-generator, cite the
+   appears 3 times, pick a distinctive span", "wikipedia is a lead-generator, cite the
    underlying document". **Max 2 retries**, then leave it as `human_review` with the
    reason attached. Serialize verify→retry per question; questions run in parallel.
 
@@ -166,16 +169,12 @@ Do not summarize the source rules for them — the agent definition carries them
    to ask for the missing `page`.
 
    **Not a retry either: a query figure whose record isn't settled.** A `human_review` on a
-   query citation whose reason says it counts or leaves out
-   "rows a later amendment may have withdrawn", says it "leaves out rows that a filing's own
-   amendment attributed to this candidate", says "it leaves out late-reported
-   contributions", or says it "is for names exactly as filed" (from `provenance verify` or
-   `provenance build`), is a correct citation of an unsettled record. Either the export cannot say
-   whether a later amendment withdrew or moved those rows, or a late gift is on file that no
-   Form 460 has restated yet, or other names on file could be the same giver's. The reason
-   names each filing or name to open, and a person checks the claim against them. Retrying it
-   only invites a researcher to change the parameters or cite a mirror until the filings or
-   names drop out.
+   query citation whose reason says the query reproduces the figure, or counts nothing, *but*
+   the record behind it isn't settled (from `provenance verify` or `provenance build`), is a
+   correct citation of an unsettled record. The notes in the brief quote the reasons their
+   datasets give. The reason names each filing or name to open, and a person checks the claim
+   against them. Retrying it only invites a researcher to change the parameters or cite a
+   mirror until the filings or names drop out.
 
    **A retry with no failing source: an answer whose figures no snippet carries.** The claim
    is `human_review` with every source green, and its conflict line names the dollar figures
@@ -242,17 +241,20 @@ A run that skips it produces green rows nobody has actually checked.
 ## Project context
 
 **Run `provenance brief` for the run** (with `--subject <id>` for a subject's run) **and paste
-its output verbatim into every researcher prompt.** It prints the project, the run's subject
-and the project's `context` from its `provenance.toml`: everything project-specific a
-researcher needs, such as which bodies keep minutes and which hosts serve which records. Do not
-summarize it. The project's `sources` names which source lists apply (`sources = ["us", "ca"]`
-→ the tool's `us` and `ca` lists, which ship with it).
+its output verbatim into every researcher and verifier prompt.** It prints the project, the
+run's subject and the project's `context` from its `provenance.toml`: everything
+project-specific a researcher needs, such as which bodies keep minutes and which hosts serve
+which records. Do not summarize it. The project's `sources` names which of the source lists
+that ship with the tool apply, and the brief ends with the notes that ship beside each of
+them: how that list's records behave, such as which filings come in series and which portals
+answer only through a bulk export. The notes are yours too. Read them in the brief before
+Phase 0, and again before deciding a retry: some name failures that are not one.
 
 **Never paste the project's `completeness_check` into a researcher prompt**, and never paste
 `provenance.toml` itself or tell a researcher to read it: the researcher's instructions say to
 take its context from the brief alone. The check lists claims already known to exist, and a researcher told
 what it is looking for confirms that item instead of searching — so anything not on the list
-(a second incident, a bigger donor, a more recent filing) never surfaces, and the
+(a second incident, a larger figure, a more recent filing) never surfaces, and the
 "corroboration" you get back is the pipeline agreeing with itself. `provenance brief` never
 prints it; read it yourself, from the project file, for the check below.
 

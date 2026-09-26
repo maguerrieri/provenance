@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from provenance import calaccess, cli, queries
+from provenance import calaccess, cli, queries, sources
 from provenance.models import QueryCitation, Source, Verification
 from provenance.verify import revalidate_from_cache, verify_source
 
@@ -222,13 +222,14 @@ def test_build_downgrades_a_row_verified_before_it_asked(root):
 
 def test_both_paths_write_the_phrase_the_skill_matches(root):
     """The research skill leaves an unsettled figure for a person rather than retrying it,
-    and tells one by this phrase, which both kinds of reason carry."""
+    and the `ca` list's notes, which reach it through the brief, tell one by this phrase,
+    which both kinds of reason carry."""
     s = cited("calaccess.contributor_total", VELDT, "250")
     assert PHRASE in verify_source(s, root).verification.reason
     s.verification = Verification(status="verified")
     assert PHRASE in revalidate_from_cache(s, root).verification.reason
-    skill = Path(__file__).parents[1] / "skills" / "research" / "SKILL.md"
-    assert f'"{PHRASE}"' in skill.read_text(), "the skill must match what the code writes"
+    notes = " ".join((sources.SOURCES_DIR / "ca-notes.md").read_text().split())
+    assert f'"{PHRASE}"' in notes, "the notes must match what the code writes"
 
 
 def test_every_citable_query_is_checked_for_left_out_schedules(root):
