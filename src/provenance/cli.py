@@ -2562,6 +2562,288 @@ def new_candidate():
     raise typer.Exit(1)
 
 
+# The plugin's orchestration skill, as it is invoked in Claude Code: what `provenance new` and
+# `provenance ask` hand a project to. tests/test_new_and_ask.py holds it to a skill the plugin
+# ships, so renaming the skill fails there until this follows.
+SKILL = "/provenance:voter-guide-research"
+# Where `provenance ask` keeps its pages unless told otherwise: one cache for every scratch
+# project, so asking again does not fetch again. Written into each project file as it is here,
+# so it is declared there, never inferred.
+ASK_CACHE = "~/.cache/provenance"
+
+_PROJECT_FILE = '''\
+# A provenance project (README, "Projects"). No command edits this file once
+# `provenance new` or `provenance ask` has written it: change it by hand.
+name = {name}
+sources = {sources}
+cache = {cache}   # the directory that holds cache/
+
+# title = "<the review page's title>"   # `name` if left out
+# subjects = [{{id = "<its directory>", name = "<what the questions call it>"}}]
+#   A separate run for each, in its own subdirectory. A subject need not be a person: a
+#   proposal or a document works the same way. Leave it out for a project with one subject.
+
+# What every researcher is told, verbatim (`provenance brief` prints it). Keep it thin: where
+# the records are, never a finding, since nothing checks it.
+context = """
+"""
+
+# The answers already known. No researcher is told them: check the results against them.
+completeness_check = """
+"""
+'''
+
+
+def _toml_string(value: str) -> str:
+    """`value` as a TOML basic string. JSON's escaping is TOML's for text with no control
+    character in it, which `_scaffold_refusal()` has already refused: kept as UTF-8, since
+    ensure_ascii would write an astral character as a surrogate pair, which TOML refuses."""
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _unprintable(what: str, value: str) -> str:
+    """A refusal for a value holding a character `_printable()` would escape, else "". Such a
+    value can't be written into a project file or a question as the user sees it: a control
+    character is invalid TOML, and an undecodable byte from argv can't be written at all."""
+    if _printable(value) != value:
+        return f"{what} holds a character that can't be written as it is: {_printable(value)}"
+    return ""
+
+
+def _sources_or_refuse(source: list[str] | None) -> list[str]:
+    """The `--source` lists given, or a refusal naming the ones there are. Required, never
+    defaulted: a project checked against lists it didn't choose is checked against the wrong
+    ones, silently (`project.load()`)."""
+    from .sources import available
+
+    there = available()
+    if not source:
+        _refuse(f"--source is required: name each source list the project's citations are "
+                f"checked against, one --source each (there are {', '.join(there)}; `us` holds "
+                f"the rules that apply everywhere)")
+    if missing := [s for s in source if s not in there]:
+        _refuse(f"--source names no such source list: {', '.join(missing)} "
+                f"(there are {', '.join(there)})")
+    return list(dict.fromkeys(source))
+
+
+def _missing_dirs(path: Path) -> list[Path]:
+    """`path` and each directory above it that does not exist yet, deepest first: what a
+    `mkdir(parents=True)` would create, so a scaffold that fails can take back exactly that."""
+    import os
+
+    missing = []
+    for d in (path, *path.parents):
+        if os.path.lexists(d):
+            break
+        missing.append(d)
+    return missing
+
+
+def _scaffold(root: Path, name: str, sources: list[str], cache: str) -> proj.Project:
+    """Write `root`/provenance.toml and read it back as `provenance` will, or refuse and leave
+    nothing behind: the file removed, and every directory created for it that is still empty.
+    It is read back through `project.resolve()`, so it is refused for anything any command would
+    refuse it for, a subject of another project's included. Created exclusively: new only
+    creates a project, and never writes over a project file, however one got there."""
+    created = _missing_dirs(root)
+    path = root / proj.FILE
+    text = _PROJECT_FILE.format(name=_toml_string(name), sources=json.dumps(sources),
+                                cache=_toml_string(cache))
+
+    def undo() -> None:
+        path.unlink(missing_ok=True)
+        for d in created:
+            try:
+                d.rmdir()
+            except OSError:
+                break
+
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        with open(path, "x", encoding="utf-8") as f:
+            f.write(text)
+    except FileExistsError:
+        _refuse(f"{root} holds a {proj.FILE} already: `provenance new` and `provenance ask` only "
+                f"create a project, and no command edits one")
+    except OSError as e:
+        undo()
+        _refuse(f"could not write {path}: {e}")
+    try:
+        p, _ = proj.resolve(None, root)
+    except proj.ProjectError as e:
+        undo()
+        _refuse(f"{e}. Nothing was written.")
+    return p
+
+
+def _hand_off(root: Path, prompt: str) -> str:
+    """The command that opens Claude Code in `root` with the skill invoked, quoted for a shell,
+    as every printed command is."""
+    return f"cd {shlex.quote(str(root))} && claude {shlex.quote(prompt)}"
+
+
+@app.command(name="new")
+def new(directory: Annotated[Path, typer.Argument(
+            help="The project's directory. It may exist already, holding the template.")],
+        from_: Annotated[Path, typer.Option(
+            "--from", help="The template: the research questions, in prose.")],
+        source: Annotated[list[str] | None, typer.Option(
+            help="A source list the project's citations are checked against. Repeat for each.")
+        ] = None,
+        name: Annotated[str, typer.Option(
+            help="The project's name: its review progress is kept under it. Defaults to the "
+                 "directory's name.")] = "",
+        cache: Annotated[str, typer.Option(
+            help="The directory that holds the shared cache/, relative to the project file.")
+        ] = "."):
+    """Start a project from a template, for the plugin's skill to research.
+
+    Writes the project's provenance.toml and template.md, and prints the command that hands it
+    to the skill, which splits the template into questions, asks you to approve the split and
+    researches them.
+
+    Only a new project: a directory holding a provenance.toml, or a run's files from before
+    project files (a question set, claims, a cache), is refused. A project laid out the old way
+    gets its provenance.toml by hand, as a reviewed change (README, "Projects")."""
+    import os
+
+    sources = _sources_or_refuse(source)
+    root = proj.absolute(directory)
+    name = name.strip() or root.name
+    if problem := _unprintable("the project's name", name) or _unprintable("--cache", cache):
+        _refuse(problem)
+    if not name:
+        _refuse(f"{root} has no name to give the project: pass --name")
+    if not cache.strip():
+        _refuse("--cache must name a directory (\".\" for one beside the project file)")
+    try:
+        template = from_.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        _refuse(f"--from {from_} can't be read as a template: {e}")
+    if not template.strip():
+        _refuse(f"--from {from_} is empty: the template is the research questions to split")
+    if os.path.lexists(root) and not root.is_dir():
+        _refuse(f"{root} is not a directory")
+    if os.path.lexists(root / proj.FILE):
+        _refuse(f"{root} holds a {proj.FILE} already: `provenance new` only creates a project, "
+                f"and no command edits one")
+    if held := sorted(n for n in proj.RESERVED - {proj.FILE} if os.path.lexists(root / n)):
+        # A run's own files: a project from before project files, or a cache. Writing a project
+        # file beside them would adopt them, which is a reviewed change, not a command's.
+        _refuse(f"{root} holds a run's files already ({', '.join(held)}): `provenance new` only "
+                f"creates a project. A project laid out the old way gets its {proj.FILE} by "
+                f"hand, as a reviewed change (README, \"Moving a project laid out the old way\").")
+    dest = root / "template.md"
+    keep = False
+    if os.path.lexists(dest):
+        try:
+            keep = os.path.samefile(dest, from_) or dest.read_bytes() == from_.read_bytes()
+        except OSError:
+            keep = False
+        if not keep:
+            _refuse(f"{dest} exists and is not --from {from_}: `provenance new` writes over no "
+                    f"file. Pass it as --from, or move it.")
+
+    p = _scaffold(root, name, sources, cache)
+    if not keep:
+        try:
+            dest.write_text(template, encoding="utf-8")
+        except OSError as e:
+            con.print(Text(_printable(f"could not copy the template to {dest}: {e}. The project "
+                                      f"is written: copy it there by hand."), style="red"),
+                      soft_wrap=True)
+            raise typer.Exit(1) from None
+
+    lists = ", ".join(sources)
+    con.print(Text(_printable(
+        f"created {p.root}\n"
+        f"  {proj.FILE}  name {name!r}, checked against {lists}, the shared cache in "
+        f"{p.cache / 'cache'}\n"
+        f"  template.md      {'already there' if keep else f'copied from {from_}'}\n"
+        f"Add where the records are to `context` in {proj.FILE}, and list its subjects if it "
+        f"has more than one. Then hand it to the skill, which splits the template into "
+        f"questions, asks you to approve the split and researches them:\n"
+        f"  {_hand_off(p.root, SKILL)}", lines=True)), soft_wrap=True)
+
+
+def _ask_dir(question: str) -> Path | None:
+    """`ask-<the question's first words>`, in the working directory. Accents are folded and
+    anything else outside [a-z0-9] separates words, so the name is plain on any disk. None for
+    a question with no such word: it has no default, and `provenance ask` asks for `--dir`."""
+    import unicodedata
+
+    folded = unicodedata.normalize("NFKD", question).encode("ascii", "ignore").decode()
+    slug = "-".join(re.findall(r"[a-z0-9]+", folded.lower())[:6])[:48].rstrip("-")
+    return Path(f"ask-{slug}") if slug else None
+
+
+@app.command(name="ask")
+def ask(question: Annotated[str, typer.Argument(
+            help="One question, asking what the record shows.")],
+        source: Annotated[list[str] | None, typer.Option(
+            help="A source list the citations are checked against. Repeat for each.")] = None,
+        dir_: Annotated[Path | None, typer.Option(
+            "--dir", help="The new project's directory. Defaults to ask-<the question's first "
+                          "words>, in the working directory.")] = None,
+        cache: Annotated[str, typer.Option(
+            help="The directory that holds the shared cache/.")] = ASK_CACHE,
+        adversarial: Annotated[bool, typer.Option(
+            help="The question is negative or contested: its claim needs two independent "
+                 "sources.")] = False):
+    """Research one question, without a template, in a new project of its own.
+
+    The project holds just the question, as q1. The command it prints hands it to the plugin's
+    skill, which gives it one researcher and one fresh verifier and builds its review page.
+
+    Always a new project, in a directory that does not exist yet: it never adds a question to a
+    project that exists. Its pages go in one cache every `provenance ask` shares, unless
+    `--cache` names another."""
+    import os
+
+    sources = _sources_or_refuse(source)
+    question = question.strip()
+    if not question:
+        _refuse("the question is empty")
+    if problem := _unprintable("the question", question) or _unprintable("--cache", cache):
+        _refuse(problem)
+    if not cache.strip():
+        _refuse("--cache must name a directory")
+    where = dir_ if dir_ is not None else _ask_dir(question)
+    if where is None:
+        _refuse("no directory name can be made from the question's words: pass --dir")
+    root = proj.absolute(where)
+    if os.path.lexists(root):
+        _refuse(f"{root} exists: `provenance ask` starts a new project in a directory of its "
+                f"own. Pass another --dir.")
+    if not root.name:
+        _refuse(f"{root} has no name to give the project: pass another --dir")
+    if problem := _unprintable("the directory's name, which names the project", root.name):
+        _refuse(problem)
+
+    p = _scaffold(root, root.name, sources, cache)
+    qs = [{"id": "q1", "text": question,
+           "claim_type": "adversarial" if adversarial else "mechanical",
+           "parent": None, "rationale": "asked with provenance ask"}]
+    try:
+        with open(root / "questions.json", "x", encoding="utf-8") as f:
+            f.write(json.dumps(qs, indent=1, ensure_ascii=False) + "\n")
+    except OSError as e:
+        con.print(Text(_printable(f"could not write {root / 'questions.json'}: {e}. The project "
+                                  f"is written, with no question in it."), style="red"),
+                  soft_wrap=True)
+        raise typer.Exit(1) from None
+
+    kind = "adversarial: two independent sources" if adversarial else "mechanical"
+    con.print(Text(_printable(
+        f"created {p.root}\n"
+        f"  q1 ({kind}): {question}\n"
+        f"  checked against {', '.join(sources)}, the shared cache in {p.cache / 'cache'}\n"
+        f"Hand it to the skill, which gives it one researcher and a fresh verifier, then builds "
+        f"its review page:\n"
+        f"  {_hand_off(p.root, SKILL + ' ask')}", lines=True)), soft_wrap=True)
+
+
 @app.command()
 def status(data: Path = None, cache: Path = None, project: Path = None, subject: str = None):
     """Summary of where the run stands."""
