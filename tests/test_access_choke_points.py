@@ -69,6 +69,9 @@ NESTED_LOGINS = [
     f"curl 'https://x.example/api#next=https://{LOGIN}@y.example/'",    # the fragment
     f"curl 'https://x.example/api?q=see%20https://{LOGIN}@y.example/%20first'",  # inside text
     "curl 'https://x.example/api?next=https://canary-user:fake\uff20canary.example/'",
+    # An encoded `/` before an encoded `@`: decoded, the authority ends before the `@`.
+    f"curl 'https://x.example/api?next=https://canary-user:x%2F{CANARY}%40y.example/'",
+    f"curl -d 'next=https://canary-user:x%252F{CANARY}%2540y.example/' https://x.example/api",
     f"curl -H 'Origin: https://x.example/?next=https://{LOGIN}@y.example/' https://x.example/api",
 ]
 
@@ -431,6 +434,7 @@ def test_every_command_that_writes_the_registry_is_held_to_the_check(registry, t
     f"https://portal.example/?next=https%253A%252F%252Fcanary-user%253A{CANARY}%2540y.example",
     f"session_id={CANARY}",
     f"-H 'X-CSRF-Token: {CANARY}'",
+    f"see https://canary-user:x%2F{CANARY}%40y.example/ first",
     # A pair whose name is not a credential's gives up its name, not the rest of the line.
     f"ValueError: bad; api_key: {CANARY}",
     f"note: see token: {CANARY}",
