@@ -35,11 +35,8 @@ verifier returns `superseded` for an older one when a newer one exists.
 - **Form 700s** (statements of economic interests).
 - **Campaign finance forms:** Form 460s, and the Form 497 and Form 496 late reports.
 - **Candidate statements:** one for the primary and another for the general (below).
-- **The state's codes, and its bills,** on the legislature's host (`leginfo.legislature.ca.gov`):
-  a code section changes with each amendment, and a bill with each amended version. The `ca`
-  list names the host under `legal_text`, so a citation there needs its effective date or
-  version in `date` (for a bill's status or vote, the date of the action), or `provenance
-  check-claim` fails it.
+- **The state's codes and bills:** see "The legislature's host" below, since what to cite there
+  is the version a claim is about, not always the newest.
 
 ## Portals that answer only through a bulk export or the pipeline's own query
 
@@ -162,7 +159,24 @@ tells you how the member voted) and the status page as the citation. Same patter
 campaign-finance database.
 
 Roll calls are the strongest evidence there is of a record, because they are what someone *did*
-rather than said. Do not skip them because the obvious page won't verify.
+rather than said. Do not skip them because the obvious page won't verify. Set the citation's
+`date` to the date of the vote (next section).
+
+## The legislature's host: every citation there carries its date or version
+
+The `ca` list names `leginfo.legislature.ca.gov` and `leginfo.ca.gov` under `legal_text`, so
+`provenance check-claim` fails any citation on either host without a `date`, or with a
+placeholder such as "current". What goes in `date` depends on what you cite:
+
+- **A code section:** the effective date or version of the text you quoted, from the section's
+  history note ("Amended by Stats. …, Ch. …, Sec. …, effective …"). A section changes with each
+  amendment, and an older version verifies exactly like the one in force, so cite the version
+  the claim is about: the one in force for a claim about the law as it stands, the one in force
+  then for a claim about the law at a stated time.
+- **A bill's text:** its version ("Amended in Assembly …", "Introduced …"). Each amendment is a
+  new version of the bill, and one vote was on one of them.
+- **A bill's status, a vote or an analysis:** the date of the action or analysis you cite. These
+  record an action, not a version of the law, so no newer version supersedes them.
 
 ## Candidate statements are a series too
 
