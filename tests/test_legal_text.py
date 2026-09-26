@@ -18,6 +18,7 @@ from provenance.fetch import cache_path
 from provenance.models import EXTRACTOR_VERSION, Claim, PageCache, Source
 from provenance.verify import missing_legal_version
 
+ROOT = Path(__file__).parents[1]
 SECTION = "https://codes.example.gov/title-4/section-120"
 SNIPPET = "no permit shall issue for a structure within the setback"
 
@@ -195,3 +196,19 @@ def test_check_claim_fails_legal_text_with_no_effective_date_or_version(tmp_path
     code, out = check("current through 2026-01-15")
     assert code == 0 and "All sources check out." in out, out
 
+
+def test_the_verifier_checks_the_version_and_reads_the_definitions():
+    """The half no check can do. Pinned, since it is prose an edit could drop."""
+    verifier = " ".join((ROOT / "agents" / "verifier.md").read_text().split())
+    assert "## For legal text, also judge the version, and read the definitions" in verifier
+    assert "**Check for a newer version.**" in verifier
+    assert "return `superseded` with the version you found" in verifier
+    assert ("a quote can match exactly and still mean something other than what the claim "
+            "says") in verifier
+    assert "open the section it points to before you return `supports`" in verifier
+    researcher = " ".join((ROOT / "agents" / "researcher.md").read_text().split())
+    assert "## Statutes, codes and regulations: cite the version" in researcher
+    assert "Set the source's `date` to that version's effective date" in researcher
+    assert "give a bill's version, or the date of the action or analysis you cite" in researcher
+    assert ("A bill's status or a vote on a legislature's host is dated too, but it records an "
+            "action, not a version of the law") in verifier

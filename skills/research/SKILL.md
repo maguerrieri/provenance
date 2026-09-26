@@ -139,7 +139,9 @@ Do not summarize the source rules for them — the agent definition carries them
    For periodic filings (disclosure forms, annual reports, and the series the brief's notes
    name), the verifier also checks the filer's index for a **newer** filing and returns
    `superseded` if one exists — a stale form verifies perfectly, so nothing mechanical can
-   catch it.
+   catch it. Statute, code and regulation text is a series the same way: the verifier checks
+   for a **newer version** than the one the citation's `date` names, and reads the definitions
+   a quoted term points to, since a quote can match exactly and still mean something else.
 
    **Never** route a claim to the same agent that authored it.
 3. **Retry loop.** Retry on the *verifier agent's* verdicts too, not only mechanical

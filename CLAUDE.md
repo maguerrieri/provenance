@@ -1331,6 +1331,45 @@ So the question is split three ways:
 The general shape: when a defect is invisible to the mechanical layer, don't stretch the
 mechanical layer. Give it to the judgment layer and make the precondition checkable.
 
+**Legal text is a series too (#41), split the same three ways.** A code section as it read
+before its last amendment is still served, on the same host, and verifies exactly like the one
+in force. So:
+- `researcher.md` says to cite the version the claim is about and to set `date` to its effective
+  date or version ("operative …", "as amended by …", "current through …").
+- `missing_legal_version()` is the checkable precondition: `check-claim` fails a citation on a
+  legal-text host with no `date`, as `missing_filing_date()` fails an undated filing. Both read
+  a placeholder (`n/a`, `unknown`, `-`) as no date, as `check_source_class()` reads an author of
+  `staff` as no author. Only `check-claim` enforces either (#183).
+- `verifier.md` checks for a newer version (`superseded`), and reads the definitions a quote's
+  terms point to. Statutes define terms by reference to other sections, so a quote can match
+  exactly and still mean something else. That is judgment, not matching.
+
+The rule is per host, and a legislature's host serves bills, votes and analyses beside its
+codes. Those are dated too, so the rule covers them, and the message and both agents say what
+the date is there: a bill's version, or the date of the action or analysis cited. The verifier
+is told that such a record is not a version of the law, so it doesn't look for a newer one.
+
+Three choices worth keeping:
+- **The hosts are source-list data, not code.** `legal_text` in a `<region>-sources.yaml` is not
+  a class: a host there keeps whatever class another key gives it, and a code publisher serving
+  many jurisdictions is listed there without becoming `primary_document` (#40). The offices that
+  compile a code are listed as `primary_document` too, so citing their text needs no
+  `secondary_host_ack`. Nothing in the core may name a jurisdiction's legal hosts.
+  `FILING_HOSTS` predates this and is still a constant in `verify.py` (#180).
+- **A list that can't be read as intended is refused, not read past**, and each way of reading
+  past fails open: a misspelled key lists no host; a repeated key (PyYAML keeps the last)
+  drops the first block's hosts; a bare host without its `-` is iterated one letter at a time;
+  and a host with a scheme, path, port or `www.` matches no URL `domain()` returns.
+  `load_rules()` raises a ValueError naming the list, and `project.load()` reads the project's
+  lists, so every command reports it as a problem with the project and not as a traceback.
+- **The version rides in `date`, not a new field.** `date` already reaches every place a version
+  has to: the hand-off (so the verifier sees which version was cited, and the context token
+  moves when it changes), the review fingerprint, and the review page. A new field would have to
+  be threaded through each, and one it missed would be a version nobody judged. A recorded
+  verdict does not cover `date`, for filings as for legal text: a version changed under a kept
+  quote and answer is caught by the token while a verdict is outstanding, not after one is
+  recorded (#181).
+
 ## Unreachable source → silent substitution. Make the substitution loud.
 
 The general failure: a researcher cannot reach the authoritative record, quietly cites
