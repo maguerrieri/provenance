@@ -778,7 +778,8 @@ def test_the_briefs_standard_output_is_the_brief_alone(tmp_path, monkeypatch):
     run though the working directory is a subject's, that a character is shown as an escape)
     goes to standard error, never into the paste."""
     monkeypatch.setattr(cli, "_noted_defaults", set())
-    root = write_project(tmp_path / "data", subjects=["lind"], context="Minutes\xadonline.\n")
+    root = write_project(tmp_path / "data", subjects=["lind"], context="Minutes\xadonline.\n",
+                         sources=("us",))
     (root / "lind").mkdir()
     here = Path.cwd()
     os.chdir(root / "lind")
@@ -827,7 +828,7 @@ def test_the_completeness_check_never_reaches_a_researcher(tmp_path):
     # Built from the fields a researcher may read, by name: a field of the project that isn't
     # one of them never reaches a brief, whatever it holds.
     import dataclasses
-    readable = {"title", "context", "subjects"}
+    readable = {"title", "context", "subjects", "sources"}
     for f in dataclasses.fields(project.Project):
         if f.name in readable or f.type not in ("str",):
             continue

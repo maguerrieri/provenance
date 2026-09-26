@@ -31,7 +31,7 @@ from .models import (
     strip_machine_fields,
 )
 from .report import clear_render, render, store_id
-from .sources import domain, load_rules
+from .sources import domain, load_rules, notes
 from .terminal import printable as _printable
 from .verify import (
     GOOD,
@@ -491,11 +491,12 @@ def races():
 
 @app.command()
 def brief(data: Path = None, project: Path = None, subject: str = None):
-    """Print what every researcher on the run is told: its subject and the project's context.
+    """Print what every researcher and verifier on the run is told: its subject, the project's
+    context, and the notes that ship with the project's source lists.
 
-    Paste it into each researcher's prompt verbatim. It never holds the project's completeness
-    check: those are the answers already known, and a researcher told what it is looking for
-    confirms that instead of searching, so nothing off the list ever surfaces."""
+    Paste it into each researcher's and verifier's prompt verbatim. It never holds the project's
+    completeness check: those are the answers already known, and a researcher told what it is
+    looking for confirms that instead of searching, so nothing off the list ever surfaces."""
     p, run = _project(data, project, subject=subject, for_run=False)
     # Standard output is the brief and nothing else, since it is pasted whole: the notes about
     # it (which run it is, what was escaped) go to standard error.
@@ -505,14 +506,19 @@ def brief(data: Path = None, project: Path = None, subject: str = None):
 
 
 def researcher_brief(p: proj.Project, subject: str | None) -> str:
-    """The text `provenance brief` prints: the one place a researcher's context is put together.
-    Built from the fields a researcher may read, by name, so nothing added to the project file
-    later reaches a prompt without someone adding it here."""
+    """The text `provenance brief` prints: the one place a researcher's context is put together,
+    and a verifier's. Built from the fields a researcher may read, by name, so nothing added to
+    the project file later reaches a prompt without someone adding it here. After the project's
+    own context come the notes of each source list it names (`sources.notes()`): the tool's
+    text, never the project's, headed as such."""
     lines = [f"Project: {p.title}"]
     if subject is not None and (s := p.subject(subject)) is not None:
         lines.append(f"Subject: {s.name}")
     if p.context.strip():
         lines += ["", p.context.strip()]
+    for name, text in notes(p.sources):
+        lines += ["", f"Notes that ship with the `{name}` source list (the tool's, not this "
+                      "project's):", "", text]
     return "\n".join(lines)
 
 
