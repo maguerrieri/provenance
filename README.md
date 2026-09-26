@@ -11,10 +11,10 @@ Agents find sources and make judgment calls. Deterministic code decides whether 
 
 ## Status
 
-Imported from the private project where it was built, and still shaped by it: the package is
-`provenance`, the command is `provenance`, and research is organized as voter-guide races. The rename and the
-generalization are tracked as epics in this repo's issues. The tool ships with no race file: add
-one (see [Adding a race](#adding-a-race)) before `provenance verify` or `provenance build`.
+Imported from the private project where it was built, and still shaped by it: research is
+organized as voter-guide races. The generalization is tracked as an epic in this repo's issues.
+The tool ships with no race file: add one (see [Adding a race](#adding-a-race)) before
+`provenance verify` or `provenance build`.
 
 Citation verification pipeline for voter guides. Nothing race-specific lives in the pipeline
 itself: each race is one file in `races/`.
@@ -25,12 +25,33 @@ the dominant failure mode of LLM research, so the mechanical checks — *is this
 literally on that page, exactly once?* — are deterministic Python. Models find sources and
 judge whether context supports a claim. Models never set a verification status.
 
+### Renamed from `vgpipe`
+
+The package was `vgpipe` and the command `vg`. Both are now `provenance`: `uv run vg verify` is
+`uv run provenance verify`, and so on for every command.
+
+A run verified before the rename still holds the reasons `vg verify` wrote into its claim files,
+and some of them tell you or a researcher to run a `vg` command. Run `uv run provenance verify`
+on it once to rewrite them.
+
+Two things keep the old name on purpose:
+
+- **Review progress.** The review page stores your checks under a key that starts with `vgpipe:`,
+  so checks made before the rename carry over.
+- **Undoing an interrupted `vg remap`.** The rollback runs from a checkout from before the
+  rename, so the message that sends you there names its commands as `vg`, the command that
+  checkout has.
+
 ## Quick start
 
+Install from a clone and run the command, `provenance`, from it with `uv run`.
+
 ```bash
+git clone https://github.com/maguerrieri/provenance.git
+cd provenance
 uv sync
-uv run provenance races                                                            # what's defined
-uv run provenance check "https://example.org/article" "a short verbatim snippet"   # ad-hoc
+uv run provenance races                                                          # what's defined
+uv run provenance check "https://example.org/article" "a short verbatim snippet" # ad-hoc
 uv run provenance verify        # deterministic checks over data/claims/*.json
 uv run provenance archive       # web.archive.org snapshots
 uv run provenance build         # conflicts + render the review app
@@ -79,7 +100,7 @@ Question ids (`q1`, `q2a`) are **stable and never reused**. They name each quest
 verdict files, so a split or reworded question gets a new id and the old id is retired. To
 retire one, move its claim out of `claims/` (to `claims-archive/`) and its verdict shard out of
 `judgments/` (to `judgments-archive/`), and point any `derives_from` that names it at the new id. Nothing re-files a claim
-onto another id: `provenance remap`, which used to, is retired. `provenance build` and `provenance status` are the rule's
+onto another id: `vg remap`, which used to, is retired. `provenance build` and `provenance status` are the rule's
 gate: a claim whose id `questions.json` no longer lists, or whose question differs from the one
 its id names, is left out of the review app, and the command exits 1.
 
