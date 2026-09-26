@@ -8,6 +8,7 @@ import shlex
 import sys
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Annotated, NoReturn
 
@@ -54,6 +55,22 @@ app = typer.Typer(add_completion=False, help="Voter guide research pipeline")
 # No emoji: escape() leaves ":ok:" alone, so claim text, notes and filer names would print with
 # a shortcode turned into an emoji. Nothing the code itself prints uses one.
 con = Console(emoji=False)
+
+
+def _print_version(value: bool) -> None:
+    # The plugin's skill checks this before a run: its agents name the commands and flags of
+    # one version, and pyproject's version is the plugin's (tests/test_plugin.py holds them
+    # equal).
+    if value:
+        typer.echo(f"provenance {package_version('provenance')}")
+        raise typer.Exit()
+
+
+@app.callback()
+def _main(version: Annotated[bool, typer.Option(
+        "--version", callback=_print_version, is_eager=True,
+        help="Print the installed version and exit.")] = False) -> None:
+    pass
 
 
 def qid_sort_key(qid: str) -> tuple:
