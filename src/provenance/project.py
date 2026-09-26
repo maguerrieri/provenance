@@ -134,10 +134,12 @@ def load(root: Path) -> Project:
         problems.append("`cache` must name the directory that holds the shared cache/ "
                         "(\".\" for one beside this file)")
     elif (cache_path := _path(root, cache, "cache", problems)) is not None:
-        if bad := next((p for p in (cache_path, cache_path / "cache")
+        if bad := next((p for p in (cache_path / "cache", cache_path, *cache_path.parents)
                         if os.path.lexists(p) and not p.is_dir()), None):
-            # A file where the cache goes: the first fetch would fail creating cache/pages under
-            # it, with an OSError naming neither the project file nor the key.
+            # A file anywhere on the way to cache/pages, the declared directory, its cache/ or
+            # a directory above it: the first fetch would fail creating cache/pages, with an
+            # OSError naming neither the project file nor the key. Every part that exists has
+            # to be a directory; one not created yet is fine.
             problems.append(f"`cache` needs {bad} to be a directory, and it is a file")
         elif any((cache_path / d).is_dir() for d in ("pages", "calaccess")):
             # As --cache: it names the directory that HOLDS cache/, and pointed at cache/ itself a
@@ -261,13 +263,23 @@ def _raw_subjects(root: Path) -> list:
     return subjects if isinstance(subjects, list) else []
 
 
+def _reached_from_inside(root_real: Path, run: Path) -> bool:
+    """Whether the walk from `run` (`find()`, on the path as given) finds the project whose
+    resolved root is `root_real`. A run is named by its path in the project: a path matched only
+    by where it resolves would take an outside alias of a subject for that subject."""
+    found = find(run)
+    return found is not None and _real(found) == root_real
+
+
 def lists_run(root: Path, run: Path) -> bool:
-    """Whether `run` is `root` or a subject root's project file lists, for a project file
-    `load()` refuses: as far as that file can say, it is one of the project's runs. A file that
-    can't be parsed at all lists only its root. A run that can't be resolved is none."""
-    if (at := _real(run)) is None:
+    """Whether `run` is one of the runs of the project in `root`, for a project file `load()`
+    refuses, as far as that file can say: reached from inside the project, as `resolve()`
+    requires of every run, and the root or a subject the file lists. A file that can't be
+    parsed at all lists only its root. A run that can't be resolved is none."""
+    at, root_real = _real(run), _real(root)
+    if at is None or root_real is None or not _reached_from_inside(root_real, run):
         return False
-    return at == _real(root) or _subject_at(root, _raw_subjects(root), at) is not None
+    return at == root_real or _subject_at(root, _raw_subjects(root), at) is not None
 
 
 def _declared_by_parent(root: Path) -> Path | None:
@@ -320,7 +332,7 @@ def resolve(run: Path | None, project: Path | None,
         return p, p.root
     if (at := _real(run)) is None:
         raise ProjectError(f"{run} can't be resolved (a symlink loop), so it is no run")
-    if project is not None and ((found := find(run)) is None or _real(found) != p.root):
+    if not _reached_from_inside(p.root, run):
         # Without --project the walk from the run found this project, so it holds already.
         # With it, a run matched only by where it resolves would take an outside alias of a
         # subject as that subject, where the walk from the alias finds no project, or another.

@@ -184,13 +184,15 @@ def test_a_tilde_naming_no_user_is_refused_by_key(tmp_path):
     assert "`race` is '~no-such-user-here/race.md', whose ~ names no user" in str(e.value)
 
 
-@pytest.mark.parametrize("where", ["the directory named", "its cache/"])
+@pytest.mark.parametrize("where", ["the directory named", "its cache/", "a directory above it"])
 def test_a_file_where_the_cache_goes_is_refused(tmp_path, where):
     """The first fetch would fail creating cache/pages under it, with an error naming neither
     the project file nor the key. A directory not created yet is fine."""
-    write_project(tmp_path, cache="store")
-    assert project.load(tmp_path).cache == (tmp_path / "store").resolve()
-    bad = tmp_path / "store" if where == "the directory named" else tmp_path / "store" / "cache"
+    write_project(tmp_path, cache="above/store")
+    assert project.load(tmp_path).cache == (tmp_path / "above" / "store").resolve()
+    bad = {"the directory named": tmp_path / "above" / "store",
+           "its cache/": tmp_path / "above" / "store" / "cache",
+           "a directory above it": tmp_path / "above"}[where]
     bad.parent.mkdir(parents=True, exist_ok=True)
     bad.write_text("")
     with pytest.raises(project.ProjectError) as e:
@@ -455,7 +457,10 @@ def test_a_subject_that_is_a_symlink_finds_the_project_it_is_declared_in(tmp_pat
     for outside in (alias, real):
         with pytest.raises(project.ProjectError, match="only through a symlink from outside"):
             project.resolve(outside, root)
+        # and, for a build under a project file it can't load, no run whose render to clear
+        assert not project.lists_run(root, outside)
     assert project.resolve(root / "ng", root)[1] == root / "ng"
+    assert project.lists_run(root, root / "ng") and project.lists_run(root, root)
 
     # Named by the project's name for it, not its directory's: the command a refusal gives must
     # name a subject the project has. Here its real directory is "ng-2030".
