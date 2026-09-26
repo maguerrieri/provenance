@@ -484,6 +484,20 @@ def test_a_new_directory_made_meanwhile_is_refused_not_written_into(tmp_path, mo
     assert sorted(p.name for p in (tmp_path / "p").iterdir()) == ["claims"]
 
 
+def test_a_crlf_template_is_copied_as_given_and_a_retry_finds_it_the_same(tmp_path,
+                                                                          monkeypatch):
+    """Read as text, CRLF came back as LF, so the copy differed from --from, and after an
+    interrupted run the retry refused its own template as not the one given."""
+    t = tmp_path / "tpl.md"
+    t.write_bytes(b"# Questions\r\n\r\n1. What does the record show?\r\n")
+    root = tmp_path / "p"
+    args = ("new", root, "--from", t, "--source", "us")
+    _interrupted_at_the_project_file(monkeypatch, *args)
+    assert (root / "template.md").read_bytes() == t.read_bytes()
+    code, out = _provenance(*args)
+    assert code == 0 and "already there" in out, out
+
+
 def test_an_interrupted_ask_leaves_no_project_and_says_so(tmp_path, home, monkeypatch):
     root = tmp_path / "q"
     args = ("ask", QUESTION, "--source", "us", "--dir", root)
