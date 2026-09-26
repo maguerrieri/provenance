@@ -444,6 +444,18 @@ def test_agent_written_claims_and_verdicts_print_through_printable(tmp_path):
     assert code == 0 and f"verified Gazette{SHOWN}: " in out, out
 
 
+def test_an_unattributed_citation_names_its_arguer_through_printable(tmp_path):
+    """The refusal quotes the publisher and the names the answer could take, both
+    agent-written. Inside each name, since a name is taken stripped, and U+2028 strips. And
+    as written, brackets included: split across the two names, `[/` and `x]` would close a tag."""
+    s = _source(source_type="opinion", publisher=f"Ex{CTRL}Gazette x]",
+                author=f"A.{CTRL}Writer [/")
+    cand = _run(tmp_path, s)
+    code, out = _provenance("check-claim", cand / "claims" / "q1.json", "--data", cand)
+    assert code == 1 and f"not attributed opinion Ex{SHOWN}Gazette x]: " in out, out
+    assert f"'A.{SHOWN}Writer [/' or 'Ex{SHOWN}Gazette x]'" in out, out
+
+
 def test_a_shard_or_claim_file_named_with_control_characters_prints_as_an_escape(tmp_path):
     """File names come from a listing, not from the schema: a shard no claim has is named by its
     file name, and so is a claim file that duplicates another."""
