@@ -116,3 +116,34 @@ def test_nothing_a_user_or_agent_reads_says_uv_run_provenance():
             if p.is_file() and "__pycache__" not in p.parts
             and "uv run provenance" in p.read_text(errors="replace")]
     assert not said, said
+
+
+# Terms of the one domain the tool has shipped with: its jurisdiction's portals and outlets,
+# its campaign-finance export and its election records.
+DOMAIN = ("CAL-ACCESS", "calaccess", "FPPC", "Form 700", "form700", "Form 460", "Form 496",
+          "Form 497", "leginfo", "California", "CalMatters", "Ballotpedia", "candidate",
+          "election")
+
+
+def test_the_core_skill_and_agents_carry_no_domain_content():
+    """Which filings come in series, which portals answer only through a bulk export, one
+    state's campaign-finance export: that ships beside its source list (`<name>-notes.md`) and
+    reaches researchers and verifiers through `provenance brief`, so a project that doesn't name
+    the list never reads it (#11). One of its terms back in the skill or an agent is domain
+    content in the core."""
+    for path in [*SKILLS, *AGENTS]:
+        text = path.read_text().lower()
+        found = [t for t in DOMAIN if t.lower() in text]
+        assert not found, f"{path.relative_to(ROOT)} names {found}: put it in a list's notes"
+
+
+def test_the_skill_hands_the_brief_to_researchers_and_verifiers():
+    """The brief is the one channel the notes travel by, so a verifier without it judges a
+    series filing without being told the series exists."""
+    [skill] = [p for p in SKILLS if p.parent.name == "research"]
+    text = " ".join(skill.read_text().split())
+    assert "paste its output verbatim into every researcher and verifier prompt" in text
+    assert "Give it the run's brief, verbatim, as for a researcher" in text
+    for path in AGENTS:
+        assert "notes that ship with the project's source lists" in " ".join(
+            path.read_text().split()), f"{path.relative_to(ROOT)} is not told its brief has notes"
