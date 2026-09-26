@@ -304,8 +304,13 @@ everywhere — lead-generators (Ballotpedia, Wikipedia) and excluded AI aggregat
 Regional lists (`ca-sources.yaml`, and any county or city list added to the tool) hold local outlets and
 primary-document hosts. Lists merge, most-restrictive category wins, and unlisted domains
 still pass if they carry a named or institutional author — so an unlisted local paper
-degrades gracefully instead of being rejected. A list also names, under `legal_text`, the hosts
-that publish the text of law (statutes, codes, regulations), whatever their class. Legal text is
+degrades gracefully instead of being rejected. Passing is not counting as reporting, though:
+each citation's tier comes from its own `source_type` (primary text, official analysis,
+reporting, opinion, advocacy), and reporting on a host no list names as a news outlet is an
+unlisted outlet. Opinion, advocacy and an unlisted outlet support only "X argues Y": the answer
+must name the source's author or publisher, and together they count as one source toward
+corroboration. A list also names, under `legal_text`, the hosts that publish the text of law
+(statutes, codes, regulations), whatever their class. Legal text is
 a series, so `provenance check-claim` fails a citation on one of them that doesn't give the
 effective date or version it quotes in `date` (a placeholder such as `n/a` or `current` gives
 none). A list that isn't exactly these keys, each a list of bare host names (`example.gov`: no

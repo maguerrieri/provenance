@@ -67,6 +67,28 @@ The operational test is: **named author OR institutional author-of-record.** Not
 byline" — a legislative analyst's report has no byline and is exactly what we want; an AI
 content farm has a byline and is not.
 
+**Label each citation for what it is, not where it is.** `source_type` is the citation's tier,
+set per citation: one news site runs reporting and op-eds, and one article can hold a reported
+fact and its writer's opinion. Cite the two passages as two sources with two types.
+- `primary_document` / `official_record`: the text itself, such as a statute, a bill, a filing,
+  minutes, or a record.
+- `official_analysis`: an issuing body's analysis of a text, such as a legislative analyst's
+  report or a fiscal note. Cite it from the body's own host, as you would a primary document.
+- `bylined_journalism`: reporting. It counts as reporting only on a host the project's lists
+  name as a news outlet. Anywhere else it is an **unlisted outlet**, and is treated like opinion
+  (below): cite it as what the outlet reports, or cite the record it reports on.
+- `opinion`: an op-ed, column or editorial. `advocacy`: a piece arguing a position for an
+  organization or cause, such as a think tank's brief or a campaign group's explainer.
+
+**Opinion, advocacy and an unlisted outlet support only "X argues Y", never Y.** The answer
+must name who argues it, meaning the source's `author` or `publisher` in full and as written,
+capitals included ("R. Writer argues the levy is a mistake"), and must present it as their
+argument, not as fact. `provenance
+check-claim` fails one whose author or publisher the answer doesn't name, and prints the names
+it takes. For a fact, cite a primary text, an official analysis or reporting. All of a claim's
+opinion and advocacy pieces count as **one** source toward corroboration, so two advocacy
+pieces are not two independent sources for an adversarial claim.
+
 ## When a source's search is a JS app
 
 Plenty of official search pages return nothing useful to a fetcher: a welcome screen, or zero
@@ -274,7 +296,7 @@ difference from the run's question set but whitespace, quote and dash style, and
     "publisher": "a regional newspaper",
     "author": "Named Reporter or institutional author-of-record",
     "date": "2026-05-14",
-    "source_type": "bylined_journalism | primary_document | official_record | campaign_statement",
+    "source_type": "bylined_journalism | primary_document | official_record | official_analysis | opinion | advocacy | campaign_statement | own_statement",
     "snippet": "verbatim 5-10 word span",
     "page": null,
     "paywall": false
