@@ -1578,6 +1578,74 @@ short words, and a hex id is one long word, so both are described instead of rep
 The habit worth keeping: when a source looks browser-only, open dev tools and see what the
 UI is calling. The FPPC portal is JS; its data is a cookieless JSON POST.
 
+## A citation's tier is its own, and the host can only lower it
+
+What a citation can carry depends on what it is: primary text (a statute, a filing, a record),
+an official analysis of one, reporting, opinion, or advocacy. The host list can't say which. One
+news site runs reporting and op-eds, and one article holds reported fact beside its writer's
+opinion. So the tier is read per citation, from its `source_type`, by `sources.tier()`, and the
+host list only lowers it:
+- **Reporting counts only on a listed news host.** Reporting on a host no source list names under
+  `bylined_journalism` is an `unlisted_outlet`. Unlisted hosts used to pass as journalism when
+  they named an author, which let an advocacy site with a byline read as a newspaper.
+- **An official analysis cited from anywhere but an issuing authority's host is a copy.**
+  `secondary_host()` covers it, as it covers a primary document. Otherwise the label alone would
+  let an advocacy site's "analysis" carry a bare fact.
+- A label can lower a tier but never raise one. It can say a page on a news host is opinion, but
+  only a source-list entry, a reviewed change, can say a page on an unlisted host is reporting.
+  This is "Agent-supplied input can refuse, never grant", applied to the label. There is one
+  exception, and it predates tiers. A primary text or official analysis on a non-authority host
+  keeps its tier as a declared copy: `check-claim` wants a `secondary_host_ack`, and the review
+  page badges it. Build counts it whether or not it has the ack (#186).
+
+**Opinion, advocacy and an unlisted outlet support only "X argues Y"** (`sources.ARGUED`). Campaign
+material is limited to "the campaign says X" in the same way. The mechanical half is that the
+answer names X: the source's author or publisher, as whole words (`sources.attributes()`).
+Whitespace, quote and dash styles fold as a question's do, but case does not. A name is told
+from a word by its capitals: compared case-blind, a publisher called "The Record" was named by
+"the record shows", and "The Times" by "three times". Only whole names count, because a surname
+alone also names everyone else who has it, and a byline that names nobody ("Staff") never
+counts. The refusal lists the names it will take. Whether the answer then states the argument
+as the arguer's or as fact is judgment, so `verifier.md` asks the verifier to judge that, and a
+claim that states it as fact gets `topic_only`.
+- **`provenance check-claim` fails an unattributed one,** naming its tier and the names that
+  would attribute it. For an unlisted outlet it also says why the outlet is not reporting.
+- **`check_corroboration()` fails the claim's corroboration on one,** however many other sources
+  back it, so `provenance build` sends it to review as well. It is not simply left out of the
+  count: if it were, a report backing half the answer would render the whole answer green, the
+  bare opinion included. A source the verifier rejected is not evidence at all, so it holds
+  nothing. The note names every problem the claim has, not only this one, so a retry that fixes
+  the attribution does not find the document count short a round later.
+- **All of a claim's argued documents count as one.** Two advocacy pieces are each one side's
+  say-so, not two independent sources, so an adversarial claim needs a primary text, an analysis
+  or a report beside them. A page cited for fact and for opinion both is one document, and it
+  counts with the facts.
+
+`check_corroboration()` and `report.render()` take the project's lists as a required keyword,
+because a news citation's tier depends on them. If they defaulted to `us`, every regional outlet
+would read as unlisted: corroboration would fail toward review in silence, and the page would
+badge a row "unlisted outlet" beside a status that counted it as reporting. That is the
+wrong-default shape of `cache_root` (see "A verdict is about a source as cached at judgment
+time").
+
+What it costs: an unlisted local paper now has to be cited as what it reports ("the Example
+Gazette reports that ..."). If it does its own reporting, add it to a source list. That is a
+change to the tool, like any list entry.
+
+What is unchanged, and why:
+- **`campaign_statement` and `own_statement` keep their existing rules.** The host lists and
+  the researcher's instructions already limit them to "X says", so they get no answer check, and
+  corroboration counts them as before. Whether they should join the argued tiers is #184.
+- **The review page shows each row's tier and says what an argued row supports**, and
+  claims.json carries `tier`. The badge is derived from the host and the type, like the
+  secondary-host badge, and neither is in `review_fingerprint()` (#185).
+- **The other checks' `rules` still default to `us`** (#171). `check_corroboration()` is new to
+  taking them, and the tier made `render()`'s default wrong, so those two require them.
+- **An official analysis from an issuing body's own unlisted host reads as a copy**, as a primary
+  document does there (#179).
+- **A new `source_type` needs a tier.** `test_every_source_type_has_a_tier` fails until
+  `TIER_OF` classifies it, so adding one (#41 may) means deciding what it can carry.
+
 ## Don't proxy the property you actually care about
 
 `snippet_too_short` counted words, as a stand-in for "distinctive". It rejected a parcel

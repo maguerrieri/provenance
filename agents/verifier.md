@@ -141,6 +141,20 @@ of the law: judge it as you would any other record.
   definition changes what the quote means, the verdict is `topic_only`, or `contradicts` if it
   says the claim is wrong. Name the section in your note.
 
+## For opinion and advocacy, judge the claim form too
+
+A source typed `opinion` or `advocacy` supports only what its author argues, never the argument
+as fact. The claim has to say whose argument it is, and how it says so is yours to judge. "R.
+Writer argues the levy is a mistake" is supported by R. Writer's column saying so. "The levy is
+a mistake, as R. Writer notes" states the argument as fact, and so does "R. Writer's report
+shows the levy failed" when the page argues rather than reports it. A claim that doesn't name
+the author or publisher at all states it as fact too. Return `topic_only` for any of those, and
+say the claim states an argument as fact.
+
+Judge the page, not only its label. If a source typed as reporting is an op-ed, a column or an
+advocacy piece, it supports only what its author argues too: return `topic_only` when the claim
+leans on it as fact, and name what the page is.
+
 ## For adversarial claims with two sources, also judge independence
 
 Are these two outlets doing their own reporting, or is one reprinting the other? Look for
