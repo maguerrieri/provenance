@@ -539,6 +539,17 @@ def test_the_review_page_names_the_host_as_primary_hosts_would(tmp_path):
     assert f"<bdi>{host}</bdi>" in html
 
 
+def test_the_review_page_offers_primary_hosts_only_for_an_unclassed_host(tmp_path,
+                                                                        synthetic_lists):
+    """A news outlet can't be added to `primary_hosts`, so the page doesn't tell the reviewer
+    to, as check-claim doesn't tell the researcher."""
+    p = _load(tmp_path, "[]", ("xx",))
+    text = _row_text(tmp_path, _official("https://news.example.com/x"), p.rules())
+    assert ("Cited from news.example.com, which the project's source lists class as "
+            "bylined_journalism, so it is not the body that issues this record") in text, text
+    assert "primary_hosts" not in text, text
+
+
 def test_an_acknowledged_copy_is_still_badged_a_copy(tmp_path):
     p = _load(tmp_path, f'["{AUTHORITY}"]')
     text = _row_text(tmp_path, _official(MIRROR, secondary_host_ack="the portal is script-only"),

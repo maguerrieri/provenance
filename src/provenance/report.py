@@ -18,7 +18,7 @@ from markupsafe import Markup
 
 from . import queries
 from .models import QID_PATTERN, Claim, Source
-from .sources import ARGUED, TIER_LABEL, domain, tier
+from .sources import ARGUED, TIER_LABEL, classify, domain, tier
 from .verify import secondary_host, unacked_copy
 
 # Package data, so an installed copy (uv tool install) has it. files() gives a Path for a
@@ -216,6 +216,9 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "citation review"
                 badge_class=BADGE.get(s.verification.status, "bad"),
                 secondary=secondary, query_command=command,
                 acked=secondary and not unacked_copy(s, rules),
+                # What the lists class the host as: only an unclassed one can be added to
+                # `primary_hosts` (project.load() refuses the rest), as check-claim says too.
+                classed=classify(s.url, rules) if secondary else "",
                 # The host as primary_hosts names it (no port, no `www.`, no login), since the
                 # page tells the reviewer to add it there.
                 host=domain(s.url),

@@ -152,6 +152,10 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
       <bdi>{{ s.host }}</bdi>, which is not the body that issues this record.
       {{ s.secondary_host_ack }}
       Check this copy against the official version.</div>
+    {% elif s.secondary and s.classed != 'unknown' %}<div class="meta" style="color:var(--bad)">Cited from
+      <bdi>{{ s.host }}</bdi>, which the project's source lists class as {{ s.classed }}, so it is
+      not the body that issues this record, with no explanation. This is an unacknowledged copy:
+      check it against the official version.</div>
     {% elif s.secondary %}<div class="meta" style="color:var(--bad)">Cited from
       <bdi>{{ s.host }}</bdi>, which this project does not name as an issuing authority, with
       no explanation. If it is the body that issues this record, add it to the project's
