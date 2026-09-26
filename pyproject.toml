@@ -1,7 +1,7 @@
 [project]
 name = "provenance"
 version = "0.1.0"
-description = "Voter guide research pipeline: cited-claim verification + local review app"
+description = "Cited-research pipeline: machine-checked citations + a local review app"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

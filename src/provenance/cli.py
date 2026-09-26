@@ -1,4 +1,4 @@
-"""provenance — voter guide pipeline CLI."""
+"""provenance — cited-research pipeline CLI."""
 
 from __future__ import annotations
 
@@ -31,9 +31,7 @@ from .models import (
     check_archive_url,
     strip_machine_fields,
 )
-from .races import Race
-from .races import load as load_race
-from .report import clear_render, render
+from .report import clear_render, render, store_id
 from .sources import domain, load_rules
 from .terminal import printable as _printable
 from .verify import (
@@ -53,7 +51,7 @@ from .verify import (
     verify_source,
 )
 
-app = typer.Typer(add_completion=False, help="Voter guide research pipeline")
+app = typer.Typer(add_completion=False, help="Cited-research pipeline")
 # No emoji: escape() leaves ":ok:" alone, so claim text, notes and filer names would print with
 # a shortcode turned into an emoji. Nothing the code itself prints uses one.
 con = Console(emoji=False)
@@ -128,20 +126,22 @@ _warned_strays: set[Path] = set()   # run dirs whose stray cache/ was already re
 _noted_defaults: set[Path] = set()  # subject dirs the root run was defaulted from, already said
 
 
-def _project(data: Path | None, project: Path | None, *,
-             for_run: bool = True) -> tuple[proj.Project, Path]:
-    """The project and the run a command's `--data` and `--project` name, or a refusal.
+def _project(data: Path | None, project: Path | None, *, for_run: bool = True,
+             subject: str | None = None) -> tuple[proj.Project, Path]:
+    """The project and the run a command's `--data`, `--subject` and `--project` name, or a
+    refusal.
 
     `project.resolve()` is the one rule: the project `--project` names, else the nearest
     provenance.toml at or above the run (`--data`, else the working directory); and the run is
-    the project root or a subject the project declares. With no `--data` the run is the root,
-    even from inside a subject's directory, so a command that works on the run (`for_run`)
-    says so there: `cd` into a subject and run a command, and it was the root's run."""
+    the project root or a subject the project declares, named by its directory (`--data`) or
+    its id (`--subject`). With neither, the run is the root, even from inside a subject's
+    directory, so a command that works on the run (`for_run`) says so there: `cd` into a
+    subject and run a command, and it was the root's run."""
     try:
-        p, run = proj.resolve(data, project)
+        p, run = proj.resolve(data, project, subject=subject)
     except proj.ProjectError as e:
         _refuse(str(e))
-    if for_run and data is None:
+    if for_run and data is None and subject is None:
         _note_root_run(p)
     return p, run
 
@@ -151,14 +151,14 @@ def _note_root_run(p: proj.Project) -> None:
     subject is named by the path the project declares it at, which a symlinked subject's real
     directory is not: `--data` naming that would find no project above it."""
     here = Path.cwd().resolve()
-    for s in p.subjects:
+    for s in p.subject_ids:
         d = p.subject_dir(s)
         real = d.resolve()
         if (here == real or real in here.parents) and real not in _noted_defaults:
             _noted_defaults.add(real)
             con.print("[yellow]" + escape(_printable(
                 f"this is the project root's run, not {s}'s, though the working directory "
-                f"is inside {d}: pass --data {shlex.quote(str(d))} for {s}'s")) + "[/]")
+                f"is inside {d}: pass --subject {s} for {s}'s")) + "[/]")
 
 
 def _clear_render_or_exit(out: Path) -> None:
@@ -172,16 +172,6 @@ def _clear_render_or_exit(out: Path) -> None:
                   + ". Remove it by hand: `provenance serve` must not show a render this build did not "
                   "produce.[/]")
         raise typer.Exit(1) from None
-
-
-def _race(p: proj.Project) -> Race:
-    """The race the project names, or a refusal saying what is wrong with it."""
-    if p.race is None:
-        _refuse(f"{p.file} names no race file: add race = \"<path>\", relative to it")
-    try:
-        return load_race(p.race)
-    except (OSError, ValueError, TypeError, yaml.YAMLError) as e:
-        _refuse(str(e))
 
 
 # Each subject gets its own run (`<project>/<subject>`) so their claims, retries and review
@@ -214,7 +204,7 @@ def _cache_root(data: Path | None, cache: Path | None, project: Path | None = No
     stray `./cache/` at the repo root silently redirected the whole pipeline to a root with no
     CAL-ACCESS database, and 14 query citations failed with "not found" on a file that plainly
     existed. Then from whether the parent held a question set, which still could not tell a
-    self-contained root nested in another from a candidate of it, or a candidate scaffolded
+    self-contained root nested in another from a subject of it, or a subject scaffolded
     before its parent had a question set from a root. Now it is declared (`project.py`), and
     no directory that happens to exist changes the answer.
     """
@@ -222,8 +212,8 @@ def _cache_root(data: Path | None, cache: Path | None, project: Path | None = No
         return _explicit_cache(cache)
     p, run = resolved or _project(data, project, for_run=False)
     # A stray is never used, however it got there: an earlier rule ("the run's own cache wins
-    # if it exists") was self-fulfilling, so one fetch with --data data/<candidate> created
-    # data/<candidate>/cache, the stray became authoritative, and it hid the CAL-ACCESS
+    # if it exists") was self-fulfilling, so one fetch with --data data/<subject> created
+    # data/<subject>/cache, the stray became authoritative, and it hid the CAL-ACCESS
     # database, failing all 14 query citations at once. It is named, once per run in a process
     # (a warning repeated wherever the root is asked for scrolls away the output it annotates),
     # so someone moves what it holds.
@@ -489,20 +479,46 @@ def check(url: str, snippet: str, data: Path = None, cache: Path = None, refresh
 
 @app.command(hidden=True)
 def races():
-    """Retired: a project's race is the file its provenance.toml names."""
+    """Retired: a project's context is part of its provenance.toml."""
     # Hidden, and still answering, so an old habit learns why instead of meeting "No such
-    # command". There was a list because races lived in the tool; a race is project data.
-    con.print("[red]`provenance races` is retired:[/] a project's race is the file its "
-              "provenance.toml names (race = \"<path>\"), not one of a list kept in the tool.")
+    # command". There was a list because races lived in the tool; that context is project data.
+    con.print("[red]`provenance races` is retired:[/] a project's title, context and "
+              "completeness check are keys of its provenance.toml, not a file kept in the tool. "
+              "`provenance brief` prints what a researcher is told.")
     raise typer.Exit(1)
 
 
 @app.command()
+def brief(data: Path = None, project: Path = None, subject: str = None):
+    """Print what every researcher on the run is told: its subject and the project's context.
+
+    Paste it into each researcher's prompt verbatim. It never holds the project's completeness
+    check: those are the answers already known, and a researcher told what it is looking for
+    confirms that instead of searching, so nothing off the list ever surfaces."""
+    p, run = _project(data, project, subject=subject)
+    # Printed whole, as data: it is copied into a prompt, and a wrap or markup would change it.
+    con.print(Text(_printable(researcher_brief(p, p.subject_of(run)), lines=True)),
+              soft_wrap=True)
+
+
+def researcher_brief(p: proj.Project, subject: str | None) -> str:
+    """The text `provenance brief` prints: the one place a researcher's context is put together.
+    Built from the fields a researcher may read, by name, so nothing added to the project file
+    later reaches a prompt without someone adding it here."""
+    lines = [f"Project: {p.title}"]
+    if subject is not None and (s := p.subject(subject)) is not None:
+        lines.append(f"Subject: {s.name}")
+    if p.context.strip():
+        lines += ["", p.context.strip()]
+    return "\n".join(lines) + "\n"
+
+
+@app.command()
 def verify(data: Path = None, cache: Path = None, refresh: bool = False, qid: str = "",
-           project: Path = None):
+           project: Path = None, subject: str = None):
     """Run deterministic verification over all claims."""
     _explicit_cache(cache)
-    p, data = _project(data, project)
+    p, data = _project(data, project, subject=subject)
     cache_root = _cache_root(data, cache, resolved=(p, data))
     rules = load_rules(p.sources)
     claims_dir = data / "claims"
@@ -600,10 +616,11 @@ def _report_older_exports(claims: list[Claim], cache_root: Path,
 
 
 @app.command()
-def archive(data: Path = None, cache: Path = None, delay: float = 3.0, project: Path = None):
+def archive(data: Path = None, cache: Path = None, delay: float = 3.0, project: Path = None,
+            subject: str = None):
     """Snapshot every cited URL to web.archive.org."""
     _explicit_cache(cache)
-    p, data = _project(data, project)
+    p, data = _project(data, project, subject=subject)
     claims_dir = data / "claims"
     # Trusted only to carry existing verification statuses through. No archive field is read
     # from a claim file even so: one may be agent-authored, and keeping it where Save Page Now
@@ -802,10 +819,10 @@ def _no_own_set(p: proj.Project, run: Path) -> str:
     subject = p.subject_of(run)
     if subject is None or questions.find(run) is not None:
         return ""
-    others = [p.root] + [p.subject_dir(s) for s in p.subjects if s != subject]
+    others = [p.root] + [p.subject_dir(s) for s in p.subject_ids if s != subject]
     if not any(questions.find(d) is not None for d in others):
         return ""
-    fix = (f"`provenance new-candidate {subject}` copies the project's, retargeted to it"
+    fix = (f"`provenance new-subject {subject}` copies the project's, retargeted to it"
            if questions.find(p.root) is not None else
            f"restore it: it is the set {subject}'s claims were researched against")
     return (f"{run} is {subject}'s run and has no {questions.FILE} of its own, so no claim in it "
@@ -868,7 +885,7 @@ def _question_ids(data: Path, claims: list[Claim], p: proj.Project) -> set[str] 
                       f"claims-archive/ and its shard from judgments/ to judgments-archive/, "
                       f"and point any derives_from naming it at the new id. If the question "
                       f"is still asked, add it to {path}"))
-                  + " under that id: a candidate run's own copy is not updated when the template "
+                  + " under that id: a subject's own copy is not updated when the template "
                   "gains a question.[/]")
     if found.reworded:
         con.print(f"[red]{len(found.reworded)} claim(s) answer another question than {where} asks "
@@ -893,11 +910,9 @@ def _left_out(failing: set[str], where: str) -> None:
 
 
 @app.command()
-def build(data: Path = None, cache: Path = None, candidate: str = "", title: str = "",
-          project: Path = None):
+def build(data: Path = None, cache: Path = None, title: str = "", project: Path = None,
+          subject: str = None):
     """Detect conflicts and render the review app."""
-    from .races import candidate as find_candidate
-
     # The run's last render goes first, so that every way this build can stop short (a refusal
     # below, a crash, a kill) leaves no earlier render for `provenance serve` to show as if it
     # were this one. Only a run's, though: which directories are runs is the project file's to
@@ -906,22 +921,25 @@ def build(data: Path = None, cache: Path = None, candidate: str = "", title: str
     # run is cleared if it is the root, or a subject the file lists (`project.lists_run()`).
     given = data
     try:
-        p, data = proj.resolve(data, project)
+        p, data = proj.resolve(data, project, subject=subject)
     except proj.ProjectError as e:
         if isinstance(e, proj.UnreadableProject):
-            run = given if given is not None else e.root
+            run = (given if given is not None
+                   else e.root / subject if subject and re.fullmatch(proj.SUBJECT_PATTERN, subject)
+                   else e.root)
             if proj.lists_run(e.root, run):
                 _clear_render_or_exit(run / "out")
         _refuse(str(e))
-    if given is None:
+    if given is None and subject is None:
         _note_root_run(p)
     _clear_render_or_exit(data / "out")
     _explicit_cache(cache)
-    r = _race(p)
-    # The title also keys the review app's saved progress, so it must name the candidate:
-    # two candidates sharing a key would show each other's checkmarks.
+    # Titled by the run's subject, so two subjects' pages never read alike. The title is only
+    # what the page shows: its saved progress is keyed by the project and the subject
+    # (`report.store_id()`), which a --title can't change.
+    run_subject = p.subject(sid) if (sid := p.subject_of(data)) is not None else None
     if not title:
-        title = f"{find_candidate(r, candidate).name} — {r.title}" if candidate else r.title
+        title = f"{run_subject.name} — {p.title}" if run_subject else p.title
     cache_root = _verdict_cache_root(data, cache, resolved=(p, data))
     rules = load_rules(p.sources)
 
@@ -954,7 +972,8 @@ def build(data: Path = None, cache: Path = None, candidate: str = "", title: str
             con.print("[yellow]judgments are newer than the claim files: run `provenance verify` first, "
                       "or recent verdicts will render as unreviewed[/]")   # verdicts live outside the claim file; merge them in
     _report_older_exports(claims, cache_root, recorded)
-    html, js = render(claims, data / "out", title=title, cache_root=cache_root, rules=rules)
+    html, js = render(claims, data / "out", title=title, cache_root=cache_root, rules=rules,
+                      store=store_id(p.name, sid))
     con.print(f"[green]wrote[/] {escape(_printable(str(html)))}\n"
               f"[green]wrote[/] {escape(_printable(str(js)))}")
     if failing:
@@ -963,13 +982,13 @@ def build(data: Path = None, cache: Path = None, candidate: str = "", title: str
 
 @app.command()
 def serve(data: Path = None, port: int = 8765, open_browser: bool = True,
-          project: Path = None):
+          project: Path = None, subject: str = None):
     """Serve the review app on localhost (localStorage is unreliable on file:// origins)."""
     import functools
     import http.server
     import webbrowser
 
-    _, data = _project(data, project)
+    _, data = _project(data, project, subject=subject)
     out = (data / "out").resolve()
     if not (out / "review.html").exists():
         # A build removes the last render before it can refuse, so this is also what a refused
@@ -1493,7 +1512,8 @@ def _print_copied(text: str, limit: int | None = None) -> None:
 
 
 @app.command()
-def handoff(question_id: str, data: Path = None, cache: Path = None, project: Path = None):
+def handoff(question_id: str, data: Path = None, cache: Path = None, project: Path = None,
+            subject: str = None):
     """Print what a verifier judges for one claim: the claim, and each source's context with
     the context token `provenance judge --context` must hand back.
 
@@ -1504,7 +1524,7 @@ def handoff(question_id: str, data: Path = None, cache: Path = None, project: Pa
     """
     _qid_or_exit(question_id)
     _explicit_cache(cache)
-    p, data = _project(data, project)
+    p, data = _project(data, project, subject=subject)
     cache_root = _verdict_cache_root(data, cache, resolved=(p, data))
     claim, _ = _claim_or_exit(data, question_id, "so what it cites cannot be shown")
     _apply_archive_rows(data, claim.sources, cache_root)
@@ -1559,7 +1579,7 @@ def _print_handoff(h, run_args: str) -> None:
 
 @app.command()
 def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str = "",
-          data: Path = None, cache: Path = None, project: Path = None):
+          data: Path = None, cache: Path = None, project: Path = None, subject: str = None):
     """Record a verifier agent's verdict on one source.
 
     Judgments live in the run's judgments/, not in the claim file: `provenance verify` reloads claims with
@@ -1595,7 +1615,7 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
         # it refers to, so one call with two mistakes does not take two refusals to fix.
         _refuse(f"{verdict} is not a verdict: use one of {', '.join(judgments.VERDICTS)}")
     _explicit_cache(cache)
-    p, data = _project(data, project)
+    p, data = _project(data, project, subject=subject)
     cache_root = _verdict_cache_root(data, cache, resolved=(p, data))
     rules = load_rules(p.sources)
     claim, claims = _claim_or_exit(data, question_id,
@@ -1680,7 +1700,8 @@ def show_judgments(data: Path = None, question_id: str = "",
                    repair: Annotated[bool, _HIDDEN] = False, cache: Path = None,
                    rollback: Annotated[bool, _HIDDEN] = False,
                    moved: Annotated[list[str], _HIDDEN] = None,
-                   gone: Annotated[list[str], _HIDDEN] = None, project: Path = None):
+                   gone: Annotated[list[str], _HIDDEN] = None, project: Path = None,
+                   subject: str = None):
     """Show recorded verdicts, and which cited sources still need one."""
     from . import judgments
 
@@ -1696,7 +1717,7 @@ def show_judgments(data: Path = None, question_id: str = "",
         _retired(f"`provenance judgments {' '.join(given)}`")
 
     _explicit_cache(cache)
-    p, data = _project(data, project)
+    p, data = _project(data, project, subject=subject)
     cache_root = _verdict_cache_root(data, cache, resolved=(p, data))
     rules = load_rules(p.sources)
     skipped: list[str] = []
@@ -1880,7 +1901,8 @@ def _at_a_terminal() -> bool:
 
 
 @app.command(name="clear-contradiction")
-def clear_contradiction(question_id: str, sid: str, data: Path = None, project: Path = None):
+def clear_contradiction(question_id: str, sid: str, data: Path = None, project: Path = None,
+                        subject: str = None):
     """Clear, on the record, a contradicts verdict on a source its claim no longer cites.
 
     Such a verdict holds its claim in human_review, and `provenance build` lists it with the conflicts:
@@ -1899,7 +1921,7 @@ def clear_contradiction(question_id: str, sid: str, data: Path = None, project: 
         judgments.path_for(Path("."), question_id)   # asks only of the id
     except ValueError as e:
         refuse(escape(_printable(str(e), lines=True)))
-    _, data = _project(data, project)
+    _, data = _project(data, project, subject=subject)
     # The id was just checked; the source id is the argument as given.
     qid, s = escape(question_id), escape(_printable(sid))
 
@@ -2330,29 +2352,25 @@ def remap(data: Path = DATA):
     _retired("`provenance remap`")
 
 
-@app.command(name="new-candidate")
-def new_candidate(candidate: str, data: Path = None, questions: Path = None,
-                  project: Path = None):
-    """Scaffold <project>/<candidate>/ for a separate run.
+@app.command(name="new-subject")
+def new_subject(subject: str, data: Path = None, questions: Path = None,
+                project: Path = None):
+    """Scaffold <project>/<subject>/ for a separate run.
 
-    Each candidate is its own run: own claims, own retries, own review progress. Only the
-    page cache is shared (the project's `cache`), because the same filing or article routinely
-    covers more than one candidate. The candidate must be one of the project's `subjects`
-    already: this command writes the run, never the project file.
+    Each subject is its own run: own claims, own retries, own review progress. A subject need
+    not be a person: a proposal, a document, or one version of either. Only the page cache is
+    shared (the project's `cache`), because the same filing or article routinely covers more
+    than one subject. The subject must be one of the project's `subjects` already: this command
+    writes the run, never the project file.
     """
-    from .races import candidate as find_candidate
-
     p, _ = _project(data, project)
-    r = _race(p)
-    try:
-        c = find_candidate(r, candidate)
-    except ValueError as e:
-        _refuse(str(e))
-    if c.id not in p.subjects:
-        _refuse(f"{c.id} is not one of the project's subjects: add it to `subjects` in {p.file}, "
-                f"then run this again. Commands find a subject's run by that list, and no "
-                f"command edits the project file.")
-    root = p.subject_dir(c.id)
+    s = p.subject(subject)
+    if s is None:
+        _refuse(f"{subject} is not one of the project's subjects: add it to `subjects` in "
+                f"{p.file} as {{id = {json.dumps(subject)}, name = \"<what the questions call "
+                f"it>\"}}, then run this again. Commands find a subject's run by that list, and "
+                f"no command edits the project file.")
+    root = p.subject_dir(s.id)
     src_q = questions or (p.root / "questions.json")
     dest_q = root / "questions.json"
     if not dest_q.exists() and not src_q.exists():
@@ -2371,30 +2389,45 @@ def new_candidate(candidate: str, data: Path = None, questions: Path = None,
             q.pop("maps_from", None)
             q.pop("mapped_from", None)
             # The question set is written about a subject; retarget it rather than making
-            # the researcher infer who "the candidate" is.
-            for other in r.candidates:
-                if other.id != c.id:
-                    q["text"] = q["text"].replace(other.name, c.name)
-            q["subject"] = c.id
+            # the researcher infer which subject it is about.
+            for other in p.subjects:
+                if other.id != s.id:
+                    q["text"] = q["text"].replace(other.name, s.name)
+            q["subject"] = s.id
         dest_q.write_text(json.dumps(qs, indent=1))
         con.print("[green]wrote[/] "
-                  + escape(_printable(f"{dest_q} ({len(qs)} questions retargeted to {c.name})")))
+                  + escape(_printable(f"{dest_q} ({len(qs)} questions retargeted to {s.name})")))
     elif dest_q.exists():
         con.print(f"{escape(_printable(str(dest_q)))} already exists — left alone")
 
-    # Quoted for a shell, as every printed command is: the run is the project's absolute path
-    # now, where a space is far likelier than in the old relative data/<id>.
+    # Quoted for a shell, as every printed command is. They name the subject by id, and the
+    # project too where the working directory is not in it: --subject finds the project from
+    # there otherwise.
     at = _printable(str(root))
-    run, cid = _printable(shlex.quote(str(root))), _printable(shlex.quote(c.id))
+    here = proj.find(proj.working_dir())
+    where = ("" if here is not None and here.resolve() == p.root
+             else f" --project {shlex.quote(str(p.root))}")
+    sid = _printable(shlex.quote(s.id) + where)
     con.print("[green]ready[/] " + escape(f"{at}\n"
-                                          f"  provenance verify --data {run}\n"
-                                          f"  provenance build  --data {run} --candidate {cid}"))
+                                          f"  provenance verify --subject {sid}\n"
+                                          f"  provenance build  --subject {sid}"))
+
+
+@app.command(name="new-candidate", hidden=True,
+             context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def new_candidate():
+    """Retired: `provenance new-subject` scaffolds a subject's run."""
+    # Hidden, and still answering, so an old habit learns the new name instead of meeting "No
+    # such command". A subject need not be a person.
+    con.print("[red]`provenance new-candidate` is retired:[/] `provenance new-subject <id>` "
+              "scaffolds a subject's run, for a subject the project's provenance.toml lists.")
+    raise typer.Exit(1)
 
 
 @app.command()
-def status(data: Path = None, cache: Path = None, project: Path = None):
+def status(data: Path = None, cache: Path = None, project: Path = None, subject: str = None):
     """Summary of where the run stands."""
-    p, data = _project(data, project)
+    p, data = _project(data, project, subject=subject)
     claims = _load_or_exit(data / "claims", trust_machine_fields=True)
     # Even with no claims: a pending maps_from, or a question set nothing can read, is worth
     # settling before anyone researches on those ids.

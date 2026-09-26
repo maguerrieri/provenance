@@ -55,7 +55,7 @@ def find(data: Path) -> Path | None:
     """The run's own questions.json, or None when it has none.
 
     The project owns its question ids, and each run holds its set: the project root's is the
-    template, and a subject's is its own copy, retargeted to it (`provenance new-candidate`
+    template, and a subject's is its own copy, retargeted to it (`provenance new-subject`
     writes it). There is no fallback between them: a subject's run with no copy of its own
     used to read the template, which is worded for whichever subject it names, and nothing
     said the run was missing its set. A file that exists but can't be read is `load()`'s to

@@ -592,7 +592,7 @@ def _judged_page(cache_root: Path, url: str):
     # The one lookup both sides of a verdict go through: `judged_copy()` when it is recorded
     # and `is_stale()` when it is applied. They used to resolve their roots separately, and did so
     # differently — `provenance judge` stamped from the shared cache (data/cache) while the check looked
-    # under the candidate dir (data/<candidate>/cache), found no page, and so compared nothing and
+    # under the subject's dir (data/<subject>/cache), found no page, and so compared nothing and
     # passed the verdict.
     from .fetch import load_cached
 
@@ -930,7 +930,7 @@ def is_stale(j: "Judgment", cache_root: Path, source) -> str:
     """Why this verdict no longer describes the cached page, or "" if it still does.
 
     `cache_root` is the PAGE CACHE root (`_cache_root(data, cache)`), not the data dir the
-    verdicts live in: for a candidate run those differ, and checking the wrong one found no
+    verdicts live in: for a subject's run those differ, and checking the wrong one found no
     page and read as fresh.
 
     Every path that cannot make the comparison answers stale, not fresh: no cached page, an
@@ -1039,9 +1039,9 @@ def verdicts_for(claim, root: Path, judged: dict[str, Judgment] | None = None, *
 
     Pass `judged` to reuse a question's already-loaded verdicts.
 
-    `root` is where the verdicts live (the candidate's data dir); `cache_root` is where the
+    `root` is where the verdicts live (the subject's data dir); `cache_root` is where the
     pages they judged live. Required, and keyword-only, because defaulting it to `root` is
-    exactly the bug that hid every stale verdict in a candidate run.
+    exactly the bug that hid every stale verdict in a subject's run.
 
     A verdict is stale when it judged another question or answer (`_claim_stale()`, checked
     here because this is where the claim is in hand) or another copy of the page or query

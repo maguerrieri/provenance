@@ -47,7 +47,7 @@ def _source() -> Source:
 
 
 def _legacy_run(tmp_path):
-    """A candidate run whose files carry what `vg remap` wrote: `maps_from` and `mapped_from`
+    """A subject's run whose files carry what `vg remap` wrote: `maps_from` and `mapped_from`
     in the question template, `previous_question` in the claim. The cited page is cached, so
     everything below runs offline."""
     data = write_project(tmp_path / "data", subjects=["cand", "ng"])
@@ -93,7 +93,7 @@ def test_files_carrying_remaps_fields_still_load_and_build(tmp_path):
     assert built["sources"][0]["verification"]["support"] == "supports"
 
     # A new run copies neither half of a migration: it has no earlier id space.
-    code, out = _provenance("new-candidate", "ng", "--data", data)
+    code, out = _provenance("new-subject", "ng", "--data", data)
     assert code == 0, out
     copied = json.loads((data / "ng" / "questions.json").read_text())
     assert [q["id"] for q in copied] == ["q1", "q2"]

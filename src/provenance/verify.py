@@ -994,7 +994,7 @@ def check_inputs(claims: list[Claim]) -> list[list[str]]:
     """Mark any claim whose declared inputs are not themselves verified. Returns the
     `derives_from` cycles found, as lists of question ids, so the caller can report them.
 
-    A comparison inherits the weakness of what it compares. If the candidate's housing
+    A comparison inherits the weakness of what it compares. If the subject's housing
     position is `human_review`, then "their housing position falls short of the platform" is
     not verified either — no matter how well the platform's own text is cited. This is a
     cheap mechanical check on something the judgment layer would otherwise have to notice.

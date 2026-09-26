@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Voter Guide Citation Review — {{ generated }}</title>
+<title>Citation review — {{ title }}</title>
 <style>
 :root{--bg:#faf9f7;--fg:#1a1a1a;--mut:#6b6b6b;--line:#e3e0dc;--card:#fff;
 --ok:#1a7f37;--warn:#9a6700;--bad:#b42318;--info:#0b5cad;--hl:#ffe680;--acc:#5b3ea8}
@@ -185,7 +185,8 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
 </div>
 
 <script>
-// Progress lives under STORE:
+// Progress lives under STORE, one per project and subject (report.store_id), so two subjects,
+// or two versions of an amended proposal, never share it:
 //   {v: 3,
 //    checked: {"<fingerprint>": "<row key>"},
 //    sources: {"<source id>": {flag, note}},
@@ -208,13 +209,17 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
 // only read, when STORE is absent: a page from before read two-part checks as its own version's,
 // and would drop them and save over them.
 //
-// KEY holds what earlier versions of this page saved, per source: {"<source id>": {done, flag,
-// note}}. It is only read, to migrate from when neither store is there, so neither version's tab
-// overwrites the other's progress. Its "vgpipe:" prefix predates the rename to provenance (#6)
+// V3 is this shape as the page saved it before STORE was kept per project and subject, keyed
+// by the page's title, as V2 is. The newest of them there is is read once, where STORE is
+// absent, and saved under STORE at once, so it is never read again. KEY holds what earlier
+// versions of this page saved, per source: {"<source id>": {done, flag, note}}, also keyed by
+// the title. It is only read, to migrate from when neither store is there, so no version's tab
+// overwrites another's progress. Their "vgpipe:" prefix predates the rename to provenance (#6)
 // and stays: it names progress already saved, and a new prefix would read every review as empty.
 const KEY = "vgpipe:{{ run_id }}";
 const V2 = KEY + ":v2";
-const STORE = KEY + ":v3";
+const V3 = KEY + ":v3";
+const STORE = "provenance:{{ store_id }}:v3";
 const UNREADABLE = STORE + ":unreadable";
 const ROW_RE = new RegExp({{ row_key_re|tojson }});
 const FP_RE = /^[0-9a-f]{16}(\.[0-9a-f]{16})?$/;
@@ -324,17 +329,17 @@ function kind(x){
   if (!Object.prototype.hasOwnProperty.call(x, 'v')) return 'legacy';
   return x.v === 3 ? 'v3' : x.v === 2 ? 'v2' : null;
 }
-const kept = stored(STORE), text = kept !== null ? kept : stored(V2);
-if (text === null) load(parse(stored(KEY)));
-else if (kind(parse(text)) !== (kept !== null ? 'v3' : 'v2')){
+function save(){ try { localStorage.setItem(STORE, JSON.stringify(state)); } catch(e){} }
+const own = stored(STORE), v3 = own === null ? stored(V3) : null;
+const kept = own !== null ? own : v3 !== null ? v3 : stored(V2);
+if (kept === null) load(parse(stored(KEY)));
+else if (kind(parse(kept)) !== (own !== null || kept === v3 ? 'v3' : 'v2')){
   // Not a fallback to an older store: that would bring back flags cleared since. The first save
   // replaces STORE, so the text is kept where a person can recover it.
-  try { localStorage.setItem(UNREADABLE, text); } catch (e) {}
+  try { localStorage.setItem(UNREADABLE, kept); } catch (e) {}
   load({v: 3, notice: {unreadable: true}});
 }
-else load(parse(text));
-
-function save(){ try { localStorage.setItem(STORE, JSON.stringify(state)); } catch(e){} }
+else { load(parse(kept)); if (own === null) save(); }
 function ann(el){
   const k = el.dataset.sid;
   if (!Object.prototype.hasOwnProperty.call(state.sources, k)) state.sources[k] = {flag:false, note:""};

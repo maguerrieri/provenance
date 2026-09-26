@@ -1,16 +1,17 @@
 """A project: the directory holding a provenance.toml, and what that file declares.
 
 The file names the project, the source lists its citations are checked against, where its
-shared cache lives, its subjects (each a subdirectory holding a run of its own) and its race
-file. Every command finds it the same way: the nearest provenance.toml at or above the run
-directory (`--data`, else the working directory), or the directory `--project` names.
+shared cache lives and its subjects (each a subdirectory holding a run of its own). It also holds
+what every researcher is told (`context`) and what no researcher is told (`completeness_check`).
+Every command finds it the same way: the nearest provenance.toml at or above the run directory
+(`--data`, else the working directory), or the directory `--project` names.
 
 This replaced inference. The pipeline used to decide where the cache lived by asking whether
 a parent directory held a question set, and whether a cache/ directory existed here or there.
 A rule keyed on what happens to exist fulfils itself, since whatever first creates the
-directory gets to pick: one stray fetch forked a candidate's cache, and a staleness check that
+directory gets to pick: one stray fetch forked a subject's cache, and a staleness check that
 read the wrong cache created that stray as a side effect. And some layouts looked alike to it:
-a self-contained data root nested under another, and a candidate scaffolded before its parent
+a self-contained data root nested under another, and a subject scaffolded before its parent
 had a question set. Now nothing is resolved from which cache or output directories exist. A
 directory with no project file above it is refused, never adopted: moving a project laid out
 the old way is a reviewed change (README, "Projects"), not something a command does silently.
@@ -18,6 +19,7 @@ the old way is a reviewed change (README, "Projects"), not something a command d
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import tomllib
@@ -25,7 +27,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 FILE = "provenance.toml"
-KEYS = ("name", "sources", "cache", "subjects", "race")
+KEYS = ("name", "title", "sources", "cache", "subjects", "context", "completeness_check")
+SUBJECT_KEYS = ("id", "name")
+
+# The heading that opened a race file's completeness check. Pasted into `context` with the rest
+# of a race file's body, it would carry the known answers into every researcher's prompt.
+_CHECK_HEADING = re.compile(r"^#+[ \t]*completeness check\b", re.IGNORECASE | re.MULTILINE)
 
 # A subject is a directory name under the project root: no separator, no leading dot, so it
 # is always a direct child. The names a run keeps inside itself are refused, since a subject
@@ -53,17 +60,35 @@ class UnreadableProject(ProjectError):
 
 
 @dataclass(frozen=True)
+class Subject:
+    """One of a project's separate runs. Not necessarily a person: a proposal, a document, or
+    one version of either. Two versions of one proposal are two subjects, each with its own id,
+    run and review progress."""
+    id: str      # its directory under the project root, and what --subject names
+    name: str    # what the questions call it, and what its review page is titled by
+
+
+@dataclass(frozen=True)
 class Project:
-    root: Path                  # the directory holding provenance.toml, resolved
+    root: Path                     # the directory holding provenance.toml, resolved
     name: str
-    sources: tuple[str, ...]    # source list names: sources.load_rules() reads them
-    cache: Path                 # the directory that holds cache/, as --cache names it
-    subjects: tuple[str, ...]   # each a run in root/<subject>
-    race: Path | None           # the race file (until #9 folds it into this file)
+    title: str                     # the review page's title: `name` unless the file gives one
+    sources: tuple[str, ...]       # source list names: sources.load_rules() reads them
+    cache: Path                    # the directory that holds cache/, as --cache names it
+    subjects: tuple[Subject, ...]  # each a run in root/<id>
+    context: str = ""              # prompt-safe: `provenance brief` gives it to every researcher
+    completeness_check: str = ""   # the orchestrator's and the reviewer's: never in a brief
 
     @property
     def file(self) -> Path:
         return self.root / FILE
+
+    @property
+    def subject_ids(self) -> tuple[str, ...]:
+        return tuple(s.id for s in self.subjects)
+
+    def subject(self, subject_id: str) -> Subject | None:
+        return next((s for s in self.subjects if s.id == subject_id), None)
 
     def subject_dir(self, subject: str) -> Path:
         return self.root / subject
@@ -73,7 +98,7 @@ class Project:
         directory). By the name the project declares, not the directory's own, which differs
         for a subject that is a symlink."""
         at = _real(run)
-        return None if at is None else _subject_at(self.root, self.subjects, at)
+        return None if at is None else _subject_at(self.root, self.subject_ids, at)
 
 
 def find(start: Path) -> Path | None:
@@ -104,7 +129,14 @@ def load(root: Path) -> Project:
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
         raise UnreadableProject(f"unreadable project file {path}: {e}", root) from e
     problems: list[str] = []
-    if unknown := sorted(set(raw) - set(KEYS)):
+    if "race" in raw:
+        # Refused, not ignored: ignored, the race file's context and completeness check would
+        # drop out without a word, and so would the review page's title.
+        problems.append("`race` is retired: the race file's title, context and completeness "
+                        "check are keys of this file now (`title`, `context`, "
+                        "`completeness_check`), and its candidates are `subjects` (README, "
+                        "\"Projects\")")
+    if unknown := sorted(set(raw) - set(KEYS) - {"race"}):
         # A typo'd key would otherwise read as the key left out: `subject = [...]` as a
         # project with no subjects, which refuses every subject run with the wrong reason.
         problems.append(f"unknown key(s) {', '.join(map(repr, unknown))} "
@@ -113,6 +145,12 @@ def load(root: Path) -> Project:
     name = raw.get("name")
     if not isinstance(name, str) or not name.strip():
         problems.append("`name` must name the project")
+        name = ""
+
+    title = raw.get("title", name)
+    if not isinstance(title, str) or ("title" in raw and not title.strip()):
+        problems.append("`title` must be what the review page is titled, or be left out to "
+                        "use `name`")
 
     sources = raw.get("sources")
     if (not isinstance(sources, list) or not sources
@@ -149,13 +187,37 @@ def load(root: Path) -> Project:
                             f"{cache_path.parent}")
 
     subjects = raw.get("subjects", [])
-    if not isinstance(subjects, list) or not all(isinstance(s, str) for s in subjects):
-        problems.append("`subjects` must be a list of subdirectory names")
+    if not isinstance(subjects, list):
+        problems.append("`subjects` must be a list of {id = \"<its directory>\", name = \"<what "
+                        "the questions call it>\"}")
         subjects = []
+    found: list[Subject] = []
     folded: dict[str, str] = {}
     dirs: dict[Path, str] = {}   # resolved directory -> the subject first found there
-    for s in subjects:
-        if not re.fullmatch(SUBJECT_PATTERN, s):
+    names: dict[str, str] = {}   # casefolded name -> the subject first found with it
+    for entry in subjects:
+        if isinstance(entry, str):
+            # The form from before subjects had names. Refused with the form to write: a subject
+            # named by its bare id would retarget questions by that id, a word inside others.
+            problems.append(f"subject {entry!r} needs a name: write it as {{id = "
+                            f"{json.dumps(entry)}, name = \"<what the questions call it>\"}}")
+            continue
+        if not isinstance(entry, dict):
+            problems.append(f"subject {entry!r} is not {{id = ..., name = ...}}")
+            continue
+        s, label = entry.get("id"), entry.get("name")
+        if unknown := sorted(set(entry) - set(SUBJECT_KEYS)):
+            problems.append(f"subject {s!r} has unknown key(s) {', '.join(map(repr, unknown))} "
+                            f"(a subject has {', '.join(SUBJECT_KEYS)})")
+        if not isinstance(label, str) or not label.strip():
+            problems.append(f"subject {s!r} needs a `name`: what the questions call it")
+            label = None
+        elif (other := names.get(label.strip().casefold())) is not None:
+            # The name is what the questions and the review page tell subjects apart by.
+            problems.append(f"subject {s!r} has the name of subject {other!r}")
+        if not isinstance(s, str):
+            problems.append(f"subject {entry!r} needs an `id`: the name of its directory")
+        elif not re.fullmatch(SUBJECT_PATTERN, s):
             problems.append(f"subject {s!r} is not a plain directory name "
                             f"({SUBJECT_PATTERN})")
         elif s.casefold() in RESERVED:
@@ -170,7 +232,7 @@ def load(root: Path) -> Project:
             problems.append(f"subject {s!r} is the project root itself")
         elif os.path.lexists(root / s) and not (root / s).is_dir():
             # A file, or a link to one or to nothing, can hold no run. An absent directory is
-            # fine: `provenance new-candidate` creates it.
+            # fine: `provenance new-subject` creates it.
             problems.append(f"subject {s!r} is not a directory")
         elif os.path.lexists(root / s / FILE):
             # The nearest project file wins, so its commands would never read this one's
@@ -184,20 +246,28 @@ def load(root: Path) -> Project:
         else:
             folded[s.casefold()] = s
             dirs[d] = s
+            if label is not None:
+                names.setdefault(label.strip().casefold(), s)
+                found.append(Subject(id=s, name=label.strip()))
 
-    race = raw.get("race")
-    race_path = None
-    if race is not None:
-        if not isinstance(race, str) or not race.strip():
-            problems.append("`race` must be a path to the race file")
-        else:
-            race_path = _path(root, race, "race", problems)
+    context, check = raw.get("context", ""), raw.get("completeness_check", "")
+    if not isinstance(context, str):
+        problems.append("`context` must be text: what every researcher is told")
+    elif _CHECK_HEADING.search(context):
+        # A race file's body pasted in whole. Its completeness check lists the known answers,
+        # and a researcher told what it is looking for confirms that instead of searching.
+        problems.append("`context` holds a completeness check heading: move that section to "
+                        "`completeness_check`, which no researcher is shown")
+    if not isinstance(check, str):
+        problems.append("`completeness_check` must be text: the answers already known, for the "
+                        "orchestrator and the reviewer")
 
     if problems:
         raise UnreadableProject(f"{path} can't be read as a project: " + "; ".join(problems),
                                 root)
-    return Project(root=root, name=name.strip(), sources=tuple(sources), cache=cache_path,
-                   subjects=tuple(subjects), race=race_path)
+    return Project(root=root, name=name.strip(), title=title.strip(), sources=tuple(sources),
+                   cache=cache_path, subjects=tuple(found), context=context,
+                   completeness_check=check)
 
 
 def _path(root: Path, value: str, key: str, problems: list[str]) -> Path | None:
@@ -254,13 +324,17 @@ def _subject_at(root: Path, subjects, at: Path) -> str | None:
 
 
 def _raw_subjects(root: Path) -> list:
-    """The `subjects` root's project file lists, parsed but not validated, or [] where it can't
-    be parsed. For what has to be known of a project file `load()` refuses."""
+    """The ids of the `subjects` root's project file lists, parsed but not validated, or []
+    where it can't be parsed. For what has to be known of a project file `load()` refuses. A
+    bare string, the form from before subjects had names, is read as an id too: `load()` refuses
+    it, and it still says which directory the file means."""
     try:
         subjects = tomllib.loads((root / FILE).read_text()).get("subjects", [])
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
         return []
-    return subjects if isinstance(subjects, list) else []
+    if not isinstance(subjects, list):
+        return []
+    return [s.get("id") if isinstance(s, dict) else s for s in subjects]
 
 
 def _reached_from_inside(root_real: Path, run: Path) -> bool:
@@ -296,17 +370,21 @@ def _declared_by_parent(root: Path) -> Path | None:
     return parent if at is not None and _subject_at(parent, _raw_subjects(parent), at) else None
 
 
-def resolve(run: Path | None, project: Path | None,
-            cwd: Path | None = None) -> tuple[Project, Path]:
-    """(project, run directory) for a command's `--data` and `--project`.
+def resolve(run: Path | None, project: Path | None, cwd: Path | None = None,
+            subject: str | None = None) -> tuple[Project, Path]:
+    """(project, run directory) for a command's `--data`, `--subject` and `--project`.
 
     The project is the one `project` names, else the nearest one at or above `run`, else at or
-    above the working directory. The run is `run` as given, else the project root, and it must
-    be the root or one of the subjects the project declares: a mistyped `--data` is refused,
-    where it used to become a run of its own with a cache of its own. It must also be reached
-    from inside the project, as the walk from it would reach it, with `--project` too: a
-    symlink outside the project to one of its runs is refused, not taken as that run.
+    above the working directory. The run is `run` as given, else the directory of the subject
+    `subject` names, else the project root. A `run` must be the root or one of the subjects the
+    project declares: a mistyped `--data` is refused, where it used to become a run of its own
+    with a cache of its own. It must also be reached from inside the project, as the walk from
+    it would reach it, with `--project` too: a symlink outside the project to one of its runs is
+    refused, not taken as that run. A `subject` must be one the project declares.
     """
+    if subject is not None and run is not None:
+        # Two names for the run, which can disagree: neither is taken over the other.
+        raise ProjectError(f"--subject {subject} and --data {run} both name the run: pass one")
     if project is not None:
         root = absolute(project)
         if not os.path.lexists(root / FILE):
@@ -318,16 +396,23 @@ def resolve(run: Path | None, project: Path | None,
             raise ProjectError(
                 f"no {FILE} at or above {absolute(start)}. Every command reads its project from "
                 f"one: write one at the project's root, or pass --project. It names the project, "
-                f"its source lists, where the cache lives, its subjects and its race (README, "
-                f"\"Projects\"). A directory laid out the old way, with the question set, claims "
-                f"and cache in data/ and a run per candidate in data/<candidate>/, gets one in "
-                f"data/ with cache = \".\" and each candidate's directory under subjects.")
+                f"its source lists, where the cache lives, its subjects and what researchers are "
+                f"told (README, \"Projects\"). A directory laid out the old way, with the question "
+                f"set, claims and cache in data/ and a run per subject in data/<subject>/, gets "
+                f"one in data/ with cache = \".\" and each subject's directory under subjects.")
     if (parent := _declared_by_parent(root)) is not None:
         raise ProjectError(f"{root} is a subject of the project in {parent}, and holds a {FILE} "
                            f"of its own: which project it belongs to is not on disk. Remove "
                            f"one: its own {FILE}, or its entry under `subjects` in "
                            f"{parent / FILE}.")
     p = load(root)
+    if subject is not None:
+        if p.subject(subject) is None:
+            subjects = ", ".join(p.subject_ids) or "none"
+            raise ProjectError(f"--subject {subject} is not one of the subjects of the project "
+                               f"in {p.root} ({subjects}): a subject is one its {FILE} lists "
+                               f"under `subjects`, by id")
+        return p, p.subject_dir(subject)
     if run is None:
         return p, p.root
     if (at := _real(run)) is None:
@@ -341,7 +426,7 @@ def resolve(run: Path | None, project: Path | None,
                            f"by its path in the project, the root or <root>/<subject>.")
     if at == p.root or p.subject_of(run) is not None:
         return p, run
-    subjects = ", ".join(p.subjects) or "none"
+    subjects = ", ".join(p.subject_ids) or "none"
     raise ProjectError(f"{run} is neither the root of the project in {p.root} nor one of its "
                        f"subjects ({subjects}). A subject's run is a directory the project's "
                        f"{FILE} lists under `subjects`.")
