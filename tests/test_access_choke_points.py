@@ -280,6 +280,15 @@ def _recipe(**fields) -> dict:
     (_entry(**_recipe(body=json.dumps({"q": {"next": f"https://{LOGIN}@y.example/"}}))),
      "carries a username"),
     (_entry(**_recipe(body=f"q=1&csrf_token={CANARY}")), r"its body \(csrf_token\)"),
+    # A JSON key is a name, not a search value: a bare login in one is refused.
+    (_entry(**_recipe(headers={"content-type": "application/json"},
+                      body=json.dumps({f"{LOGIN}@portal.example": "x"}))),
+     "a parameter's name carries a username"),
+    # Prose is read for a web-scheme URL with no slashes, as a browser reads it.
+    (_entry(notes=f"see https:portal.example/?api_key={CANARY}"), r"\(api_key\)"),
+    # A value the check can't read is refused: YAML's `!!binary` gives bytes.
+    (_entry(extra=LOGIN.encode()), "holds a bytes, which can't be read"),
+    (_entry(extra={"a", "b"}), "holds a set, which can't be read"),
     (_entry(**_recipe(params=["token"])), "asks for what look like credentials"),
     (_entry(recipes="not a list"), "not a list"),
     # A false value is not an absent one: read as none, `source-note` rewrote it as none.
