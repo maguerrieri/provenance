@@ -448,6 +448,14 @@ def test_a_subject_that_is_a_symlink_finds_the_project_it_is_declared_in(tmp_pat
     # project it is found in is tmp_path's, which does not declare it.)
     with pytest.raises(project.ProjectError, match="is neither the root of the project"):
         project.resolve(real, None)
+    # With --project too: an alias outside the project, or the real directory, reaches the
+    # subject only through a symlink, and is refused rather than taken as ng's run.
+    alias = tmp_path / "alias"
+    alias.symlink_to(root / "ng")
+    for outside in (alias, real):
+        with pytest.raises(project.ProjectError, match="only through a symlink from outside"):
+            project.resolve(outside, root)
+    assert project.resolve(root / "ng", root)[1] == root / "ng"
 
     # Named by the project's name for it, not its directory's: the command a refusal gives must
     # name a subject the project has. Here its real directory is "ng-2030".

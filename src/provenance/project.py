@@ -291,7 +291,9 @@ def resolve(run: Path | None, project: Path | None,
     The project is the one `project` names, else the nearest one at or above `run`, else at or
     above the working directory. The run is `run` as given, else the project root, and it must
     be the root or one of the subjects the project declares: a mistyped `--data` is refused,
-    where it used to become a run of its own with a cache of its own.
+    where it used to become a run of its own with a cache of its own. It must also be reached
+    from inside the project, as the walk from it would reach it, with `--project` too: a
+    symlink outside the project to one of its runs is refused, not taken as that run.
     """
     if project is not None:
         root = absolute(project)
@@ -318,6 +320,13 @@ def resolve(run: Path | None, project: Path | None,
         return p, p.root
     if (at := _real(run)) is None:
         raise ProjectError(f"{run} can't be resolved (a symlink loop), so it is no run")
+    if project is not None and ((found := find(run)) is None or _real(found) != p.root):
+        # Without --project the walk from the run found this project, so it holds already.
+        # With it, a run matched only by where it resolves would take an outside alias of a
+        # subject as that subject, where the walk from the alias finds no project, or another.
+        raise ProjectError(f"{run} is not inside the project in {p.root} as given: it reaches "
+                           f"one of its runs only through a symlink from outside. Name the run "
+                           f"by its path in the project, the root or <root>/<subject>.")
     if at == p.root or p.subject_of(run) is not None:
         return p, run
     subjects = ", ".join(p.subjects) or "none"
