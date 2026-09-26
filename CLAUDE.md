@@ -1205,10 +1205,11 @@ listing more names:
   library's error.** `urlsplit()` refuses a host holding a character that NFKC reads as `@`,
   `:` or `/` (a fullwidth `@` in a password), and its message quotes the whole netloc, login
   included. Passed on as the refusal, it printed the login it was refusing (#158). So every URL
-  from a paste or a recipe is split through `_split()`, which names the URL ("the referer
-  header's URL") instead, and `parse_curl()` adds what to do. A test fails on any other
-  reference in `access.py` to a function that splits, but `_norm_host()`: it reads a command's
-  host argument, which is #161's to guard.
+  `access.py` splits, a command's host argument included, goes through `_split()`, which names
+  the URL ("the referer header's URL") instead, and a test fails on any other reference to a
+  function that splits. httpx parses a recipe's URL again and quotes the part it can't read (a
+  password written with `%40` is a port to it), so `run()` replaces its `InvalidURL` the same
+  way.
 - **A deny-list of names can't anticipate what a site calls its session.** Only `Cookie`,
   `Authorization` and a few more were dropped, so `x-csrf-token` and `x-xsrf-token` reached
   disk. Credential headers now match by pattern (`credential_header()`), and `run()` uses the
