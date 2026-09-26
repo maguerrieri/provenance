@@ -35,6 +35,11 @@ verifier returns `superseded` for an older one when a newer one exists.
 - **Form 700s** (statements of economic interests).
 - **Campaign finance forms:** Form 460s, and the Form 497 and Form 496 late reports.
 - **Candidate statements:** one for the primary and another for the general (below).
+- **The state's codes, and its bills,** on the legislature's host (`leginfo.legislature.ca.gov`):
+  a code section changes with each amendment, and a bill with each amended version. The `ca`
+  list names the host under `legal_text`, so a citation there needs its effective date or
+  version in `date` (for a bill's status or vote, the date of the action), or `provenance
+  check-claim` fails it.
 
 ## Portals that answer only through a bulk export or the pipeline's own query
 
