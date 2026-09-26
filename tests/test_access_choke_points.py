@@ -289,6 +289,16 @@ def _recipe(**fields) -> dict:
     # A value the check can't read is refused: YAML's `!!binary` gives bytes.
     (_entry(extra=LOGIN.encode()), "holds a bytes, which can't be read"),
     (_entry(extra={"a", "b"}), "holds a set, which can't be read"),
+    # A request's field is sent as text, so one that isn't text (or a number or a boolean) is
+    # refused before anything turns it into its repr, whose contents the check never read.
+    (_entry(**_recipe(headers={"X-Endpoint": json.dumps({"api_key": CANARY}).encode()})),
+     "its X-Endpoint header holds a bytes, not text"),
+    (_entry(**_recipe(headers={"X-Endpoint": {"api_key": CANARY}})),
+     "its X-Endpoint header holds a dict, not text"),
+    (_entry(**_recipe(body=f"q=1&token={CANARY}".encode())), "its body holds a bytes"),
+    (_entry(**_recipe(url=[f"https://portal.example/?api_key={CANARY}"])),
+     "its URL holds a list"),
+    (_entry(**_recipe(headers={1: "x"})), "headers are not all named with text"),
     (_entry(**_recipe(params=["token"])), "asks for what look like credentials"),
     (_entry(recipes="not a list"), "not a list"),
     # A false value is not an absent one: read as none, `source-note` rewrote it as none.
@@ -415,6 +425,35 @@ def test_an_entry_whose_host_field_names_another_host_is_refused(registry):
     assert code == 1 and "names another host" in out, out
     code, out = _invoke("source-note", "portal.example", "a finding")
     assert code == 1 and "names another host" in out, out
+
+
+def test_a_header_value_that_is_not_text_is_refused_not_read_as_its_repr(registry, monkeypatch):
+    """A header's value was `str()`ed before the check read it. YAML's `!!binary` gives bytes,
+    whose repr held a JSON credential the check never parsed, and `run()` sent it."""
+    import base64
+
+    registry.mkdir()
+    hidden = base64.b64encode(json.dumps({"api_key": CANARY}).encode()).decode()
+    text = ("host: portal.example\nrecipes:\n  - id: r\n    method: GET\n"
+            "    url: https://portal.example/\n    headers:\n"
+            f"      X-Endpoint: !!binary {hidden}\n")
+    (registry / "portal.example.yaml").write_text(text)
+    for args in (("source-access",), ("source-access", "portal.example", "--run-recipe", "r"),
+                 ("source-note", "portal.example", "a finding")):
+        code, out = _invoke(*args)
+        assert code == 1 and "X-Endpoint header holds a bytes, not text" in out, (args, out)
+        _clean(out)
+    assert (registry / "portal.example.yaml").read_text() == text
+
+    sent = []
+    monkeypatch.setattr(access.httpx, "request", lambda *a, **kw: sent.append(kw["headers"]))
+    with pytest.raises(Refused, match="holds a bytes, not text") as e:
+        run(Recipe(id="r", method="GET", url="https://portal.example/",
+                   headers={"X-Endpoint": json.dumps({"api_key": CANARY}).encode()}), {})
+    _clean(str(e.value))
+    # A number's text is all there is to it, so one is sent as that text.
+    run(Recipe(id="r", method="GET", url="https://portal.example/", headers={"DNT": 1}), {})
+    assert sent[-1]["DNT"] == "1"
 
 
 @pytest.mark.parametrize("text", [
