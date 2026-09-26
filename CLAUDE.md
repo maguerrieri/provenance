@@ -1420,7 +1420,10 @@ as a copy. Passing unlisted hosts instead would reopen the substitution this exi
   being one: its copy of a record would pass as the record. A host *above* a listed outlet does
   the same, since `primary_document` is classed before journalism: naming `example.com` would
   reclass `news.example.com`. `project.load()` refuses all three. A host above an excluded
-  one is allowed: the most restrictive class still wins there.
+  one is allowed: the most restrictive class still wins there. The rule is one function,
+  `sources.why_not_nameable()`, which check-claim and the review page ask before offering
+  `primary_hosts` too. Each first had a partial copy (the host's own class), and both offered a
+  host above a listed outlet that the project file then refused.
 - **The brief says which hosts count, and what to do about any other.** `researcher_brief()`
   gives the merged list and `cli.ISSUING_AUTHORITIES` beside the source lists' notes, so a
   researcher isn't left to guess. The guidance lives there alone: `researcher.md` points to the
@@ -1449,8 +1452,9 @@ as a copy. Passing unlisted hosts instead would reopen the substitution this exi
   which contradicted the two failures a researcher is told to hand on: an authority the project
   doesn't name (the brief) and a scan kept with its `page` (researcher.md). It records what
   failed by kind, and gives the hand-on close only when every kind is `copy` or `scan`. A copy
-  counts as `copy` only on a host the lists don't class: a news outlet can't be named in
-  `primary_hosts`, so its copy of a record is the researcher's to fix, and says so. Any
+  counts as `copy` only on a host `why_not_nameable()` allows: a news outlet, or a host above
+  one, can't be named in `primary_hosts`, so its copy of a record is the researcher's to fix,
+  and the message says why. Any
   other kind keeps the red close, so a check added later without a kind of its own fails
   toward "do not hand this on", never toward handing on. Its corroboration line is left out
   when the claim passes as it will stand once the hosts are named (the project's rules with

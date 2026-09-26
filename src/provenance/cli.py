@@ -36,12 +36,12 @@ from .report import clear_render, render, store_id
 from .sources import (
     TIER_LABEL,
     bare_host,
-    classify,
     display_host,
     domain,
     notes,
     speakers,
     tier,
+    why_not_nameable,
 )
 from .terminal import printable as _printable
 from .verify import (
@@ -2357,15 +2357,18 @@ def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path
                 con.print(f"  [red]{st}[/] " + escape(
                     f"{cited}\n      {_printable(src_.verification.reason or '')}"))
         copies = [src_ for src_ in claim.sources if unacked_copy(src_, rules)]
-        # Only a host the lists don't class can be named in `primary_hosts` (project.load()
-        # refuses the rest), so only its copy is handed on. A news outlet's is the researcher's.
-        unnamed = [src_ for src_ in copies if classify(src_.url, rules) == "unknown"]
+        # Only a host `primary_hosts` could name is handed on (`why_not_nameable()`, the rule
+        # project.load() refuses by): the rest can never be named, so their copies are the
+        # researcher's to fix.
+        why_not = {id(src_): why_not_nameable(bare_host(domain(src_.url)), rules)
+                   for src_ in copies}
+        unnamed = [src_ for src_ in copies if why_not[id(src_)] is None]
         for src_ in claim.sources:
             if src_ in copies and src_ not in unnamed:
                 failed.add("fix")
                 con.print("  [red]secondary host[/] " + escape(_printable(
-                    f"{domain(src_.url)} is classed as {classify(src_.url, rules)} by the "
-                    f"project's source lists, so it is not the body that issues this record\n"
+                    f"{domain(src_.url)} can't be one of the project's issuing authorities: "
+                    f"{why_not[id(src_)]}\n"
                     f"      Cite the issuing authority's own. If you genuinely cannot reach it, "
                     f"set `secondary_host_ack` saying what you could not reach and why this "
                     f"copy is the same document — but never substitute silently.",

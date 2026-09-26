@@ -114,7 +114,7 @@ def test_a_host_the_lists_class_cannot_be_named_an_authority(tmp_path, synthetic
     every brief called it an issuing authority. A news outlet would stop being one, and its copy
     of a record would pass as the record."""
     msg = _refusal(tmp_path, f'["{host}"]', ("xx",))
-    assert f"`primary_hosts` names {host!r}, which the project's source lists class as {cls}" \
+    assert f"`primary_hosts` names {host!r}, but the project's source lists class it as {cls}" \
         in msg, msg
 
 
@@ -122,7 +122,7 @@ def test_a_host_above_a_news_outlet_cannot_be_named_an_authority(tmp_path, synth
     """Primary documents are classed before journalism, so naming `example.com` would make every
     story on `news.example.com` a primary record, its copies of records included."""
     msg = _refusal(tmp_path, '["example.com"]', ("xx",))
-    assert ("`primary_hosts` names 'example.com', which covers 'news.example.com', a news outlet "
+    assert ("`primary_hosts` names 'example.com', but it covers 'news.example.com', a news outlet "
             "on the project's source lists") in msg, msg
     # A host above an excluded one changes nothing there: the most restrictive class still wins.
     p = _load(tmp_path, '["example.net"]', ("xx",))
@@ -288,10 +288,28 @@ def test_a_copy_on_a_host_the_lists_class_is_the_researchers_to_fix(tmp_path, mo
     path = _claim_citing(root, "https://news.example.com/decision-2030-14")
     code, out = _provenance(monkeypatch, "check-claim", path, "--data", root)
     assert code == 1, out
-    assert ("secondary host news.example.com is classed as bylined_journalism by the project's "
-            "source lists, so it is not the body that issues this record") in out, out
+    assert ("secondary host news.example.com can't be one of the project's issuing "
+            "authorities: the project's source lists class it as bylined_journalism") in out, out
     assert "primary_hosts" not in out and HAND_ON not in out, out
     assert "do not hand this on" in out, out
+
+
+def test_a_copy_above_a_listed_outlet_is_not_offered_as_an_authority(tmp_path, monkeypatch,
+                                                                     synthetic_lists):
+    """`example.com` is unclassed itself, but covers the listed `news.example.com`, so
+    project.load() refuses it. check-claim and the review page ask the same function, so neither
+    hands its copy on or tells anyone to add it, and the claim's corroboration failure shows."""
+    root = write_project(tmp_path / "p", sources=("xx",))
+    url = "https://example.com/decision-2030-14"
+    path = _claim_citing(root, url)
+    code, out = _provenance(monkeypatch, "check-claim", path, "--data", root)
+    assert code == 1, out
+    assert ("secondary host example.com can't be one of the project's issuing authorities: it "
+            "covers 'news.example.com', a news outlet on the project's source lists") in out, out
+    assert "corroboration" in out and "do not hand this on" in out and HAND_ON not in out, out
+    rules = project.load(root).rules()
+    text = _row_text(tmp_path, _official(url), rules)
+    assert "primary_hosts" not in text and "it covers 'news.example.com'" in text, text
 
 
 def _scan(root: Path, url: str) -> None:
@@ -340,14 +358,15 @@ def test_a_trailing_dot_names_the_same_host(tmp_path):
 
 def test_the_secondary_host_message_shows_a_hosts_format_character(tmp_path, monkeypatch):
     """The URL check refuses C0 controls, not a bidi override, which would reorder the rest of
-    the line in both places the host is printed."""
+    the line. No host name holds one, so it is never offered as an authority either."""
     rlo = chr(0x202E)
     root = write_project(tmp_path / "p", sources=("us",))
     path = _claim_citing(root, f"https://a{rlo}b.example.com/x")
     code, out = _provenance(monkeypatch, "check-claim", path, "--data", root)
     assert code == 1 and rlo not in out, out
-    assert "secondary host a\\u202eb.example.com is not one of" in out, out
-    assert "If a\\u202eb.example.com is itself the body" in out, out
+    assert ("secondary host a\\u202eb.example.com can't be one of the project's issuing "
+            "authorities: it is no host name a project can list") in out, out
+    assert "primary_hosts" not in out and HAND_ON not in out, out
 
 
 # --- build and check-claim agree about a named authority --------------------------------------
@@ -487,7 +506,7 @@ def test_a_misnamed_list_does_not_hide_what_the_others_say(tmp_path, synthetic_l
     """Every problem in one message: the host is checked against the lists that exist."""
     msg = _refusal(tmp_path, '["news.example.com"]', ("xx", "nosuchlist"))
     assert "no such source list: 'nosuchlist'" in msg, msg
-    assert "names 'news.example.com', which the project's source lists class as " \
+    assert "names 'news.example.com', but the project's source lists class it as " \
            "bylined_journalism" in msg, msg
 
 
@@ -545,8 +564,8 @@ def test_the_review_page_offers_primary_hosts_only_for_an_unclassed_host(tmp_pat
     to, as check-claim doesn't tell the researcher."""
     p = _load(tmp_path, "[]", ("xx",))
     text = _row_text(tmp_path, _official("https://news.example.com/x"), p.rules())
-    assert ("Cited from news.example.com, which the project's source lists class as "
-            "bylined_journalism, so it is not the body that issues this record") in text, text
+    assert ("Cited from news.example.com, which can't be one of this project's issuing "
+            "authorities (the project's source lists class it as bylined_journalism)") in text, text
     assert "primary_hosts" not in text, text
 
 
