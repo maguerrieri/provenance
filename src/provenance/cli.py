@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Annotated, NoReturn
 
 import typer
-import yaml
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
@@ -159,7 +158,8 @@ def _note_root_run(p: proj.Project, out: Console | None = None) -> None:
             _noted_defaults.add(real)
             (out or con).print("[yellow]" + escape(_printable(
                 f"this is the project root's run, not {s}'s, though the working directory "
-                f"is inside {d}: pass --subject {s} for {s}'s")) + "[/]")
+                f"is inside {d}: pass --subject {s}, or --data {shlex.quote(str(d))} where a "
+                f"command has no --subject, for {s}'s")) + "[/]")
 
 
 def _clear_render_or_exit(out: Path) -> None:
@@ -2370,7 +2370,7 @@ def new_subject(subject: str, data: Path = None, questions: Path = None,
     than one subject. The subject must be one of the project's `subjects` already: this command
     writes the run, never the project file.
     """
-    p, _ = _project(data, project)
+    p, _ = _project(data, project, for_run=False)   # scaffolds a run; works on none
     s = p.subject(subject)
     if s is None:
         _refuse(f"{subject} is not one of the project's subjects: add it to `subjects` in "

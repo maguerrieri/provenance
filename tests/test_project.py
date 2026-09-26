@@ -586,8 +586,10 @@ def test_the_root_run_is_named_when_defaulted_from_inside_a_subject(tmp_path, mo
     (root / "lind" / "claims").mkdir(parents=True)
     code, out = _provenance("status", cwd=root / "lind" / "claims")
     assert code == 0, out
+    lind = (root / "lind").resolve()
     assert (f"this is the project root's run, not lind's, though the working directory is "
-            f"inside {(root / 'lind').resolve()}: pass --subject lind for lind's") in out, out
+            f"inside {lind}: pass --subject lind, or --data {lind} where a command has no "
+            f"--subject, for lind's") in out, out
     code, out = _provenance("status", cwd=root)
     assert "project root's run, not" not in out, out
     code, out = _provenance("status", "--data", "lind", cwd=root)
