@@ -494,7 +494,7 @@ def test_render_does_not_mutate_the_claim_models(tmp_path):
     from provenance.report import render
 
     c = Claim(question_id="q1", question="?", answer="a", sources=[src()])
-    render([c], tmp_path, title="T")
+    render([c], tmp_path, title="T", store="test")
     assert "context_html" not in c.sources[0].__dict__
     assert "sid" not in c.sources[0].__dict__
     assert c.sources[0].sid  # still computed from url + snippet
@@ -606,7 +606,7 @@ def test_review_app_escapes_hostile_claim_content(tmp_path):
     c.sources[0].verification.reason = "<script>alert(6)</script>"
     c.conflicts = ["<script>alert(7)</script>"]
 
-    html_path, _ = render([c], tmp_path, title="T")
+    html_path, _ = render([c], tmp_path, title="T", store="test")
     html = html_path.read_text()
 
     for payload in ("<script>alert(1)</script>", "<img src=x onerror=alert(2)>",
@@ -899,7 +899,7 @@ def test_not_found_is_not_badged_as_a_failure(tmp_path):
 
     c = Claim(question_id="q1", question="?", answer="looked, found nothing",
               confidence="not_found")
-    html = render([c], tmp_path, title="T")[0].read_text()
+    html = render([c], tmp_path, title="T", store="test")[0].read_text()
     assert 'class="b mut">not_found<' in html
     assert 'class="b bad">not_found<' not in html
 
@@ -3965,7 +3965,7 @@ def test_a_broken_absence_claim_is_not_listed_as_deliberate(tmp_path):
     broken = _claim("q7", src(), confidence="not_found")
     broken.sources[0].verification.status = "snippet_not_found"
     clean = _claim("q8", confidence="not_found")
-    html = render([broken, clean], tmp_path, title="T")[0].read_text()
+    html = render([broken, clean], tmp_path, title="T", store="test")[0].read_text()
     section = html.split("deliberate, not failure</summary>")[1].split("</details>")[0]
     assert "<b>q8</b>" in section and "<b>q7</b>" not in section
     assert "No source found (1)" in html
@@ -6055,7 +6055,7 @@ def test_a_query_citation_is_stamped_with_what_it_was_checked_against(tmp_path):
     assert f"--cache {shlex.quote(str(root))}" in wrong.reason
 
     claim = Claim(question_id="q1", question="?", answer="a", sources=[s])
-    page = html.unescape(render([claim], tmp_path / "out")[0].read_text())
+    page = html.unescape(render([claim], tmp_path / "out", store="test")[0].read_text())
     assert f"calaccess.ie_total v{v.query_run.version}" in page
     assert "CAL-ACCESS export of 2026-09-20" in page
     assert f">provenance query calaccess.ie_total --cache {shlex.quote(str(root))}" in page
