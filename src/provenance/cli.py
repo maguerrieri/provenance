@@ -31,7 +31,7 @@ from .models import (
     strip_machine_fields,
 )
 from .report import clear_render, render, store_id
-from .sources import domain, load_rules, notes
+from .sources import TIER_LABEL, domain, load_rules, notes, speakers, tier
 from .terminal import printable as _printable
 from .verify import (
     GOOD,
@@ -47,6 +47,7 @@ from .verify import (
     revalidate_from_cache,
     secondary_host,
     snippet_problem,
+    unattributed,
     verify_against_archive,
     verify_source,
 )
@@ -576,7 +577,7 @@ def verify(data: Path = None, cache: Path = None, refresh: bool = False, qid: st
         stale_verdicts += [f"{c.question_id}/{s.sid}: {why}" for s, _j, why in
                            judgments.verdicts_for(c, data, recorded[c.question_id],
                                                   cache_root=cache_root) if why]
-        check_corroboration(c)
+        check_corroboration(c, rules=rules)
         if c.corroboration_ok is False:
             t.add_row(c.question_id, "[red]corroboration[/]", "-",
                       escape(_cut(c.corroboration_note, 70)))
@@ -805,7 +806,7 @@ def _settle(claims: list[Claim], data: Path, cache_root: Path,
     for c in claims:
         for s in c.sources:
             revalidate_from_cache(s, cache_root, rules=rules)   # a status the pipeline didn't produce won't render green
-        check_corroboration(c)
+        check_corroboration(c, rules=rules)
     detect(claims)   # lists `contradicts` verdicts, so only the recorded ones
     for cycle in check_inputs(claims):   # a conclusion is not verified while an input isn't
         con.print(f"[yellow]derives_from cycle: {', '.join(sorted(cycle, key=qid_sort_key))} — "
@@ -2337,7 +2338,29 @@ def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path
                           f"code section's history or currency note says which; for a bill, "
                           f"its version, or the date of the action you cite), and make sure "
                           f"it is the version the claim is about")
-        check_corroboration(claim)
+        for src_ in unattributed(claim, rules):
+            ok = False
+            t = tier(src_, rules)
+            con.print(f"  [red]not attributed[/] {TIER_LABEL[t]} " + escape(_printable(
+                f"{src_.publisher}: {src_.snippet!r}")))
+            if t == "unlisted_outlet":
+                # One run: the host is data, and so is every name below.
+                con.print("      " + escape(_printable(
+                    f"{domain(src_.url)} is not on this project's source lists as a news "
+                    f"outlet, so nothing but the label says this is reporting. If it is an "
+                    f"outlet doing its own reporting, a source list can name it (a change to "
+                    f"the tool, reviewed like code); until then, cite the record itself, or "
+                    f"state the claim as what this outlet reports.")))
+            names = speakers(src_)
+            con.print("      " + escape(_printable(
+                f"This supports only 'X argues Y', never Y on its own. Name who argues it in "
+                f"`answer`: {' or '.join(repr(n) for n in names)}." if names else
+                "This supports only 'X argues Y', never Y on its own, and its `author` and "
+                "`publisher` name nobody the answer could say argues it: set them to who "
+                "wrote or published it.")))
+            con.print("      If the claim is a fact, cite a source that states it: a primary "
+                      "text, an official analysis, or reporting.")
+        check_corroboration(claim, rules=rules)
         if claim.corroboration_ok is False:
             ok = False
             con.print(f"  [red]corroboration[/] {escape(_printable(claim.corroboration_note))}")

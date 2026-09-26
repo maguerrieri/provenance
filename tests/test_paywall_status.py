@@ -23,11 +23,16 @@ from typer.testing import CliRunner
 from provenance import archive, cli, judgments
 from provenance.fetch import cache_path
 from provenance.models import EXTRACTOR_VERSION, Claim, PageCache, Source
+from provenance.sources import load_rules
 from provenance.verify import check_corroboration
 
-PAYWALLED = "https://daily-ledger.example/levy-vote"
+RULES = load_rules(("us", "ca"))
+
+# A listed news host: reporting on an unlisted one reads as an unlisted outlet, which a
+# claim can cite only as what the outlet reports (sources.tier()).
+PAYWALLED = "https://calmatters.org/levy-vote"
 SNAPSHOT = f"https://web.archive.org/web/20260901000000/{PAYWALLED}"
-READABLE = "https://harbor-weekly.example/levy-vote"
+READABLE = "https://sacbee.com/levy-vote"
 SNIPPET = "voted against the harbor levy twice"
 STORY = f"At both hearings the councilmember {SNIPPET}, citing the port budget.\n"
 
@@ -43,7 +48,7 @@ def _source(url=PAYWALLED, status="could_not_verify_paywall", support="unreviewe
 
 def _claim(*sources, **kw):
     return check_corroboration(Claim(question_id="q1", question="?", answer="a",
-                                     sources=list(sources), **kw))
+                                     sources=list(sources), **kw), rules=RULES)
 
 
 def test_a_claim_whose_only_source_is_paywalled_is_flagged_not_pending():

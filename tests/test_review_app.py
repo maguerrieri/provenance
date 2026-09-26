@@ -18,7 +18,9 @@ from selectolax.parser import HTMLParser
 
 from provenance.models import Claim, QueryCitation, QueryRun, Source
 from provenance.report import render, review_fingerprint, store_id
+from provenance.sources import load_rules
 
+RULES = load_rules(("us", "ca"))
 HARNESS = Path(__file__).parent / "review_app_harness.js"
 NODE = shutil.which("node")
 LEGACY = "vgpipe:t"          # what earlier versions of the page saved, per source, by title
@@ -67,7 +69,7 @@ def run(tmp_path: Path, claims: list[Claim], *, storage: dict | None = None,
         pytest.fail("node is not installed, and CI must run the review app tests")
     if not NODE:
         pytest.skip("the review app tests run its script under node")
-    page = HTMLParser(render(claims, tmp_path, title=title, store=store)[0].read_text())
+    page = HTMLParser(render(claims, tmp_path, title=title, rules=RULES, store=store)[0].read_text())
     payload = {"tree": _tree(page.body), "script": page.css_first("script").text(),
                "storage": storage or {}, "actions": actions or [], "full": full or []}
     out = subprocess.run([NODE, str(HARNESS)], input=json.dumps(payload),
@@ -505,7 +507,7 @@ def test_a_claims_researcher_notes_render_escaped_and_only_when_present(tmp_path
     noted, blank = claim("q1", "Approved."), claim("q3", "Approved.")
     noted.notes, blank.notes = note, " \n "
     html = render([noted, claim("q2", "Approved."), blank], tmp_path, title="T",
-                  store="test")[0].read_text()
+                  rules=RULES, store="test")[0].read_text()
 
     assert "<script>alert(1)</script>" not in html and "<img src=x" not in html
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html, "the note renders, escaped"
@@ -590,7 +592,7 @@ def test_a_note_added_after_checking_clears_the_claims_checks(tmp_path):
                    for r in after["rows"]), notes
         assert after["claims"][0]["noteChanged"], notes
     page = HTMLParser(render([build(), build(NOTE)], tmp_path, title="T",
-                             store="test")[0].read_text())
+                             rules=RULES, store="test")[0].read_text())
     assert ["has been removed" in m.text() for m in page.css(".nchanged")] == [True, False]
 
     # Unchecking a row settles its warning, as it does for changed evidence.

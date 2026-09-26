@@ -11,6 +11,7 @@ beside it (`<name>-notes.md`), which `provenance brief` hands to researchers and
 from __future__ import annotations
 
 import re
+import unicodedata
 from functools import lru_cache
 from importlib.resources import files
 from pathlib import Path
@@ -19,6 +20,7 @@ from urllib.parse import urlparse
 import yaml
 
 from .models import Source
+from .normalize import normalize
 
 # Package data, so an installed copy (uv tool install) has it.
 SOURCES_DIR = Path(files(__package__) / "source_lists")
@@ -164,10 +166,15 @@ def publishes_legal_text(url: str, rules: dict[str, tuple[str, ...]] | None = No
     return _matches(domain(url), r.get(LEGAL_TEXT, ()))
 
 
+# Bylines that name nobody. Refused as an author, and never taken as naming who argues something.
+NOT_A_NAME = frozenset({"staff", "unknown", "n/a", "none", "editorial board"})
+
+
 def check_source_class(src: Source, rules: dict[str, tuple[str, ...]] | None = None) -> tuple[bool, str | None]:
     """(ok, reason). Unknown domains are allowed but must carry a named or institutional
     author — the rule is 'human-written', not 'on our list'. That keeps a good local
-    paper or an agency we haven't listed from being rejected out of hand."""
+    paper or an agency we haven't listed from being rejected out of hand. Allowed is not
+    trusted, though: what an unlisted host's citation can carry is `tier()`'s question."""
     cls = classify(src.url, rules)
     if cls == "excluded":
         return False, f"{domain(src.url)} is an excluded AI aggregator / content farm"
@@ -179,6 +186,83 @@ def check_source_class(src: Source, rules: dict[str, tuple[str, ...]] | None = N
                        "says X' (source_type must be campaign_statement)")
     if not src.author or not src.author.strip():
         return False, "no named or institutional author-of-record"
-    if src.author.strip().lower() in {"staff", "unknown", "n/a", "none", "editorial board"}:
+    if src.author.strip().lower() in NOT_A_NAME:
         return False, f"author {src.author!r} is not a named or institutional author-of-record"
     return True, None
+
+
+# --- Tiers -------------------------------------------------------------------------------------
+# What a citation can carry. The tier is the citation's own, from its source_type, never its
+# host's: one news site runs reporting and op-eds, and one article holds reported fact beside
+# its writer's opinion. The host can only lower a tier, never raise one. A citation labeled
+# reporting is reporting only on a host a source list names as a news outlet: anywhere else
+# nothing but the label says it is journalism, and an advocacy site with a byline passed as a
+# newspaper. See CLAUDE.md, "A citation's tier is its own, and the host can only lower it".
+TIER_OF = {
+    "primary_document": "primary_text",
+    "official_record": "primary_text",
+    "official_analysis": "official_analysis",
+    "bylined_journalism": "reporting",
+    "opinion": "opinion",
+    "advocacy": "advocacy",
+    # Each already limited to its own claim form, "the campaign says X" or "the organization
+    # says X", by the host lists and the researcher's rules. Unchanged here.
+    "campaign_statement": "campaign_statement",
+    "own_statement": "own_statement",
+}
+# Tiers citable only as what their author argues, "X argues Y", never for a bare fact: a claim
+# resting on one names whose argument it is (`attributes()`), and corroboration counts them all
+# as one document. `unlisted_outlet` is a citation labeled reporting on a host no source list
+# names as a news outlet.
+ARGUED = frozenset({"opinion", "advocacy", "unlisted_outlet"})
+TIER_LABEL = {
+    "primary_text": "primary text",
+    "official_analysis": "official analysis",
+    "reporting": "reporting",
+    "unlisted_outlet": "unlisted outlet",
+    "opinion": "opinion",
+    "advocacy": "advocacy",
+    "campaign_statement": "campaign statement",
+    "own_statement": "own statement",
+}
+
+
+def tier(src: Source, rules: dict[str, tuple[str, ...]] | None = None) -> str:
+    """The tier `src` carries: its source_type's, lowered to `unlisted_outlet` for reporting on a
+    host the lists don't name as a news outlet."""
+    t = TIER_OF[src.source_type]
+    if t == "reporting" and classify(src.url, rules) != "bylined_journalism":
+        return "unlisted_outlet"
+    return t
+
+
+def _folded(text: str) -> str:
+    # Composed first: normalize() folds one character at a time, so a decomposed accent would
+    # never meet the composed one it prints as (the same reason `questions` composes). Not
+    # casefolded, unlike a question: a name is told from a word by its capitals, and case-blind,
+    # a publisher called "The Record" was named by "the record shows".
+    return normalize(unicodedata.normalize("NFC", text), casefold=False)[0]
+
+
+def speakers(src: Source) -> list[str]:
+    """What an answer can name `src`'s arguer by: its author or its publisher, the publisher with
+    or without a leading "The". Whole names only: a surname alone also names everyone else who
+    has it, and the check tells the researcher exactly which names it takes. A byline that names
+    nobody (`NOT_A_NAME`) is not one."""
+    names = [src.author.strip(), src.publisher.strip()]
+    if re.match(r"(?i)the\s", names[1]):
+        names.append(names[1][4:].strip())
+    return [n for n in dict.fromkeys(names)
+            if _folded(n) and n.lower() not in NOT_A_NAME]
+
+
+def attributes(answer: str, src: Source) -> bool:
+    """Whether `answer` names who argues what `src` says: its author or its publisher, as whole
+    words, as written. Whitespace, quote and dash styles are folded as a question's are, but case
+    is not (`_folded()`).
+
+    The mechanical half of "X argues Y": it shows the claim says whose argument this is. Whether
+    the claim then states the argument as the arguer's, or as established fact, is the verifier's
+    to judge (verifier.md)."""
+    said = _folded(answer)
+    return any(re.search(rf"(?<!\w){re.escape(_folded(n))}(?!\w)", said) for n in speakers(src))

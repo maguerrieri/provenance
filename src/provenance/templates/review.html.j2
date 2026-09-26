@@ -139,6 +139,7 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
       <b>{{ s.publisher }}</b> · {{ s.author }}{% if s.date %} · {{ s.date }}{% endif %}
       {% if s.page %} · p.{{ s.page }}{% endif %}
       · <span class="b {{ s.badge_class }}">{{ s.verification.status }}</span>
+      · <span class="b {{ 'warn' if s.argued else 'mut' }}">{{ s.tier }}</span>
       {% if s.paywall %}<span class="b warn">paywall</span>{% endif %}
       {% if s.secondary %}<span class="b bad">copy, not the issuing authority</span>{% endif %}
       {% if s.archive_status == 'archive_unusable' %}<span class="b bad">snapshot unusable</span>
@@ -151,6 +152,10 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
       {{ s.url.split('/')[2] }}, which is not the body that issues this record.
       {{ s.secondary_host_ack or 'No explanation given.' }}
       Check this copy against the official version.</div>{% endif %}
+    {% if s.argued %}<div class="meta" style="color:var(--warn)">{% if s.unlisted %}{{ s.url.split('/')[2] }}
+      is not on this project's source lists as a news outlet, so this is not counted as
+      reporting. {% endif %}This supports only what its author argues: check that the claim says
+      whose argument it is, not that it is so.</div>{% endif %}
     {% if s.verification.reason %}<div class="meta" style="color:var(--warn)">{{ s.verification.reason }}</div>{% endif %}
     {% if s.archive_status and s.archive_status != 'archived' %}<div class="meta" style="color:var(--warn)">archive: {{ s.archive_note }}</div>{% endif %}
     {% if s.verification.support_note %}<div class="meta">verifier: {{ s.verification.support_note }}</div>{% endif %}

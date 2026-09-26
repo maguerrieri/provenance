@@ -33,7 +33,9 @@ SHOWN = "\\x1b[2K\\x9b2K\\u202e\\u2028"
 LONE = "\ud800"     # a lone surrogate as json.loads keeps it
 ARGV = "\udcff"     # an undecodable byte in argv, as Python decodes it
 
-URL = "https://news.example/levy"
+# A listed news host: reporting on an unlisted one reads as an unlisted outlet, which a
+# claim can cite only as what the outlet reports (sources.tier()).
+URL = "https://calmatters.org/levy"
 TEXT = "The board approved the Example Levy on a 4-1 vote after a long hearing on Tuesday."
 SNIPPET = "approved the Example Levy on a 4-1 vote"
 

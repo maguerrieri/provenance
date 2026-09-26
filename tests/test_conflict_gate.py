@@ -21,10 +21,15 @@ from provenance import cli
 from provenance.conflicts import detect, money, money_values, unsourced_figures
 from provenance.fetch import cache_path
 from provenance.models import EXTRACTOR_VERSION, Claim, PageCache, Source
+from provenance.sources import load_rules
 from provenance.verify import check_corroboration, check_inputs
 
-LEDGER = "https://daily-ledger.example/pier-settlement"
-WEEKLY = "https://harbor-weekly.example/pier-settlement"
+RULES = load_rules(("us", "ca"))
+
+# A listed news host: reporting on an unlisted one reads as an unlisted outlet, which a
+# claim can cite only as what the outlet reports (sources.tier()).
+LEDGER = "https://calmatters.org/pier-settlement"
+WEEKLY = "https://sacbee.com/pier-settlement"
 SNIPPET = "approved a pier settlement of $120,000 in 2019"
 STORY = f"After two hearings the council {SNIPPET}, the clerk said.\n"
 
@@ -40,7 +45,7 @@ def _source(url=LEDGER, publisher="Daily Ledger", snippet=SNIPPET, status="verif
 
 def _claim(answer, *sources, qid="q1", **kw):
     return check_corroboration(Claim(question_id=qid, question="?", answer=answer,
-                                     sources=list(sources or [_source()]), **kw))
+                                     sources=list(sources or [_source()]), **kw), rules=RULES)
 
 
 def test_an_answer_stating_a_figure_no_snippet_carries_is_never_green():

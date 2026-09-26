@@ -168,7 +168,7 @@ def test_adversarial_needs_two_independent_publishers():
     # reported "9 usable" for 9 quotes across 4 articles from 2 outlets.
     c = Claim(question_id="q1", question="?", answer="a", claim_type="adversarial",
               sources=[_verified(), _verified(snippet="other snippet here now")])
-    c = check_corroboration(c)
+    c = check_corroboration(c, rules=RULES)
     assert c.corroboration_ok is False
     assert "1 document" in c.corroboration_note
 
@@ -176,24 +176,24 @@ def test_adversarial_needs_two_independent_publishers():
     same_pub = Claim(question_id="q2", question="?", answer="a", claim_type="adversarial",
                      sources=[_verified(),
                               _verified(url="https://calmatters.org/second-article")])
-    same_pub = check_corroboration(same_pub)
+    same_pub = check_corroboration(same_pub, rules=RULES)
     assert same_pub.corroboration_ok is False
     assert "not independent" in same_pub.corroboration_note
 
     c2 = Claim(question_id="q1", question="?", answer="a", claim_type="adversarial",
                sources=[_verified(),
                         _verified(url="https://sacbee.com/b", publisher="Sacramento Bee")])
-    assert check_corroboration(c2).corroboration_ok is True
+    assert check_corroboration(c2, rules=RULES).corroboration_ok is True
 
 
 def test_mechanical_needs_one():
     c = Claim(question_id="q1", question="?", answer="a", sources=[_verified()])
-    assert check_corroboration(c).corroboration_ok is True
+    assert check_corroboration(c, rules=RULES).corroboration_ok is True
 
 
 def test_not_found_is_a_valid_answer():
     c = Claim(question_id="q1", question="?", answer="no source found", confidence="not_found")
-    c = check_corroboration(c)
+    c = check_corroboration(c, rules=RULES)
     assert c.corroboration_ok is True and c.status == "not_found"
 
 
@@ -402,7 +402,7 @@ def test_review_progress_key_survives_question_set_changes(tmp_path):
 
     def keys_for(claims, subject="lind"):
         html, _ = render(claims, tmp_path, title="2030 Example County Assessor",
-                         store=store_id("example", subject))
+                         rules=RULES, store=store_id("example", subject))
         text = html.read_text()
         return (_re.search(r'const STORE = "([^"]+)"', text).group(1),
                 _re.search(r'const KEY = "([^"]+)"', text).group(1))
@@ -494,7 +494,7 @@ def test_render_does_not_mutate_the_claim_models(tmp_path):
     from provenance.report import render
 
     c = Claim(question_id="q1", question="?", answer="a", sources=[src()])
-    render([c], tmp_path, title="T", store="test")
+    render([c], tmp_path, title="T", rules=RULES, store="test")
     assert "context_html" not in c.sources[0].__dict__
     assert "sid" not in c.sources[0].__dict__
     assert c.sources[0].sid  # still computed from url + snippet
@@ -606,7 +606,7 @@ def test_review_app_escapes_hostile_claim_content(tmp_path):
     c.sources[0].verification.reason = "<script>alert(6)</script>"
     c.conflicts = ["<script>alert(7)</script>"]
 
-    html_path, _ = render([c], tmp_path, title="T", store="test")
+    html_path, _ = render([c], tmp_path, title="T", rules=RULES, store="test")
     html = html_path.read_text()
 
     for payload in ("<script>alert(1)</script>", "<img src=x onerror=alert(2)>",
@@ -899,7 +899,7 @@ def test_not_found_is_not_badged_as_a_failure(tmp_path):
 
     c = Claim(question_id="q1", question="?", answer="looked, found nothing",
               confidence="not_found")
-    html = render([c], tmp_path, title="T", store="test")[0].read_text()
+    html = render([c], tmp_path, title="T", rules=RULES, store="test")[0].read_text()
     assert 'class="b mut">not_found<' in html
     assert 'class="b bad">not_found<' not in html
 
@@ -915,7 +915,7 @@ def test_unchecked_corroboration_is_not_verified_or_failed():
 
     # Corroboration alone is not enough: an unjudged source is not a verified one. In testing
     # the verifier silently never ran and every claim rendered green.
-    check_corroboration(c)
+    check_corroboration(c, rules=RULES)
     assert c.status == "pending", "no verdict recorded yet"
     for s_ in c.sources:
         s_.verification.support = "supports"
@@ -1141,7 +1141,7 @@ def test_a_claim_the_verifier_rejected_does_not_render_verified(tmp_path):
     assert c.status == "pending"          # not judged yet
     for s in c.sources:
         s.verification.support = "topic_only"
-    check_corroboration(c)
+    check_corroboration(c, rules=RULES)
     assert c.status == "human_review"
     assert c.corroboration_ok is False
     assert "rejected by the verifier" in c.corroboration_note
@@ -2447,7 +2447,7 @@ def test_a_conclusion_is_not_verified_while_its_inputs_are_not():
     from provenance.verify import check_inputs
 
     ok = Claim(question_id="q17", question="?", answer="a", sources=[_verified()])
-    check_corroboration(ok)
+    check_corroboration(ok, rules=RULES)
     for s_ in ok.sources:
         s_.verification.support = "supports"
     assert ok.status == "verified"
@@ -2456,7 +2456,7 @@ def test_a_conclusion_is_not_verified_while_its_inputs_are_not():
     # no verdict recorded, so it is pending — not a foundation to reason from
     cmp_ = Claim(question_id="q35", question="?", answer="a",
                  derives_from=["q17", "q18"], sources=[_verified()])
-    check_corroboration(cmp_)
+    check_corroboration(cmp_, rules=RULES)
     for s_ in cmp_.sources:
         s_.verification.support = "supports"
 
@@ -3438,7 +3438,7 @@ def test_a_forged_paywall_row_cannot_corroborate(tmp_path, monkeypatch):
               sources=[real, forged])
     for s in c.sources:
         revalidate_from_cache(s, tmp_path, rules=RULES)
-    check_corroboration(c)
+    check_corroboration(c, rules=RULES)
     assert forged.verification.status == "human_review"
     assert "bad_source_class" in forged.verification.reason
     assert c.corroboration_ok is False
@@ -3965,7 +3965,7 @@ def test_a_broken_absence_claim_is_not_listed_as_deliberate(tmp_path):
     broken = _claim("q7", src(), confidence="not_found")
     broken.sources[0].verification.status = "snippet_not_found"
     clean = _claim("q8", confidence="not_found")
-    html = render([broken, clean], tmp_path, title="T", store="test")[0].read_text()
+    html = render([broken, clean], tmp_path, title="T", rules=RULES, store="test")[0].read_text()
     section = html.split("deliberate, not failure</summary>")[1].split("</details>")[0]
     assert "<b>q8</b>" in section and "<b>q7</b>" not in section
     assert "No source found (1)" in html
@@ -6055,7 +6055,7 @@ def test_a_query_citation_is_stamped_with_what_it_was_checked_against(tmp_path):
     assert f"--cache {shlex.quote(str(root))}" in wrong.reason
 
     claim = Claim(question_id="q1", question="?", answer="a", sources=[s])
-    page = html.unescape(render([claim], tmp_path / "out", store="test")[0].read_text())
+    page = html.unescape(render([claim], tmp_path / "out", rules=RULES, store="test")[0].read_text())
     assert f"calaccess.ie_total v{v.query_run.version}" in page
     assert "CAL-ACCESS export of 2026-09-20" in page
     assert f">provenance query calaccess.ie_total --cache {shlex.quote(str(root))}" in page
