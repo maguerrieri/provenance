@@ -590,6 +590,12 @@ def test_a_note_change_on_one_claim_is_not_its_twins(tmp_path):
                  actions=[{"do": "tick", "row": two, "checked": True}])
     assert rows(ticked)[two]["checked"] and rows(ticked)[one]["noteStale"]
 
+    # Nor when the note changes to exactly the twin's, so the two rows now share a fingerprint.
+    same = run(tmp_path, build("Page 3 is a scan."), storage=checked["storage"])
+    assert rows(same)[one]["noteStale"]
+    assert not (rows(same)[two]["noteStale"] or rows(same)[two]["checked"])
+    assert [c["noteChanged"] for c in same["claims"]] == [True, False]
+
     # A reworded answer on the checked one is its own change, not a note change on the twin.
     reworded = run(tmp_path, build(NOTE, q1_answer="The council rejected the levy."),
                    storage=checked["storage"])
