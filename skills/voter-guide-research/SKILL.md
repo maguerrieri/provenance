@@ -1,9 +1,9 @@
 ---
 name: voter-guide-research
-description: Use when running the voter guide research pipeline for any race — fanning out research questions to subagents, verifying citations, and building the human review app. Covers the full template-to-review-app run.
+description: Use when running the provenance research pipeline for any project — fanning out research questions to subagents, verifying citations, and building the human review app. Covers the full template-to-review-app run.
 ---
 
-# Voter guide research run
+# Cited research run
 
 Three phases. The design principle throughout: **agents find and judge; Python decides
 whether a citation is real.** Never let a model set a verification status.
@@ -31,8 +31,10 @@ that works only inside a clone of the tool's own repo.
 Run every `provenance` command from the project root, the directory holding its
 `provenance.toml` (or pass `--project <root>`). Outside a project, a command that works on a
 run, or on the cache without `--cache`, is refused.
-Name a subject's run with `--data <subject>`: with no `--data`, a command works on the root's
-run, wherever in the project it runs from.
+Name a subject's run with `--subject <id>` (or `--data <its directory>`): with neither, a
+command works on the root's run, wherever in the project it runs from. A subject need not be a
+person: a proposal or a document works the same way, and two versions of an amended proposal
+are two subjects.
 
 ## Phase 0 — split the template
 
@@ -50,7 +52,7 @@ run, wherever in the project it runs from.
    the old claim, a reused id no longer shows, so give the new question its new id before
    anyone researches it.
 3. Write the project root's `questions.json` as `[{"id", "text", "claim_type", "parent", "rationale"}]`.
-4. Mark `claim_type: "adversarial"` for anything negative or contested about a candidate
+4. Mark `claim_type: "adversarial"` for anything negative or contested about a subject
    (settlements, donor influence, opposition to a popular measure). Adversarial claims
    need two independent sources, so this classification changes what gets researched.
 5. **Show the operator the split and get approval before fanning out.** A bad split silently
@@ -59,7 +61,7 @@ run, wherever in the project it runs from.
 ## Phase 1 — research fan-out, in dependency order
 
 Some questions are **comparisons**, not retrievals: "how does their housing position compare
-to the platform the guide measures against?" reasons from two other claims. Those declare `derives_from` in
+to the platform the project measures against?" reasons from two other claims. Those declare `derives_from` in
 questions.json, and the rule is simple — **research the inputs first, in a wave, then the
 conclusions.** A comparison written before its inputs exist is guesswork wearing citations.
 
@@ -77,10 +79,11 @@ Spawn one `provenance:researcher` subagent per atomic question, **in parallel** 
 independent). Give each:
 
 - the question text and its `claim_type`, verbatim from the run's own `questions.json`: for a
-  candidate run that is the candidate's own `<candidate>/questions.json`, retargeted to the candidate, not
+  subject's run that is the subject's own `<subject>/questions.json`, retargeted to the subject, not
   the template. The gate checks each claim's `question` against it,
-- the race context block from the race file the project names, verbatim,
-- its `question_id` and the instruction to write `claims/<qid>.json` in its run (the project root, or the candidate's directory).
+- the run's brief, verbatim: what `provenance brief` prints (with `--subject <id>` for a
+  subject's run),
+- its `question_id` and the instruction to write `claims/<qid>.json` in its run (the project root, or the subject's directory).
 
 Do not summarize the source rules for them — the agent definition carries them in full.
 
@@ -236,22 +239,21 @@ A run that skips it produces green rows nobody has actually checked.
   (`archive_failed` / `archive_unusable` / `archive_unconfirmed` carry the reason).
 - The review app opens, persists checkboxes, and surfaces conflicts and paywall rows.
 
-## Race context
+## Project context
 
-**Read the race file the project's `provenance.toml` names (`race`)** — that file holds everything race-specific: the candidates, the
-known adversarial claims, the powers of the office and the primary-source hosts. The project's `sources` names which
-source lists apply (`sources = ["us", "ca"]` → the tool's `us` and `ca` lists, which ship with it).
+**Run `provenance brief` for the run** (with `--subject <id>` for a subject's run) **and paste
+its output verbatim into every researcher prompt.** It prints the project, the run's subject
+and the project's `context` from its `provenance.toml`: everything project-specific a
+researcher needs, such as which bodies keep minutes and which hosts serve which records. Do not
+summarize it. The project's `sources` names which source lists apply (`sources = ["us", "ca"]`
+→ the tool's `us` and `ca` lists, which ship with it).
 
-Paste its **"Race context"** and **"Primary sources"** sections verbatim into every
-researcher prompt. Do not summarize them — the specifics (exact vote shares, which LegInfo
-host covers which years) are what keep researchers from guessing.
-
-**Never paste the "Completeness check" section into a researcher prompt.** It lists claims
-already known to exist, and a researcher told what it is looking for confirms that item
-instead of searching — so anything not on the list (a second incident, a bigger donor, a
-more recent filing) never surfaces, and the "corroboration" you get back is the pipeline
-agreeing with itself. `races.load()` enforces the split: `race.context` is prompt-safe,
-`race.completeness_check` is for you and the human only.
+**Never paste the project's `completeness_check` into a researcher prompt**, and never paste
+`provenance.toml` itself. The check lists claims already known to exist, and a researcher told
+what it is looking for confirms that item instead of searching — so anything not on the list
+(a second incident, a bigger donor, a more recent filing) never surfaces, and the
+"corroboration" you get back is the pipeline agreeing with itself. `provenance brief` never
+prints it; read it yourself, from the project file, for the check below.
 
 Write the questions the same way: **ask what the record shows, not whether a known thing
 happened.** "What documented allegations of misconduct exist?" is research. "Confirm the
@@ -259,8 +261,7 @@ Doe settlement" is transcription. Use the completeness check *after* results are
 if the research didn't independently surface a known item, that is itself a finding — hand
 the gap to the human rather than topping up a claim with the answer.
 
-A project names its one race in `provenance.toml`. A new race is a new file, named there, not an edit
-to this skill.
+A new project is a new `provenance.toml`, not an edit to this skill.
 
 ## Style for any prose output
 
