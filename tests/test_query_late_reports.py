@@ -492,7 +492,7 @@ def test_a_short_total_does_not_verify_green(tmp_path):
     # Named, the figure reproduces, and still goes to a person: the note alone rendered green.
     by_name = cite("8000", form_type="A")
     assert by_name.status == "human_review", by_name.reason
-    assert "the query reproduces 8000.0, but it leaves out late-reported" in by_name.reason
+    assert "the query reproduces 8000.0, but the record is unsettled: it leaves out late-reported" in by_name.reason
     assert "filing 9990664 (Form 497): $700.00 in 1 entry" in by_name.reason, by_name.reason
     assert f"open {calaccess.filing_url(F497)}" in by_name.reason
     assert "Re-run: provenance query calaccess.filer_total" in by_name.reason
@@ -549,7 +549,7 @@ def test_build_does_not_keep_a_named_figure_green_while_a_late_report_is_pending
 
     held = claimed_green(root, form_type="A")
     assert held.status == "human_review", held.reason
-    assert "re-running the query gives 8000.0, but it leaves out late-reported" in held.reason
+    assert "re-running the query gives 8000.0, but the record is unsettled: it leaves out late-reported" in held.reason
     assert "filing 9990664 (Form 497): $700.00" in held.reason, held.reason
     assert held.support == "unreviewed", "a verdict about a settled figure must not ride along"
 

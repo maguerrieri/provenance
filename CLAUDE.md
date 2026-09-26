@@ -996,7 +996,8 @@ skip without node only outside CI, and the fingerprint tests, which need no node
 ## Project-specific content lives in the project file
 
 Nothing about a subject, an office, a jurisdiction or a state belongs in `src/`, the skill, or
-the agent definitions. A project's provenance.toml holds its title, its subjects (each an `id`,
+the agent definitions, except the tool's own source lists and their notes (see "Domain
+content ships with its source list"). A project's provenance.toml holds its title, its subjects (each an `id`,
 its directory, and a `name`, what the questions call it), what its researchers are told
 (`context`) and what they never are (`completeness_check`). It names its source lists too
 (`sources`, each a `src/provenance/source_lists/<region>-sources.yaml`), and they merge. If you
@@ -1064,10 +1065,16 @@ export, how one state's campaign-finance export counts) is a source list's notes
 text, so a project naming `ca` gets them and one that doesn't never reads them. The skill
 passes the brief to verifiers as well as researchers.
 
-Delivery is mechanical on purpose. A prose rule ("read the notes when the work touches the
-domain") is one an orchestrator can skim, and a verifier never told that a record comes in
-series can't return `superseded` for it.
+No prose decides whether the notes apply: the brief carries them whenever the project names
+the list. A rule like "read the notes when the work touches the domain" is one an
+orchestrator can skim, and a verifier never told that a record comes in series can't return
+`superseded` for it. Handing a verifier the brief is still the skill's step, as it is for a
+researcher. A verifier now sees the project's `context` too, which nothing checks, so
+`verifier.md` says the brief is never evidence.
 - A leading `<!-- ... -->` in a notes file is for the tool's maintainers and is left out.
+- The skill's rule for an unsettled query figure keys on `verify.UNSETTLED`, which every
+  such reason carries, never on a dataset's phrases in the notes. A project can cite a query
+  whatever lists it names, so a rule that needed the notes would fail where they're absent.
 - `tests/test_plugin.py` fails on a term of the shipped domain in the skill or an agent. Add
   terms there when a list gains notes.
 - `ca-notes.md` is one file for now. Splitting the jurisdiction (the legislature, outlets and
@@ -1796,8 +1803,8 @@ flagged too, as the mirror image of the one above:
 - **A citable receipts figure** that would have counted rows from one carries it
   (`QueryResult.omitted`), with what it leaves out, and goes to `human_review` through the same
   `unsettled` reason. That reason says it "leaves out rows a later amendment may have
-  withdrawn", and the `ca` list's notes quote the phrase both reasons share for the skill's
-  retry loop, so it doesn't retry either.
+  withdrawn", after `verify.UNSETTLED` ("the record is unsettled"), which every unsettled
+  reason carries and the skill's retry loop matches, so it doesn't retry either.
 - **A miss carries it too.** When every match with a readable amount is on a left-out
   schedule, the query finds nothing counted, and "NO MATCH for that name" would tell a
   researcher the donor gave nothing. The note says every such match was left out instead, and

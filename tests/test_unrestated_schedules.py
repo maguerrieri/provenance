@@ -21,9 +21,9 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from provenance import calaccess, cli, queries, sources
+from provenance import calaccess, cli, queries
 from provenance.models import QueryCitation, Source, Verification
-from provenance.verify import revalidate_from_cache, verify_source
+from provenance.verify import UNSETTLED, revalidate_from_cache, verify_source
 
 FILER = "8884100"
 GAP_460 = "8884101"      # schedules A and I at amendment 0; amendment 1 restates only C
@@ -222,14 +222,17 @@ def test_build_downgrades_a_row_verified_before_it_asked(root):
 
 def test_both_paths_write_the_phrase_the_skill_matches(root):
     """The research skill leaves an unsettled figure for a person rather than retrying it,
-    and the `ca` list's notes, which reach it through the brief, tell one by this phrase,
-    which both kinds of reason carry."""
+    and tells one by `verify.UNSETTLED`, which both kinds of reason carry, with this phrase
+    saying which unsettled record it is."""
     s = cited("calaccess.contributor_total", VELDT, "250")
-    assert PHRASE in verify_source(s, root).verification.reason
+    reason = verify_source(s, root).verification.reason
+    assert f"but {UNSETTLED}: it " in reason and PHRASE in reason, reason
     s.verification = Verification(status="verified")
-    assert PHRASE in revalidate_from_cache(s, root).verification.reason
-    notes = " ".join((sources.SOURCES_DIR / "ca-notes.md").read_text().split())
-    assert f'"{PHRASE}"' in notes, "the notes must match what the code writes"
+    reason = revalidate_from_cache(s, root).verification.reason
+    assert f"but {UNSETTLED}: it " in reason and PHRASE in reason, reason
+    skill = " ".join((Path(__file__).parents[1] / "skills" / "research" / "SKILL.md")
+                     .read_text().split())
+    assert f'"{UNSETTLED}"' in skill, "the skill must match what the code writes"
 
 
 def test_every_citable_query_is_checked_for_left_out_schedules(root):
@@ -336,6 +339,7 @@ def test_a_miss_whose_every_match_was_left_out_says_so(root, monkeypatch):
     v = verify_source(s, root).verification
     assert v.status == "human_review", "no parameters can make it reproduce; a person opens it"
     assert v.reason.startswith("the query counts nothing") and PHRASE in v.reason
+    assert f"but {UNSETTLED}: it " in v.reason, "the skill tells this row by it, too"
     assert "nothing here reproduces the claimed '700'" in v.reason, "the claim is named too"
     assert calaccess.filing_url(GAP_460) in v.reason and "provenance query" in v.reason
     s.verification = Verification(status="verified")

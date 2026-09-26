@@ -218,8 +218,8 @@ def test_build_downgrades_a_row_verified_before_it_asked(root):
 
 
 def test_both_paths_write_the_phrase_the_skill_matches(root):
-    """The research skill does not retry this either, and the `ca` notes quote this phrase for
-    it (tests/test_source_notes.py)."""
+    """The research skill does not retry this either: its reason says `verify.UNSETTLED`, and
+    this phrase says which unsettled record it is."""
     phrase = "leaves out rows that a filing's own amendment attributed to this candidate"
     s = cited(ie(ONDINE), "1200")
     assert phrase in verify_source(s, root).verification.reason

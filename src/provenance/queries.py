@@ -381,10 +381,10 @@ class QueryResult:
           could be the same giver's, and they could change it. Each is listed as filed, with its
           figure and where its gifts came from.
 
-        The first two say "rows a later amendment may have withdrawn", which the `ca` source
-        list's notes quote so the research skill leaves the row for a person rather than retry
-        it; the third says LEFT_OUT and the last "is for names exactly as filed", which they
-        quote too (tests/test_source_notes.py pins each). Each names its
+        The first two say "rows a later amendment may have withdrawn", the third LEFT_OUT and
+        the last "is for names exactly as filed". Verification puts `verify.UNSETTLED` before
+        them, which the research skill matches to leave the row for a person rather than retry
+        it. Each names its
         UNSETTLED_SHOWN or LATE_SHOWN largest (`_listed`): this becomes a claim file's reason,
         and a committee's whole history can name dozens. `provenance query` prints the rest.
         """
@@ -460,8 +460,8 @@ def share_text(u) -> str:
     return f"{u.describe()}: {what} this result {u.does} (open {u.cite_url})"
 
 
-# What `provenance verify` and `provenance build` write for a value with `reattributed` filings, and what the
-# `ca` notes quote for the research skill to tell such a row from one to retry.
+# What `provenance verify` and `provenance build` write for a value with `reattributed` filings, after
+# `verify.UNSETTLED`, which the research skill matches to tell such a row from one to retry.
 LEFT_OUT = "leaves out rows that a filing's own amendment attributed to this candidate"
 
 

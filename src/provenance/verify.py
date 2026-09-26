@@ -35,6 +35,11 @@ from .models import (
 from .normalize import context_window, dehyphenate, find_all, normalize
 from .sources import check_source_class, classify, domain
 
+# Every reason for a query figure whose record isn't settled (`QueryResult.unsettled`) says
+# this, whichever path writes it. The research skill quotes it to leave such a row for a person
+# rather than retry it, whatever the dataset; what follows it is the dataset's own account.
+UNSETTLED = "the record is unsettled"
+
 # Hosts that publish filings as a SERIES. A superseded filing verifies perfectly — same
 # host, same institutional author, snippet genuinely present — so the only mechanical grip
 # on recency is requiring the filing's own date. Without it, neither the verifier agent nor
@@ -120,7 +125,7 @@ def verify_query_source(src: Source, root: Path) -> Source:
         v.query_run = run
         v.status = "human_review"
         v.reason = (f"the query counts nothing ({result.note}), so nothing here reproduces the "
-                    f"claimed {q.expected!r}, but {why} Re-run: "
+                    f"claimed {q.expected!r}, but {UNSETTLED}: {why} Re-run: "
                     f"{queries.human_command(q.name, dict(q.params), run.cache_root)}")
         src.verification = v
         return src
@@ -142,7 +147,7 @@ def verify_query_source(src: Source, root: Path) -> Source:
         # opens them; stamped as for a mismatch.
         v.query_run = run
         v.status = "human_review"
-        v.reason = (f"the query reproduces {result.value!r}, but {why} Re-run: "
+        v.reason = (f"the query reproduces {result.value!r}, but {UNSETTLED}: {why} Re-run: "
                     f"{queries.human_command(q.name, dict(q.params), run.cache_root)}")
         src.verification = v
         return src
@@ -819,7 +824,7 @@ def revalidate_from_cache(src: Source, root: Path, *,
             # later amendment or a late report reached the export, or by a version that did not
             # ask, is not green
             _discard(f"claimed {claimed!r}; re-running the query gives {result.value!r}, but "
-                     f"{why}")
+                     f"{UNSETTLED}: {why}")
             v.query_run = run
             return src
         # A query that reproduces vouches for its number, not for whatever status, excerpt or
