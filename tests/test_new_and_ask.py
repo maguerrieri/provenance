@@ -457,14 +457,58 @@ def test_run_files_that_appear_before_the_project_file_are_not_adopted(tmp_path,
     real = cli._install
 
     def racing(path, body):
-        real(path, body)
+        ident = real(path, body)
         if path.name == "template.md":
             (root / "claims").mkdir()
+        return ident
 
     monkeypatch.setattr(cli, "_install", racing)
     code, out = _provenance("new", root, "--from", _template(tmp_path), "--source", "us")
     assert code == 1 and "holds a run's files already (claims)" in out, out
     assert sorted(p.name for p in root.iterdir()) == ["claims"]
+
+
+def test_a_refused_scaffold_leaves_a_file_another_process_put_in_its_place(tmp_path,
+                                                                           monkeypatch):
+    """Cleanup removes a file only while it is still the one this run installed."""
+    root = tmp_path / "p"
+    root.mkdir()
+    real = cli._install
+
+    def racing(path, body):
+        ident = real(path, body)
+        if path.name == "template.md":
+            theirs = root / ".theirs"
+            theirs.write_text("another writer's template")
+            theirs.replace(path)
+            (root / "claims").mkdir()
+        return ident
+
+    monkeypatch.setattr(cli, "_install", racing)
+    code, out = _provenance("new", root, "--from", _template(tmp_path), "--source", "us")
+    assert code == 1 and "holds a run's files already (claims)" in out, out
+    assert (root / "template.md").read_text() == "another writer's template"
+    assert not (root / "provenance.toml").exists()
+
+
+def test_a_parent_that_turns_up_as_a_symlink_is_refused(tmp_path, home, monkeypatch):
+    """A parent found missing that another process makes meanwhile is left to it, but not
+    followed if it is a link: the project would land wherever it points."""
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    real = cli._missing_dirs
+
+    def racing(path):
+        missing = real(path)
+        if path == tmp_path / "parent":
+            (tmp_path / "parent").symlink_to(elsewhere)
+        return missing
+
+    monkeypatch.setattr(cli, "_missing_dirs", racing)
+    code, out = _provenance("ask", QUESTION, "--source", "us", "--dir",
+                            tmp_path / "parent" / "q")
+    assert code == 1 and "as a symlink" in out, out
+    assert list(elsewhere.iterdir()) == []
 
 
 def test_a_new_directory_made_meanwhile_is_refused_not_written_into(tmp_path, monkeypatch):

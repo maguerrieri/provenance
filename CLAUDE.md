@@ -1318,8 +1318,9 @@ or a run's files, which would adopt an old layout, and `ask` refuses any directo
 Four review rounds on #10 turned up the ways a scaffold breaks that promise, each one quietly:
 - **A check before writing is not exclusivity.** A directory the command found absent is created
   with `os.mkdir()`, never `mkdir(exist_ok=True)` and never a check-then-rename, since POSIX
-  `rename()` replaces an empty directory made in between. Only directories this run made are
-  removed on a refusal.
+  `rename()` replaces an empty directory made in between. A refusal removes only the directories
+  this run made, and only files that are still the ones it installed (same inode). A parent that
+  turns up as a symlink meanwhile is refused, not followed.
 - **An interrupted run must leave no project.** Each file is written beside its name, fsynced
   and hard-linked into place (`_install()`), and the project file goes last. A partial
   `provenance.toml` would be read as the project, and a partial template refuses the retry.
