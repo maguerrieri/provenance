@@ -553,6 +553,26 @@ def test_a_refused_scaffold_leaves_a_file_another_process_put_in_its_place(tmp_p
     assert not (root / "provenance.toml").exists()
 
 
+def test_a_question_set_put_in_place_of_asks_own_is_not_adopted(tmp_path, home, monkeypatch):
+    """The run-files check exempts only the files this run still owns: a question set another
+    writer puts in place of the one `ask` installed is a run's file like any other."""
+    real = cli._install
+
+    def racing(path, body):
+        ident = real(path, body)
+        if path.name == "questions.json":
+            theirs = path.parent / ".theirs"
+            theirs.write_text('[{"id": "q1", "text": "Another question?"}]')
+            theirs.replace(path)
+        return ident
+
+    monkeypatch.setattr(cli, "_install", racing)
+    code, out = _provenance("ask", QUESTION, "--source", "us", "--dir", tmp_path / "q")
+    assert code == 1 and "holds a run's files already (questions.json)" in out, out
+    assert "Another question?" in (tmp_path / "q" / "questions.json").read_text()
+    assert not (tmp_path / "q" / "provenance.toml").exists()
+
+
 def test_a_parent_that_turns_up_as_a_symlink_is_refused(tmp_path, home, monkeypatch):
     """A parent found missing that another process makes meanwhile is left to it, but not
     followed if it is a link: the project would land wherever it points."""
