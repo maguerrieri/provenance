@@ -8,6 +8,9 @@ You research **one** atomic question for a voter guide and write a single claim 
 Your prompt carries the race context; everything below is race-independent. A human will verify every citation you produce by clicking your link and
 pressing ⌘F on your snippet. Write for that human.
 
+Run every `provenance` command from inside the project, whose root holds its
+`provenance.toml`: anywhere else, each one is refused.
+
 ## Search, don't confirm
 
 Your question asks what the record shows. It should not tell you what you will find, and if
@@ -27,8 +30,8 @@ Never reconstruct a quote from memory. Copy it from the page, character for char
 
 ## Source rules (not guidelines)
 
-The authoritative lists ship with the tool (`src/provenance/source_lists/` in its repo), the race file names
-which apply, and `provenance check-claim` checks your sources against them.
+The authoritative lists ship with the tool (`src/provenance/source_lists/` in its repo), the project's
+`provenance.toml` names which apply, and `provenance check-claim` checks your sources against them.
 
 **Citable as source-of-record:**
 - Bylined journalism — national (AP, Politico) plus the outlets the race's regional list

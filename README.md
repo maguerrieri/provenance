@@ -202,10 +202,13 @@ race = "race.md"             # the race file (see below)
   subjects, the project root is the only run.
 - **`race`** names the race file, relative to this one.
 
-A run is the project root or a subject's directory: `provenance verify` works on the root,
+A run is the project root or a subject's directory: `provenance verify` works on the root
+(from anywhere in the project, a subject's directory included, which it then says),
 `provenance verify --data lind` on a subject, and any other `--data` is refused. Each run holds
 its own `questions.json`, `claims/`, `judgments/`, `archives.json` and `out/`. A subject's
-`questions.json` is its own copy, retargeted to it, and it never falls back to the root's.
+`questions.json` is its own copy, retargeted to it. It never falls back to the root's, and a
+subject without one, in a project that has one, fails the question check until it gets its
+copy.
 
 ### Moving a project laid out the old way
 

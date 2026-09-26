@@ -1018,7 +1018,18 @@ must be the project root or a declared subject. Anything else is refused, since 
 else the project's `cache`, which means what `--cache` means (the directory that holds
 `cache/`): relative to the project file, with `~` expanded. A cache shared by several projects
 is the same path in each. No cache, output or question-set directory that happens to exist
-changes any of it, and `tests/test_project.py` checks every combination of them.
+changes any of it, and `tests/test_project.py` checks every combination of them. Three edges:
+- **The walk follows the path as given, not its symlinks' targets** (`project.find()`). A
+  subject symlinked to another disk is declared in the project it sits in; its real directory
+  has none above it. A run reached through a symlink from outside its project is refused, never
+  mistaken, since the run check compares resolved paths.
+- **A provenance.toml inside a declared subject is refused from both sides.** The nearest file
+  wins, so from inside the subject the parent's declaration was never read, and a project file
+  dropped there took the run over with a cache and source lists of its own. The parent's
+  `load()` refuses it, and so does `resolve()` from inside (`_declared_by_parent()`).
+- **With no `--data` the run is the project root, wherever in the project the command runs.**
+  From inside a subject that is easy to mistake for the subject's run, so a command that works
+  on the run says which it is, once (`cli._project()`).
 
 **Gotcha: a rule keyed on "does a cache exist here?" fulfils itself.** That is what the project
 file replaced, in two steps. `_cache_root()` first let a run's own `cache/` win if present. The
@@ -1092,7 +1103,11 @@ the template, not the copy retargeted to the candidate.
 Each run holds its own set. The project root's is the template, and a subject's is its own
 `questions.json`, retargeted to it, which `provenance new-candidate` writes. There is no
 fallback between them: a subject's run with no copy used to read the template, which is worded
-for another subject. A subject's own copy is not updated when the template gains a question, so
+for another subject. Nor does it check nothing instead: where the project has a set and the
+subject has none, no claim in it can be checked, and build, status and check-claim fail as for
+a set that can't be read (`cli._no_own_set()`). Saying so and passing would be a prose rule with
+no gate, and a subject moved from the old layout without its copy would render claims on
+retired ids that the fallback used to leave out. A subject's own copy is not updated when the template gains a question, so
 add a new one to each run's copy as well. A set that can't be read as one question per id fails the whole
 command, and build renders nothing, since no claim could be checked. The message names every
 problem: not a list, an entry with no id or text, an id no claim can carry (`QID_PATTERN`), or
