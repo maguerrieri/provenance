@@ -8,20 +8,33 @@ inherits the finding instead of rediscovering it or giving up.
 
 A negative result is worth recording too: "probed, needs a session, retrieve by hand" saves
 the next run from re-litigating it and from substituting silently.
+
+A credential never enters the registry, and nothing here prints one. That is two checks, one
+each way, and every path goes through them rather than a check of its own:
+- **In:** `check_entry()`. `save()` is the only write under `sources/access/` and
+  `dump_entry()` the only YAML an entry becomes, and both call it. `load_all()` calls it on
+  every file too, since a person with an editor is a writer as well.
+- **Out:** `redact()`. Every exception this module raises is a `Refused`, whose message has been
+  through it, and `_refusing` makes one of a library's error at every function the CLI calls.
 """
 
 from __future__ import annotations
 
+import functools
+import html
 import json
+import os
 import re
 import shlex
+import unicodedata
 from dataclasses import dataclass, field
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, distribution
 from importlib.resources import files
 from itertools import pairwise
 from pathlib import Path
-from urllib.parse import SplitResult, unquote_plus, urlsplit, urlunsplit
+from typing import NoReturn
+from urllib.parse import SplitResult, unquote, unquote_plus, urlsplit, urlunsplit
 
 import httpx
 import yaml
@@ -88,6 +101,31 @@ def credential_header(name: str) -> bool:
     return bool(_CREDENTIAL_HEADER.search(name.strip().lower()))
 
 
+class Refused(ValueError):
+    """Why the registry code won't do something. Its message has been through `redact()`, so a
+    refusal can be printed whatever it quotes. Every exception this module raises is one (a test
+    fails on any other), and `_refusing` makes one of a library's error."""
+
+    def __init__(self, message: str):
+        super().__init__(redact(message))
+
+
+def _refusing(fn):
+    """`fn`, with every exception that leaves it a `Refused`. A library's error can quote what it
+    was handed: `urlsplit()` quoted a whole netloc, login included (#158), httpx quotes a header
+    value it can't send, and PyYAML a snippet of the file around its error. Every function the
+    CLI calls carries this, and a test fails on one that doesn't."""
+    @functools.wraps(fn)
+    def refusing(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except Refused:
+            raise
+        except Exception as e:  # noqa: BLE001
+            raise Refused(f"{type(e).__name__}: {e}") from None
+    return refusing
+
+
 def _split(url: str, where: str) -> SplitResult:
     """`urlsplit(url)` for a URL from a paste or a recipe, refused without repeating it.
 
@@ -99,13 +137,59 @@ def _split(url: str, where: str) -> SplitResult:
     try:
         return urlsplit(url)
     except ValueError:
-        raise ValueError(f"{where} can't be parsed, so it can't be checked for a "
-                         "credential") from None
+        raise Refused(f"{where} can't be parsed, so it can't be checked for a "
+                      "credential") from None
+
+
+_BACKSLASH_ESCAPE = re.compile(
+    r"\\(?:u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2})|U([0-9a-fA-F]{8})|([/\\\"']))")
+
+
+def _unbackslash(text: str) -> str:
+    def one(m: re.Match) -> str:
+        if code := m.group(1) or m.group(2) or m.group(3):
+            return chr(n) if (n := int(code, 16)) <= 0x10FFFF else m.group(0)
+        return m.group(4)
+    return _BACKSLASH_ESCAPE.sub(one, text)
+
+
+def _readings(text: str) -> list[str]:
+    """`text`, then `text` as each round of decoding reads it: NFKC (a fullwidth `＠` is an `@`
+    to `urlsplit()`), percent-encoding (`%40`, and `%2540` in a second round), HTML entities and
+    backslash escapes (`\\u0040`, JSON's `\\/`). Every check for a login looks at every reading,
+    so none hides behind an encoding some reader decodes and the check doesn't."""
+    out = [text]
+    for _ in range(4):
+        t = _unbackslash(html.unescape(unquote(unicodedata.normalize("NFKC", out[-1]))))
+        if t == out[-1]:
+            break
+        out.append(t)
+    return out
+
+
+# Where a URL's authority starts, and what it runs to: an `@` in it follows a login.
+_AUTHORITY = re.compile(r"//([^/?#\s\"'<>`\\]*)")
+# `name:secret@host` with no scheme: a host argument, a proxy setting, curl's `-u` value pasted
+# whole. The colon is what tells it from an email address, and `mailto:` is one.
+_BARE_LOGIN = re.compile(r"(?<![^\s\"'<>`(=,;&?])(?!mailto:)[^\s/?#@\"'<>`:]+:"
+                         r"[^\s/?#@\"'<>`]*@[^\s/?#@\"'<>`]", re.IGNORECASE)
+
+
+def _login_in(text: str) -> bool:
+    """Whether a URL or host anywhere in `text`, in any reading of it, carries a username or
+    password: an `@` in an authority (`https://user:x@host/`, `//user@host`), or a bare
+    `name:secret@host`. It fails toward refusing: a URL nested in a parameter, a body field or a
+    note is a login wherever it sits and whatever the field is called. An `@` in a path
+    (`https://host/@user`) or in an email address is not one."""
+    readings = _readings(text)
+    return (any("@" in m.group(1) for r in readings for m in _AUTHORITY.finditer(r))
+            or any(_BARE_LOGIN.search(r) for r in readings))
 
 
 def _has_login(url: str, where: str) -> bool:
-    """A username or password in the URL itself: basic auth by another route."""
-    return "@" in _split(url, where).netloc
+    """A username or password in the URL itself, basic auth by another route: an `@` in its
+    netloc, in any reading. `%40` is a port to httpx and an `@` to a person."""
+    return any("@" in r for r in _readings(_split(url, where).netloc))
 
 
 # Parameter names need a rule of their own. In a header name, `sess`, `auth`, `pass` and `pin`
@@ -180,7 +264,14 @@ def _value_names(value: str) -> tuple[str, ...]:
 
     Cached, and cleared after each request, and `_pair_names` keeps each name once: every pair
     is read two ways, so without both a URL nested in a URL was read twice at every level, and
-    its names listed twice, and a 130-character paste ran for minutes."""
+    its names listed twice, and a 130-character paste ran for minutes.
+
+    Every value is checked for a login here too, and every value a request holds passes here:
+    each query, fragment, `;` and form value, and each JSON string at any depth. A nested URL
+    was read for its parameter names and never for its netloc, so `?next=https://user:x@host/`
+    imported with the login in it (#163)."""
+    if _login_in(value):
+        raise Refused("a URL in a parameter carries a username or password")
     if (fields := _json_container(value)) is not None:
         return tuple(_json_names(fields))
     where = "a URL in a parameter"
@@ -237,8 +328,8 @@ def _body_param_names(body: str, content_type: str) -> list[str]:
     if content_type.partition(";")[0].strip().lower() in ("", "application/x-www-form-urlencoded"):
         names = (names or []) + _pair_names(body)
     if names is None:
-        raise ValueError("the body is neither JSON nor form-encoded, so its field names can't "
-                         "be checked for a credential")
+        raise Refused("the body is neither JSON nor form-encoded, so its field names can't "
+                      "be checked for a credential")
     return names
 
 
@@ -250,13 +341,20 @@ def _shown(name: str) -> bool:
             and sum(len(w) <= 2 for w in words) <= 2)
 
 
+def _names_shown(names) -> str:
+    """Names for a message: each that reads like a name a person wrote, and a description in
+    place of any that may hold a value."""
+    names = set(names)
+    shown = sorted(n for n in names if _shown(n))
+    if len(shown) < len(names):
+        shown.append("a name that may hold a value")
+    return ", ".join(shown)
+
+
 def _credential_names(names: list[str]) -> str:
     """The names that look like credentials, for a message, or "" if none does."""
     bad = {n for n in names if credential_param(n)}
-    shown = sorted(n for n in bad if _shown(n))
-    if len(shown) < len(bad):
-        shown.append("a name that may hold a value")
-    return ", ".join(shown)
+    return _names_shown(bad) if bad else ""
 
 
 def _credential_params(url: str, headers: dict[str, str], body: str | None) -> list[str]:
@@ -265,8 +363,8 @@ def _credential_params(url: str, headers: dict[str, str], body: str | None) -> l
     or `referer` header, and the body.
 
     Refused and named, never dropped: unlike a header, a parameter is part of what the request
-    asks, so a recipe without it can run and answer a different question. Raises ValueError
-    for a body or value that can't be read."""
+    asks, so a recipe without it can run and answer a different question. Raises `Refused` for
+    a body or value that can't be read, and for a login in any value or name it reads."""
     content_type = next((v for k, v in headers.items() if k.lower() == "content-type"), "")
     try:
         found = [("its URL", _url_param_names(url, "its URL"))]
@@ -276,10 +374,76 @@ def _credential_params(url: str, headers: dict[str, str], body: str | None) -> l
         if body:
             found.append(("its body", _body_param_names(body, content_type)))
     except RecursionError:
-        raise ValueError("a parameter nests too deeply to be checked for a credential") from None
+        raise Refused("a parameter nests too deeply to be checked for a credential") from None
     finally:
         _value_names.cache_clear()
+    if any(_login_in(n) for _, names in found for n in names):
+        raise Refused("a parameter's name carries a username or password")
     return [f"{where} ({shown})" for where, names in found if (shown := _credential_names(names))]
+
+
+def _check_request(url: str, headers: dict[str, str], body: str | None) -> None:
+    """The check a request passes wherever it is recorded or sent: `check_entry()` for every
+    recipe, `run()` after filling one, and `parse_curl()` for the request a paste becomes.
+    Refuses credential headers, a login in the URL or in an `origin` or `referer` header,
+    and, through `_credential_params()`, credential parameters and a login anywhere in them.
+    Names what it found, never a value."""
+    if bad := [k for k in headers if credential_header(k)]:
+        raise Refused(f"it carries credential headers ({_names_shown(bad)})")
+    for k, v in headers.items():
+        if k.lower() in _URL_HEADERS and _has_login(v, f"its {k.lower()} header's URL"):
+            raise Refused(f"its {k.lower()} header's URL carries a username or password")
+    if _has_login(url, "its URL"):
+        raise Refused("its URL carries a username or password")
+    if found := _credential_params(url, headers, body):
+        raise Refused(f"it carries what look like credentials in {'; '.join(found)}")
+
+
+_REDACTED = "[redacted]"
+# A name and its value in a message: a header line or a YAML or JSON field (`Authorization:
+# Bearer x`, `"token": "x"`), whose value runs to its closing quote or the end of the line.
+_COLON_PAIR = re.compile(r"""(?P<name>[A-Za-z_$][\w.\-\[\]$]*)["']?[ \t]*:[ \t]*"""
+                         r"""(?P<value>"[^"\n]*"|'[^'\n]*'|[^"'\s][^"'\n]*)""")
+# ... and a query or form pair (`api_key=x`), whose value runs to the next separator.
+_EQUALS_PAIR = re.compile(r"""(?P<name>[^\s&;?#=/"'<>`]+)=(?P<value>[^\s&;#"'<>`]+)""")
+_AUTH_SCHEME = re.compile(r"\b(Bearer|Basic|Digest|Negotiate)[ \t]+[^\s\"',;]+", re.IGNORECASE)
+_TOKEN_EDGE = re.compile(r"(\s+|[\"'`<>])")
+# `KeyError: 'x'` names an exception, not a field.
+_EXCEPTION_NAME = re.compile(r"[A-Z]\w*(?:Error|Exception|Warning)")
+
+
+def _named_credential(name: str) -> bool:
+    return (not _EXCEPTION_NAME.fullmatch(name)
+            and any(credential_param(r) or credential_header(r) for r in _readings(name)))
+
+
+def redact(text: str) -> str:
+    """`text` with whatever in it may be a credential replaced by `[redacted]`: a login in any
+    URL or host, and the value of a header, parameter or field named like a credential. Each word
+    is read in every decoding `_readings()` knows, so a login percent-encoded into a parameter
+    is found too.
+
+    The one redactor for messages: a `Refused` is made through it, and the CLI prints every
+    refusal of an access command through it. It fails toward removing, as the checks going in
+    fail toward refusing: a message that says too little costs a look at the file, and one that
+    says too much prints the credential it refused. Names are left alone, since they say what to
+    fix, and a message repeats only names that read like ones a person wrote."""
+    def colon_pair(m: re.Match) -> str:
+        if m.group("value").startswith(_REDACTED) or not _named_credential(m.group("name")):
+            return m.group(0)
+        return m.group(0)[:m.start("value") - m.start()] + _REDACTED
+
+    def word(w: str) -> str:
+        if not w or _TOKEN_EDGE.fullmatch(w) or w == _REDACTED:
+            return w
+        if _login_in(w) or any(credential_param(unquote_plus(p.group("name")))
+                               for r in _readings(w) for p in _EQUALS_PAIR.finditer(r)):
+            return _REDACTED
+        return w
+
+    text = _COLON_PAIR.sub(colon_pair, text)
+    text = _AUTH_SCHEME.sub(lambda m: f"{m.group(1)} {_REDACTED}", text)
+    return "".join(word(w) for w in _TOKEN_EDGE.split(text))
 
 
 def _page_only(url: str, where: str) -> str:
@@ -322,27 +486,198 @@ class SourceAccess:
 
 
 def _norm_host(host_or_url: str) -> str:
+    """The host a command's host argument names, or a URL's. Refused if it holds a login, with
+    or without a scheme: `user:x@host` has no `://` for `.hostname` to drop it from, and
+    `provenance source-note` wrote it into the registry's file name and `host:` field (#161)."""
     h = host_or_url.strip()
+    authority = _split(h, "the host").netloc if "://" in h else re.split(r"[/?#]", h, 1)[0]
+    if any("@" in r for r in _readings(authority)):
+        raise Refused("the host holds a username or password; name the host alone")
     if "://" in h:
         h = _split(h, "the host").hostname or h
     h = h.lower()
     return h[4:] if h.startswith("www.") else h
 
 
+# A host name, which is also a registry file's name: labels of letters, digits, `-` and `_`.
+# Nothing else is one, so none can name a path out of the registry, or a file with a control
+# character in its name.
+_HOST = re.compile(r"[\w-]+(?:\.[\w-]+)*")
+
+
+def _registry_host(host_or_url: str) -> str:
+    h = _norm_host(host_or_url)
+    if not _HOST.fullmatch(h):
+        raise Refused("the host is not a host name, so it can't name a registry entry")
+    return h
+
+
+def _field(path: str, name) -> str:
+    """A field's path for a message (`recipes.notes`): each name if it reads like one a person
+    wrote, else a stand-in, since a name can hold a value."""
+    name = str(name) if _shown(str(name)) else "<a field>"
+    return f"{path}.{name}" if path else name
+
+
+def _check_text(text: str, where: str) -> None:
+    """Prose is read for the URLs in it: any login, and the parameters of any URL a reader
+    would open (one with a scheme, or `//`). A relative link is not read for parameters,
+    since documentation names a parameter that way (`/DownloadPdf?key=<hex>`)."""
+    if _login_in(text):
+        raise Refused(f"{where} holds a username or password in a URL or host")
+    for url in re.findall(r"(?:[A-Za-z][A-Za-z0-9+.-]*:)?//[^\s\"'<>`]+", text):
+        if found := _credential_params(url, {}, None):
+            raise Refused(f"{where} holds a URL carrying what look like credentials in "
+                          f"{'; '.join(found)}")
+
+
+def _check_fields(value, path: str = "") -> None:
+    """Every field of an entry, at any depth: a name like a credential's, and every string."""
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if credential_param(str(k)) or _login_in(str(k)):
+                raise Refused(f"it has a field named like a credential "
+                              f"({_names_shown([str(k)])})")
+            _check_fields(v, _field(path, k))
+    elif isinstance(value, list):
+        for v in value:
+            _check_fields(v, path)
+    elif isinstance(value, str):
+        _check_text(value, f"its field {path}")
+
+
+@_refusing
+def check_entry(entry, host: str | None = None) -> None:
+    """The one check every registry entry passes, whatever wrote it. `save()`, `dump_entry()` and
+    `load_all()` call it, so an entry a command writes, one printed to be pasted into a file,
+    and one a person edited by hand are all held to it. Refuses, naming where and never what:
+    - a host that holds a login, or is not a host name: `host` (the file's), and its `host:`;
+    - each recipe's request as `run()` would send it (`_check_request()`): credential headers,
+      a login in its URL or its `origin` or `referer`, and credential parameters or a login in
+      its URL, those headers and its body, a URL nested in any of them included;
+    - a recipe param named like a credential, since a recipe that asks for one at run time is
+      a manual retrieval;
+    - a field named like a credential, at any depth, and a login in any string, prose included.
+    """
+    if not isinstance(entry, dict):
+        raise Refused("an entry is a mapping of fields")
+    for h in ([host] if host is not None else []) + ([entry["host"]] if "host" in entry else []):
+        _registry_host(str(h))
+    recipes = entry.get("recipes") or []
+    if not isinstance(recipes, list):
+        raise Refused("its recipes are not a list")
+    for n, r in enumerate(recipes, 1):
+        if not isinstance(r, dict):
+            raise Refused(f"its recipe {n} is not a mapping")
+        rid = r.get("id")
+        where = f"recipe {rid!r}" if isinstance(rid, str) and _shown(rid) else f"recipe {n}"
+        headers = r.get("headers") or {}
+        if not isinstance(headers, dict):
+            raise Refused(f"{where}'s headers are not a mapping")
+        body = r.get("body")
+        try:
+            _check_request(str(r.get("url") or ""), {str(k): str(v) for k, v in headers.items()},
+                           None if body is None else str(body))
+        except Refused as e:
+            # Never `name: reason`: to the redactor that reads as a field and its value, and a
+            # recipe called `token` would lose its reason.
+            raise Refused(f"in {where}, {e}") from None
+        params = r.get("params") or []
+        if bad := [str(p) for p in (params if isinstance(params, list) else [params])
+                   if credential_param(str(p))]:
+            raise Refused(f"{where} asks for what look like credentials ({_names_shown(bad)})")
+    _check_fields(entry)
+
+
+@_refusing
+def dump_entry(entry: dict, host: str | None = None) -> str:
+    """An entry as the YAML the registry holds, checked first: the only way one becomes YAML,
+    whether it is written or printed for a person to paste into a file."""
+    check_entry(entry, host)
+    return yaml.safe_dump(entry, sort_keys=False, allow_unicode=True, width=100)
+
+
+@_refusing
+def entry_path(host: str) -> Path:
+    """Where the registry keeps `host`'s entry, for both commands that write it. The host is
+    checked (`_registry_host()`): it names the file, and a `/`, `..` or, on Windows, a `\\`
+    in it named a file outside the registry, to be read, printed and rewritten."""
+    path = REGISTRY / f"{_registry_host(host)}.yaml"
+    if path.parent != REGISTRY:
+        raise Refused("the host is not a host name, so it can't name a registry entry")
+    return path
+
+
+@_refusing
+def save(host: str, entry: dict) -> Path:
+    """Write `entry` as the registry's entry for `host`: the only write under `sources/access/`,
+    and a checked one (`dump_entry()`). Whole or not at all: a temp file, then a rename."""
+    path = entry_path(host)
+    text = dump_entry(entry, host)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(text)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return path
+
+
+def _read_entry(path: Path) -> dict:
+    raw = yaml.safe_load(path.read_text()) or {}
+    if not isinstance(raw, dict):
+        raise Refused("it is not a mapping of fields")
+    return raw
+
+
+@_refusing
+def with_note(host: str, finding: str, *, access: str = "",
+              verified: str = "") -> tuple[str, dict]:
+    """`host` as the registry names it, and its entry with `finding` appended, or a stub with it
+    if there is none. Nothing is written: `save()` writes it, checking the whole entry again,
+    what was there already included, and in an installed copy the CLI prints it instead."""
+    h = _registry_host(host)
+    path = entry_path(h)
+    data = (_read_entry(path) if path.exists()
+            else {"host": h, "name": "", "access": access or "unknown"})
+    if access:
+        data["access"] = access
+    if verified:
+        data["verified"] = verified
+    data["findings"] = ((data.get("findings") or "") + ("\n" if data.get("findings") else "")
+                        + finding)
+    return h, data
+
+
+@_refusing
 def load_all(registry: Path | None = None) -> dict[str, SourceAccess]:
+    """Every entry in the registry, each checked as `save()` checks one: a file is also written
+    by hand, and one holding a credential is refused, naming its host, before anything reads it."""
     d = registry or REGISTRY
     out: dict[str, SourceAccess] = {}
     for p in sorted(d.glob("*.yaml")) if d.exists() else []:
-        raw = yaml.safe_load(p.read_text()) or {}
-        recipes = [Recipe(**{**r, "headers": r.get("headers") or {}}) for r in (raw.pop("recipes", None) or [])]
-        raw.pop("host", None)
-        host = _norm_host(p.stem)
-        out[host] = SourceAccess(host=host, recipes=recipes,
-                                 **{k: v for k, v in raw.items()
-                                    if k in SourceAccess.__dataclass_fields__})
+        try:
+            host = _registry_host(p.stem)
+        except Refused as e:
+            raise Refused(f"a file in the registry is not named for a host ({e}); rename it "
+                          "to the host it records") from None
+        try:
+            raw = _read_entry(p)
+            check_entry(raw, host)
+            recipes = [Recipe(**{**r, "headers": r.get("headers") or {}})
+                       for r in (raw.pop("recipes", None) or [])]
+            raw.pop("host", None)
+            out[host] = SourceAccess(host=host, recipes=recipes,
+                                     **{k: v for k, v in raw.items()
+                                        if k in SourceAccess.__dataclass_fields__})
+        except Exception as e:  # noqa: BLE001
+            why = str(e) if isinstance(e, Refused) else f"{type(e).__name__}: {e}"
+            raise Refused(f"the registry's entry for {host} can't be used, {why}") from None
     return out
 
 
+@_refusing
 def find(host_or_url: str, registry: Path | None = None) -> SourceAccess | None:
     """Registry entry for a host, matching parent domains too."""
     host = _norm_host(host_or_url)
@@ -358,27 +693,22 @@ def find(host_or_url: str, registry: Path | None = None) -> SourceAccess | None:
 _MANUAL_RECIPE = "record it as access: manual instead"
 
 
+@_refusing
 def run(recipe: Recipe, params: dict[str, str], *, timeout: float = 45.0) -> httpx.Response:
     """Execute a recipe. Credential headers and parameters are refused, not stripped: a
-    recipe that needs one is describing a manual retrieval and should be recorded as such."""
-    def checked(check, *args):
-        """A check whose own refusal (a value it can't read) names the recipe."""
+    recipe that needs one is describing a manual retrieval and should be recorded as such.
+    Checked with `_check_request()`, as `check_entry()` checks it, before filling and again
+    after: a param can put a login in the host, or a whole `name=value` pair in the query."""
+    def checked(url: str, body: str | None) -> None:
         try:
-            return check(*args)
-        except ValueError as e:
-            raise ValueError(f"recipe {recipe.id!r}: {e}; {_MANUAL_RECIPE}") from None
+            _check_request(url, recipe.headers, body)
+        except Refused as e:
+            raise Refused(f"in recipe {recipe.id!r}, {e}; {_MANUAL_RECIPE}") from None
 
-    bad = sorted(k for k in recipe.headers if credential_header(k))
-    if bad:
-        raise ValueError(f"recipe {recipe.id!r} carries credential headers ({', '.join(bad)}); "
-                         f"{_MANUAL_RECIPE}")
-    if any(checked(_has_login, v, f"its {k.lower()} header's URL")
-           for k, v in recipe.headers.items() if k.lower() in _URL_HEADERS):
-        raise ValueError(f"recipe {recipe.id!r} puts a username or password in a header's URL; "
-                         f"{_MANUAL_RECIPE}")
+    checked(recipe.url, recipe.body)
     missing = [p for p in recipe.params if p not in params]
     if missing:
-        raise ValueError(f"recipe {recipe.id!r} needs {', '.join(missing)}")
+        raise Refused(f"recipe {recipe.id!r} needs {', '.join(missing)}")
     # Substitute only the declared params. str.format() would choke on the JSON braces in
     # a body — which is most of them, since these are XHR endpoints.
     def fill(text: str) -> str:
@@ -387,26 +717,22 @@ def run(recipe: Recipe, params: dict[str, str], *, timeout: float = 45.0) -> htt
         return text
 
     url = fill(recipe.url)
-    # Checked after filling: a param can land in the host part too.
-    if checked(_has_login, url, "its URL"):
-        raise ValueError(f"recipe {recipe.id!r} puts a username or password in its URL; "
-                         f"{_MANUAL_RECIPE}")
     body = fill(recipe.body) if recipe.body else None
-    # Also checked after filling, since a param can hold a whole `name=value` pair.
-    found = checked(_credential_params, url, recipe.headers, body)
-    if found:
-        raise ValueError(f"recipe {recipe.id!r} carries what look like credentials in "
-                         f"{'; '.join(found)}; {_MANUAL_RECIPE}")
+    checked(url, body)
     headers = {"user-agent": "Mozilla/5.0", **recipe.headers}
     try:
         return httpx.request(recipe.method.upper(), url, timeout=timeout, follow_redirects=True,
                              headers=headers,
                              content=body.encode() if body else None)
     except httpx.InvalidURL:
-        # httpx reads the URL again, and its error quotes the part it can't read: a password
-        # written with `%40` for its `@` is a port to it, and `Invalid port: '...'` printed it.
-        raise ValueError(f"recipe {recipe.id!r}: its URL can't be sent as it is; "
-                         f"{_MANUAL_RECIPE}") from None
+        # httpx reads the URL again, and its error quotes the part it can't read: a port it
+        # can't read, and `Invalid port: '...'` printed it.
+        raise Refused(f"in recipe {recipe.id!r}, its URL can't be sent as it is; "
+                      f"{_MANUAL_RECIPE}") from None
+    except httpx.LocalProtocolError:
+        # And a header value it can't send is quoted whole, whatever the header is called.
+        raise Refused(f"in recipe {recipe.id!r}, a header can't be sent as it is; "
+                      f"{_MANUAL_RECIPE}") from None
 
 
 # curl's options, by what an import does with them. Every option's arity has to be known: one
@@ -431,15 +757,18 @@ _CURL_VALUE_OPTIONS = frozenset({
 
 _MANUAL = ("An endpoint that needs one is a manual retrieval: record it with "
            "`provenance source-note <host> <finding> --access manual`")
+_PASTE_REFUSED = ("Remove it from the paste if the request works without it. Otherwise record "
+                  "the endpoint by hand, as a manual retrieval: "
+                  "`provenance source-note <host> <finding> --access manual`")
 
 
-def _refuse_option(option: str) -> ValueError:
+def _refuse_option(option: str) -> NoReturn:
     # Name the option alone: its value may be the credential.
     name = option.partition("=")[0]
     if name in _CURL_CREDENTIAL_OPTIONS:
-        return ValueError(f"curl {name} passes a credential. {_MANUAL}")
-    return ValueError(f"unsupported curl option {name}: remove it if the request works "
-                      "without it, or record the endpoint by hand")
+        raise Refused(f"curl {name} passes a credential. {_MANUAL}")
+    raise Refused(f"unsupported curl option {name}: remove it if the request works "
+                  "without it, or record the endpoint by hand")
 
 
 def _curl_arguments(args: list[str]):
@@ -466,7 +795,7 @@ def _curl_arguments(args: list[str]):
             if option in _CURL_FLAGS:
                 yield option, None
             elif option not in _CURL_VALUE_OPTIONS:
-                raise _refuse_option(option)
+                _refuse_option(option)
             elif rest:
                 yield option, rest
                 break
@@ -475,9 +804,10 @@ def _curl_arguments(args: list[str]):
                 i += 1
                 break
             else:
-                raise ValueError(f"curl {option} needs a value")
+                raise Refused(f"curl {option} needs a value")
 
 
+@_refusing
 def parse_curl(text: str) -> dict:
     """Turn a browser 'copy as cURL' into a registry entry, minus credentials.
 
@@ -492,7 +822,7 @@ def parse_curl(text: str) -> dict:
     text = re.sub(r"\\\s*\n", " ", text).strip()
     tokens = shlex.split(text)
     if not tokens or tokens[0] != "curl":
-        raise ValueError("not a curl command")
+        raise Refused("not a curl command")
 
     urls: list[str] = []
     method, body = None, None
@@ -501,29 +831,26 @@ def parse_curl(text: str) -> dict:
     unknown: list[str] = []
 
     def checked(check, *args):
-        """A check whose own refusal (a value it can't read) says what to do instead."""
+        """A check whose refusal says what to do instead."""
         try:
             return check(*args)
-        except ValueError as e:
-            raise ValueError(f"{e}. Record the endpoint by hand with "
-                             "`provenance source-note <host> <finding>`") from None
+        except Refused as e:
+            raise Refused(f"the pasted request: {e}. {_PASTE_REFUSED}") from None
 
     def header(name: str, value: str) -> None:
         name = name.strip().lower()
         if not _HEADER_NAME.fullmatch(name):
             # Not a name, so perhaps a value that lost its colon. Named nowhere.
-            raise ValueError("a curl header's name is not a header name; fix it or remove it")
+            raise Refused("a curl header's name is not a header name; fix it or remove it")
         value = value.strip()
         if credential_header(name):
             dropped.append(name)
         elif name not in SAFE_HEADERS:
             unknown.append(name)
-        elif name in _URL_HEADERS and checked(_has_login, value, f"the {name} header's URL"):
-            raise ValueError(f"the {name} header carries a username or password. {_MANUAL}")
         elif name == "referer":
             # The URL of the page the request came from, and a session id can ride in that
             # page's query or `;jsessionid=` parameters. The page itself is what a site checks.
-            headers[name] = _page_only(value, "the referer header's URL")
+            headers[name] = checked(_page_only, value, "its referer header's URL")
         else:
             headers[name] = value
 
@@ -536,7 +863,7 @@ def parse_curl(text: str) -> dict:
                 # curl's `Name;` sends the header empty. Anything else without a colon is not
                 # a header, and may be a value: refused without repeating it.
                 if not value.rstrip().endswith(";"):
-                    raise ValueError("a curl -H has no colon; write it `Name: value`")
+                    raise Refused("a curl -H has no colon; write it `Name: value`")
                 name, v = value.rstrip()[:-1], ""
             elif not v.strip():
                 continue  # curl's `Name:` removes the header rather than sending it empty
@@ -558,21 +885,17 @@ def parse_curl(text: str) -> dict:
     # A second argument is what a misread option's value looks like, so it is refused rather
     # than ignored. None of these messages repeats the URL: it may hold the credential.
     if not urls:
-        raise ValueError("no URL in curl command")
+        raise Refused("no URL in curl command")
     if len(urls) > 1:
-        raise ValueError(f"{len(urls)} URLs in the curl command; import one request at a time")
+        raise Refused(f"{len(urls)} URLs in the curl command; import one request at a time")
     url = urls[0]
-    parts = checked(_split, url, "the curl command's URL")
+    parts = checked(_split, url, "its URL")
     if parts.scheme not in ("http", "https") or not parts.hostname:
-        raise ValueError("the curl command's URL is not an absolute http(s) URL")
-    if _has_login(url, "the curl command's URL"):
-        raise ValueError(f"the URL carries a username or password. {_MANUAL}")
-    found = checked(_credential_params, url, headers, body)
-    if found:
-        raise ValueError(f"the request carries what look like credentials in "
-                         f"{'; '.join(found)}. Remove them from the paste if the request works "
-                         f"without them. {_MANUAL}")
-    host = _norm_host(url)
+        raise Refused("the curl command's URL is not an absolute http(s) URL")
+    # The check `run()` and `check_entry()` make, on the request as it will be recorded: the
+    # headers left once credentials and unknown ones are dropped, and the referer's page.
+    checked(_check_request, url, headers, body)
+    host = checked(_registry_host, url)
     entry = {
         "host": host,
         "name": "",
@@ -591,5 +914,6 @@ def parse_curl(text: str) -> dict:
                      "relying on it.",
         }],
     }
+    checked(check_entry, entry)
     return {"entry": entry, "dropped_credentials": sorted(set(dropped)),
             "dropped_headers": sorted(set(unknown))}

@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Annotated, NoReturn
 
 import typer
-import yaml
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
@@ -1969,6 +1968,36 @@ def clear_contradiction(question_id: str, sid: str, data: Path = None, project: 
               f"{escape(_printable(str(dest)))}")
 
 
+def _access_refused(message: str, style: str = "red") -> NoReturn:
+    """How a source-access command refuses: `message` through `access.redact()`, the one
+    redactor for messages, then printed as `_refuse()` prints, and exit 1. Every access
+    command's refusal and error leaves through here (`_access_refusals()`), and a test fails on
+    an access command that exits or catches any other way. A refusal quotes what it was handed
+    (a host argument, a recipe name, a library's error quoting a file), and one that echoed a
+    credential would print it to a terminal an agent's log keeps."""
+    from . import access
+
+    con.print(Text(_printable(access.redact(message), lines=True), style=style), soft_wrap=True)
+    raise typer.Exit(1)
+
+
+@contextmanager
+def _access_refusals():
+    """Around the whole of an access command: whatever it raises is printed by
+    `_access_refused()`, never as a traceback. A `Refused` is the registry code's own refusal,
+    printed as it is; anything else is printed with its type, as a bug to report."""
+    from . import access
+
+    try:
+        yield
+    except typer.Exit:
+        raise
+    except access.Refused as e:
+        _access_refused(str(e))
+    except Exception as e:  # noqa: BLE001
+        _access_refused(f"{type(e).__name__}: {e}")
+
+
 @app.command(name="source-access")
 def source_access(host: str = typer.Argument(""), run_recipe: str = "",
                   param: list[str] = None):
@@ -1982,84 +2011,67 @@ def source_access(host: str = typer.Argument(""), run_recipe: str = "",
     """
     from . import access
 
-    if not host:
-        entries = access.load_all()
-        if not entries:
-            con.print("Registry is empty.")
+    with _access_refusals():
+        if not host:
+            entries = access.load_all()
+            if not entries:
+                con.print("Registry is empty.")
+                return
+            t = Table("host", "access", "recipes", "what it is", box=None)
+            for h, e in sorted(entries.items()):
+                # Registry files are data, and `source-import-curl` writes them from a paste.
+                t.add_row(Text(_printable(h)), Text(_printable(str(e.access))),
+                          Text(_printable(", ".join(str(r.id) for r in e.recipes) or "-")),
+                          Text(_printable(str(e.name))))
+            con.print(t)
             return
-        t = Table("host", "access", "recipes", "what it is", box=None)
-        for h, e in sorted(entries.items()):
-            # Registry files are data, and `source-import-curl` writes them from a paste.
-            t.add_row(Text(_printable(h)), Text(_printable(str(e.access))),
-                      Text(_printable(", ".join(str(r.id) for r in e.recipes) or "-")),
-                      Text(_printable(str(e.name))))
-        con.print(t)
-        return
 
-    entry = access.find(host)
-    if entry is None:
-        con.print(f"[yellow]Nothing recorded for {escape(_printable(host))}.[/]\n"
-                  f"If you find a way in, record it: `provenance source-import-curl <file>` after "
-                  f"copying the request from dev tools. If it needs a login, record that too "
-                  f"— a known dead end saves the next run from substituting silently.")
-        raise typer.Exit(1)
+        entry = access.find(host)
+        if entry is None:
+            _access_refused(f"Nothing recorded for {host}.\n"
+                            f"If you find a way in, record it: `provenance source-import-curl "
+                            f"<file>` after copying the request from dev tools. If it needs a "
+                            f"login, record that too — a known dead end saves the next run from "
+                            f"substituting silently.", style="yellow")
 
-    # YAML reads an unquoted `verified: 2026-08-21` as a date, hence str() before escape(). The
-    # prose fields are often block scalars, so they keep their line breaks.
-    def prose(value) -> str:
-        return _printable(str(value).strip(), lines=True)
+        # YAML reads an unquoted `verified: 2026-08-21` as a date, hence str() before escape().
+        # The prose fields are often block scalars, so they keep their line breaks.
+        def prose(value) -> str:
+            return _printable(str(value).strip(), lines=True)
 
-    con.print(f"[bold]{escape(_printable(entry.host))}[/] — {escape(_printable(str(entry.name)))}  "
-              f"([bold]{escape(_printable(str(entry.access)))}[/], "
-              f"verified {escape(_printable(str(entry.verified or 'unknown')))})")
-    if entry.naive_fetch:
-        con.print(f"\n[dim]a plain fetch gets:[/] {escape(prose(entry.naive_fetch))}")
-    for r in entry.recipes:
-        con.print(f"\n[bold]{escape(_printable(str(r.id)))}[/] "
-                  + escape(_printable(str(r.summary)) + "\n  " + _printable(f"{r.method} {r.url}")
-                           + (f"\n  params: {_printable(', '.join(map(str, r.params)))}"
-                              if r.params else "")
-                           + (f"\n  {prose(r.notes)}" if r.notes else "")))
-    if entry.limits:
-        con.print(f"\n[yellow]limits:[/] {escape(prose(entry.limits))}")
-    if entry.manual_steps:
-        con.print(f"\n[yellow]manual retrieval:[/] {escape(prose(entry.manual_steps))}")
+        con.print(f"[bold]{escape(_printable(entry.host))}[/] — "
+                  f"{escape(_printable(str(entry.name)))}  "
+                  f"([bold]{escape(_printable(str(entry.access)))}[/], "
+                  f"verified {escape(_printable(str(entry.verified or 'unknown')))})")
+        if entry.naive_fetch:
+            con.print(f"\n[dim]a plain fetch gets:[/] {escape(prose(entry.naive_fetch))}")
+        for r in entry.recipes:
+            con.print(f"\n[bold]{escape(_printable(str(r.id)))}[/] "
+                      + escape(_printable(str(r.summary)) + "\n  "
+                               + _printable(f"{r.method} {r.url}")
+                               + (f"\n  params: {_printable(', '.join(map(str, r.params)))}"
+                                  if r.params else "")
+                               + (f"\n  {prose(r.notes)}" if r.notes else "")))
+        if entry.limits:
+            con.print(f"\n[yellow]limits:[/] {escape(prose(entry.limits))}")
+        if entry.manual_steps:
+            con.print(f"\n[yellow]manual retrieval:[/] {escape(prose(entry.manual_steps))}")
 
-    if run_recipe:
-        recipe = entry.recipe(run_recipe)
-        if recipe is None:
-            con.print(f"[red]no recipe {escape(repr(run_recipe))}[/]")
-            raise typer.Exit(1)
-        params = dict(p.split("=", 1) for p in (param or []))
-        try:
+        if run_recipe:
+            recipe = entry.recipe(run_recipe)
+            if recipe is None:
+                _access_refused(f"no recipe {run_recipe!r}")
+            params = dict(p.split("=", 1) for p in (param or []))
             resp = access.run(recipe, params)
-        except Exception as e:  # noqa: BLE001
-            # Escaped: a refusal names parameters like `auth[token]`.
-            con.print(f"[red]{escape(_printable(f'{type(e).__name__}: {e}', lines=True))}[/]")
-            raise typer.Exit(1) from None
-        con.print(f"\n[bold]HTTP {resp.status_code}[/] {len(resp.text)} chars")
-        _print_copied(resp.text, 1500)   # fetched, and copied from
-
-
-def _registry_entry(host: str) -> Path:
-    """The registry file for `host`, which comes from an agent's argument or a pasted URL. Both
-    commands that write the registry join it here, and nowhere else: a "/" or ".." in it (a
-    "\\" on Windows, where a URL's hostname can hold one) names a file outside the registry,
-    which would be read, printed and rewritten, so it is refused before anything is read."""
-    from . import access
-
-    path = access.REGISTRY / f"{host}.yaml"
-    if path.parent != access.REGISTRY:
-        con.print(Text(f"refused: {_printable(host)} is not a host name, so it names no "
-                       f"registry entry", style="red"), soft_wrap=True)
-        raise typer.Exit(1)
-    return path
+            con.print(f"\n[bold]HTTP {resp.status_code}[/] {len(resp.text)} chars")
+            _print_copied(resp.text, 1500)   # fetched, and copied from
 
 
 def _registry_write_refused(dest: Path, text: str) -> NoReturn:
     """Print the entry instead of writing it, in an installed copy: the registry ships inside
     the package there, and the next install would delete the file (access.installed_copy()).
-    Called where the write would be, so the entry has passed every check a write does. For a
+    Called where the write would be, with the text `access.dump_entry()` made, so the entry has
+    passed every check a write does, and `dest` is `access.entry_path()`'s, a checked host. For a
     host that already has an entry, what is printed is this install's copy with the change
     applied, and the repo's may be newer, so it says to merge rather than replace."""
     where = f"src/provenance/source_access/{_printable(dest.name)}"
@@ -2080,26 +2092,18 @@ def source_note(host: str, note: str, access: str = "", verified: str = ""):
 
     The Form 700 download flow was found by reading the portal's own script bundle, not by
     copying a cURL — so there was nowhere to put it and it nearly stayed in one session's
-    head. Appends to the host's entry, creating a stub if there is none.
+    head. Appends to the host's entry, creating a stub if there is none. The note and the
+    host are checked as every registry write is (`access.check_entry()`): a login in either,
+    or in a URL the note quotes, is refused and nothing is written.
     """
     from . import access as access_mod
 
-    entry_path = _registry_entry(access_mod._norm_host(host))
-    if entry_path.exists():
-        data = yaml.safe_load(entry_path.read_text()) or {}
-    else:
-        data = {"host": access_mod._norm_host(host), "name": "", "access": access or "unknown"}
-    if access:
-        data["access"] = access
-    if verified:
-        data["verified"] = verified
-    data["findings"] = (data.get("findings") or "") + ("\n" if data.get("findings") else "") + note
-    text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=100)
-    if access_mod.installed_copy():
-        _registry_write_refused(entry_path, text)
-    entry_path.parent.mkdir(parents=True, exist_ok=True)
-    entry_path.write_text(text)
-    con.print(f"[green]recorded[/] {escape(_printable(str(entry_path)))}")
+    with _access_refusals():
+        h, entry = access_mod.with_note(host, note, access=access, verified=verified)
+        if access_mod.installed_copy():
+            _registry_write_refused(access_mod.entry_path(h), access_mod.dump_entry(entry, h))
+        path = access_mod.save(h, entry)
+        con.print(f"[green]recorded[/] {escape(_printable(str(path)))}")
 
 
 @app.command(name="source-import-curl")
@@ -2112,46 +2116,43 @@ def source_import_curl(path: Path, name: str = "", write: bool = True):
     URL parameter or body field named like a credential (`api_key`, `csrf_token`), a body
     that is neither JSON nor form-encoded, or a curl option the importer doesn't know refuses
     the import. If the endpoint only works with a credential, it is a manual retrieval, not a
-    pipeline capability: record it as `access: manual`.
+    pipeline capability: record it as `access: manual`. The entry is checked as every
+    registry write is (`access.check_entry()`), printed or written, `--name` included.
     """
     from . import access
 
-    try:
+    with _access_refusals():
         parsed = access.parse_curl(path.read_text())
-    except (OSError, ValueError) as e:
-        con.print(f"[red]{escape(_printable(str(e), lines=True))}[/]")
-        raise typer.Exit(1) from None
+        entry = parsed["entry"]
+        entry["name"] = name or entry["name"]
+        # Checked before anything is printed: `--name` is text of its own.
+        text = access.dump_entry(entry)
+        dropped = parsed["dropped_credentials"]
+        if dropped:
+            con.print(f"[yellow]dropped credentials:[/] {escape(_printable(', '.join(dropped)))}"
+                      f" — confirm the endpoint still works without them before relying on it")
+        unknown = parsed["dropped_headers"]
+        if unknown:
+            con.print(f"[yellow]dropped headers not known to be safe:[/] "
+                      f"{escape(_printable(', '.join(unknown)))}"
+                      f" — if the endpoint needs one and it is not a credential, add it by hand")
 
-    entry = parsed["entry"]
-    entry["name"] = name or entry["name"]
-    dropped = parsed["dropped_credentials"]
-    if dropped:
-        con.print(f"[yellow]dropped credentials:[/] {escape(_printable(', '.join(dropped)))} — "
-                  f"confirm the endpoint still works without them before relying on it")
-    unknown = parsed["dropped_headers"]
-    if unknown:
-        con.print(f"[yellow]dropped headers not known to be safe:[/] "
-                  f"{escape(_printable(', '.join(unknown)))}"
-                  f" — if the endpoint needs one and it is not a credential, add it by hand")
-
-    dest = _registry_entry(entry["host"])
-    text = yaml.safe_dump(entry, sort_keys=False, allow_unicode=True, width=100)
-    # The entry is the pasted request, and YAML to be copied into a file: allow_unicode leaves a
-    # bidi override or NEL in it as it was pasted.
-    if not write:
-        _print_copied(text)
-        return
-    if access.installed_copy():
-        _registry_write_refused(dest, text)
-    if dest.exists():
-        con.print(f"[yellow]{escape(_printable(str(dest)))} exists — printing instead of "
-                  f"overwriting[/]\n")
-        _print_copied(text)
-        return
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(text)
-    con.print(f"[green]wrote[/] {escape(_printable(str(dest)))}\n"
-              f"Fill in `summary`, `params`, and `notes`, then verify it works cookieless.")
+        # The entry is the pasted request, and YAML to be copied into a file: allow_unicode
+        # leaves a bidi override or NEL in it as it was pasted.
+        if not write:
+            _print_copied(text)
+            return
+        dest = access.entry_path(entry["host"])
+        if access.installed_copy():
+            _registry_write_refused(dest, text)
+        if dest.exists():
+            con.print(f"[yellow]{escape(_printable(str(dest)))} exists — printing instead of "
+                      f"overwriting[/]\n")
+            _print_copied(text)
+            return
+        dest = access.save(entry["host"], entry)
+        con.print(f"[green]wrote[/] {escape(_printable(str(dest)))}\n"
+                  f"Fill in `summary`, `params`, and `notes`, then verify it works cookieless.")
 
 
 @app.command(name="form700")
