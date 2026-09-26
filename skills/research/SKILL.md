@@ -36,6 +36,46 @@ command works on the root's run, wherever in the project it runs from. A subject
 person: a proposal or a document works the same way, and two versions of an amended proposal
 are two subjects.
 
+## Where a run starts: `provenance new` or `provenance ask`
+
+The operator starts a project with one of two commands, and each prints the command that opens
+Claude Code in it with this skill invoked. Neither command researches anything: this skill does.
+
+**`provenance new <dir> --from <template> --source <list>`** writes the project's
+`provenance.toml` and copies the template to `template.md`, at the project root. Run every
+phase below from there. Before Phase 0, read `provenance.toml` yourself: if its `context` is
+empty, ask the operator where the records are (which bodies keep minutes, which hosts serve
+which documents), since that is what every researcher is told. The operator edits the file:
+no command does, and nor do you.
+
+If `provenance.toml` lists `subjects`, each is a separate run. Once the operator approves the
+split and Phase 0 has written the root's `questions.json`, run `provenance new-subject <id>`
+for each subject. It copies the questions into the subject's directory, retargeted to the
+subject's name. Then research each subject's run: its researchers get the subject's own
+questions and `provenance brief --subject <id>`, and every command after that takes
+`--subject <id>`. With no `subjects`, the root is the only run.
+
+**`provenance ask "<question>" --source <list>`** creates a new project holding one question,
+`q1`, in `questions.json`, with no template. Its hand-off invokes this skill with `ask`. A
+project with a `questions.json` and no `template.md` is one too. For it, skip Phase 0, and
+check two things before any researcher runs:
+- **The question asks what the record shows.** One that names the answer it expects ("confirm
+  that…") gets that answer back, and nothing else surfaces. Propose a rewording that asks what
+  the record shows.
+- **Its `claim_type`.** A question negative or contested about someone or something is
+  `adversarial` (Phase 0, step 4). If it was not asked with `--adversarial`, say so and offer
+  the change.
+
+Make either change in `questions.json` only with the operator's approval. No claim or verdict
+is filed under `q1` until a researcher writes one, so the question can still change. Once a
+researcher has, `q1` is fixed, and a different question is a new `provenance ask`.
+
+Then run Phases 1 to 3 as written, for the one question: one `provenance:researcher`, which
+must pass `provenance check-claim`, and after `provenance verify`, one fresh
+`provenance:verifier`, never the researcher's own session. The guarantees are the template
+run's: the question asks what the record shows, the claim passes the check-claim gate, and a
+fresh verifier judges every source.
+
 ## Phase 0 — split the template
 
 1. Read the project's `template.md`.
