@@ -61,8 +61,23 @@ def test_notes_are_read_in_the_projects_order_once_each(tmp_path):
     (tmp_path / "a-notes.md").write_text("<!-- for maintainers -->\n\nAbout a.\n")
     (tmp_path / "b-notes.md").write_text("About b.\n")
     (tmp_path / "c-notes.md").write_text("<!-- only a comment -->\n")
+    for name in "abc":
+        (tmp_path / f"{name}-sources.yaml").write_text("bylined_journalism: []\n")
     got = sources.notes(("b", "a", "b", "c", "d"), sources_dir=tmp_path)
     assert got == [("b", "About b."), ("a", "About a.")]
+
+
+def test_only_a_listed_source_list_has_notes(tmp_path):
+    """A name is joined into a path, so one no list answers to reads nothing: not a notes file
+    beside no list, and not one outside the directory."""
+    lists = tmp_path / "lists"
+    lists.mkdir()
+    (lists / "a-sources.yaml").write_text("bylined_journalism: []\n")
+    (lists / "a-notes.md").write_text("About a.\n")
+    (lists / "orphan-notes.md").write_text("No list.\n")
+    (tmp_path / "secret-notes.md").write_text("Outside.\n")
+    got = sources.notes(("a", "orphan", "../secret"), sources_dir=lists)
+    assert got == [("a", "About a.")]
 
 
 def test_the_completeness_check_stays_out_of_a_brief_with_notes(tmp_path):

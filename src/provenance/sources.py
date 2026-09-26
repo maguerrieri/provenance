@@ -52,10 +52,15 @@ def notes(names: tuple[str, ...], sources_dir: str | Path | None = None) -> list
     filings come in series, which portals answer only through a bulk export). A list with no
     notes file has none. `provenance brief` hands them to every researcher and verifier, so the
     core agents and skill carry no domain content. A leading `<!-- ... -->` is a note to the
-    tool's maintainers and is left out."""
+    tool's maintainers and is left out. Only a listed source list has notes: a name is joined
+    into a path, so one that `available()` doesn't list (`../x`, a typo) reads nothing, though
+    `project.load()` already refuses a project naming one."""
     d = Path(sources_dir) if sources_dir else SOURCES_DIR
+    listed = set(available(d))
     found = []
     for name in dict.fromkeys(names):
+        if name not in listed:
+            continue
         p = d / f"{name}-notes.md"
         if not p.is_file():
             continue
