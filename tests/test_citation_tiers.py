@@ -328,8 +328,10 @@ def test_the_review_page_and_claims_json_carry_each_rows_tier(tmp_path):
     assert [s["tier"] for s in built[0]["sources"]] == ["reporting", "opinion", "unlisted_outlet"]
     page = (tmp_path / "out" / "review.html").read_text()
     assert page.count("This supports only what its author argues") == 2
-    assert ("levy-watch.example is not on this project's source lists as a news outlet, so "
-            "this is not counted as reporting.") in " ".join(page.split())
+    # The host as primary_hosts and the source lists spell one, isolated as the secondary-host
+    # notice beside it is (#179).
+    assert ("<bdi>levy-watch.example</bdi> is not on this project's source lists as a news "
+            "outlet, so this is not counted as reporting.") in " ".join(page.split())
 
     # The verifier sees the tier too: labeled reporting, it is an unlisted outlet, and the
     # verifier judges an argued tier's claim form.

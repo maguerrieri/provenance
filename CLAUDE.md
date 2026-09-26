@@ -1409,8 +1409,11 @@ as a copy. Passing unlisted hosts instead would reopen the substitution this exi
   `sources.py` and `project.py` (`test_no_command_reads_the_lists_without_the_projects_hosts`).
 - **An entry that would fail open is refused.** A scheme, a path, a port or `www.` matches no
   URL, so the real host's records would still read as copies. A single label (`gov`) would make
-  a whole top-level domain an authority. A suffix several bodies share would too, and nothing
-  here can tell one from an authority's own host, so the README says to name the host itself.
+  a whole top-level domain an authority, and so would a last label of digits (`0.1` matched every
+  IP address ending in it). A suffix several bodies share would too, and nothing here can tell
+  one from an authority's own host, so the README says to name the host itself. The hosts are
+  read again where they join the rules (`load_rules()`), not only in `project.load()`, so one
+  given any other way is compared as `classify()` compares, or dropped.
 - **The project adds authorities, and can't reclass a host.** Classification takes the most
   restrictive class first, so an excluded or lead-generator host named here would stay what it
   was while every brief called it an issuing authority. And a news outlet named here would stop
@@ -1442,18 +1445,26 @@ as a copy. Passing unlisted hosts instead would reopen the substitution this exi
   about a named host, for an official analysis as for a primary record. An unjudged claim still
   reads `pending` (`Claim.status` asks for verdicts before corroboration). Judged, it is
   `human_review` until a person names the host, and the next build releases it.
-- **check-claim says when the copy is the only failure.** It closed with "do not hand this on",
-  which contradicted the brief's instruction to hand on an authority the project doesn't name.
-  When every failure is an unacknowledged copy, it says so and names both ways on instead. Its
-  corroboration line is left out when the claim would pass once the host is named, since it
-  only repeats the copy line as a second thing to fix. The review page tells an unacknowledged
+- **check-claim says when what is left is handed on.** It closed with "do not hand this on",
+  which contradicted the two failures a researcher is told to hand on: an authority the project
+  doesn't name (the brief) and a scan kept with its `page` (researcher.md). It records what
+  failed by kind, and gives the hand-on close only when every kind is `copy` or `scan`. Any
+  other kind keeps the red close, so a check added later without a kind of its own fails
+  toward "do not hand this on", never toward handing on. Its corroboration line is left out
+  when the claim passes as it will stand once the hosts are named (the project's rules with
+  them added, not a stand-in ack), since it only repeats the copy line as a second thing to
+  fix. The review page tells an unacknowledged
   unnamed host ("not a named issuing authority", with where to add it) apart from an
   acknowledged copy, and prints the host as an entry would hold it, inside `<bdi>`.
 - **Hosts compare in one form.** `domain()` gives a host as the URL spells it, and an entry can
   be spelled either way, so an internationalized host matched only an entry spelled like it.
   List entries, `bare_host()` and every lookup (`classify()`, `publishes_legal_text()`) use the
-  IDNA form (`sources._ascii()`). And `domain()` drops a trailing dot, which names the same host:
-  left on, `example.gov.` matched no entry, and an excluded host's page passed as unlisted.
+  ASCII form (`sources._ascii()`), encoded by UTS 46 as browsers and httpx resolve a host, not
+  by Python's `idna` codec: that is IDNA 2003, which folds `ß` into `ss` and so took another
+  registrant's `strasse.example` for `straße.example`. The brief prints each host's Unicode form
+  (`display_host()`), the one a researcher's address bar shows. And `domain()` drops a trailing
+  dot, which names the same host: left on, `example.gov.` matched no entry, and an excluded
+  host's page passed as unlisted.
 
 The other half is fixing the reachability where possible, rather than only detecting the
 symptom — and then *recording* it, so the finding outlives the session that made it.
