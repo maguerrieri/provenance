@@ -28,6 +28,11 @@ The agents' instructions name the commands and flags of this version, and a CLI 
 version can lack one or refuse what they write. Don't fall back to running it through `uv run`:
 that works only inside a clone of the tool's own repo.
 
+Run every `provenance` command from the project root, the directory holding its
+`provenance.toml` (or pass `--project <root>`); anywhere outside a project, each is refused.
+Name a subject's run with `--data <subject>`: with no `--data`, a command works on the root's
+run, wherever in the project it runs from.
+
 ## Phase 0 — split the template
 
 1. Read the project's `template.md`.
