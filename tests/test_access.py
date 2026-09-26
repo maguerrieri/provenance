@@ -255,15 +255,14 @@ def test_run_refuses_a_url_httpx_cant_read_without_repeating_it(monkeypatch):
     the check now, which reads every decoding of a netloc, so it never reaches httpx."""
     monkeypatch.setattr(access.httpx.Client, "send", lambda *a, **kw: pytest.fail("sent"))
     r = Recipe(id="bad", method="GET", url="https://{host}/api", params=["host"])
-    with pytest.raises(ValueError, match="its URL can't be sent as it is") as e:
-        run(r, {"host": "portal.example/fakecanary\x00"})
-    assert not re.search("fake|canary", str(e.value)), str(e.value)
-    # A port that isn't one (`user:pw` before a `/` its encoding became) reads as a login now,
-    # and so does `%40`, so neither reaches httpx.
-    for host in ("portal.example:fakecanary", "user:fake%40canary.example"):
-        with pytest.raises(ValueError, match="username or password") as e:
+    for host in ("portal.example/fakecanary\x00", "portal.example:fakecanary"):
+        with pytest.raises(ValueError, match="its URL can't be sent as it is") as e:
             run(r, {"host": host})
         assert not re.search("fake|canary", str(e.value)), str(e.value)
+    # `%40` is an `@` to the login check, which reads every decoding, so it never reaches httpx.
+    with pytest.raises(ValueError, match="username or password") as e:
+        run(r, {"host": "user:fake%40canary.example"})
+    assert not re.search("fake|canary", str(e.value)), str(e.value)
 
 
 def test_the_commands_refuse_a_url_whose_host_cant_be_parsed_without_repeating_it(tmp_path,
