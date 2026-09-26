@@ -183,17 +183,25 @@ _BARE_LOGIN = re.compile(r"(?<![^\s\"'<>`(=,;&?])(?!mailto:)[^\s/?#@\"'<>`:=&;]+
                          r"[^\s/?#@\"'<>`]*@[^\s/?#@\"'<>`]", re.IGNORECASE)
 
 
-def _login_in(text: str) -> bool:
-    """Whether a URL anywhere in `text`, in any reading of it, carries a username or password:
-    an `@` in its authority (`https://user:x@host/`, `//user@host`). It fails toward refusing:
-    a URL nested in a parameter, a body field or a note is a login wherever it sits and whatever
-    the field is called. An `@` in a path (`https://host/@user`) or an email address is not
-    one.
+# An authority whose port is not a number (or a recipe's `{port}`): `user:secret` is what a
+# login's first half looks like once a `/` has ended the authority before its `@`.
+_NOT_A_PORT = re.compile(r"^[^\[\]]*:(?!(?:\d*|\{\w+\})$)")
 
-    Each authority is found in each reading and then read in every decoding itself: decoded
-    first, `https://user:pw%2Fx%40host/` ends its authority at the `/` the `%2F` became, before
-    the `@`, and found only raw, its `%40` is no `@`."""
-    return any("@" in a for r in _readings(text) for m in _AUTHORITY.finditer(r)
+
+def _login_in(text: str) -> bool:
+    """Whether a URL anywhere in `text`, in any reading of it, carries a username or password.
+    It fails toward refusing: a URL nested in a parameter, a body field or a note is a login
+    wherever it sits and whatever the field is called. An `@` in a path (`https://host/@user`)
+    or an email address is not one.
+
+    One rule, applied to each `//` authority found in each reading, and to that authority in
+    every decoding of its own: it holds an `@`, or a `:` followed by something that is not a
+    port. The second half is there because decoding moves an authority's end. Found raw,
+    `https://user:pw%2Fx%40host/` has no `@`, and decoded, its authority ends at the `/` the
+    `%2F` became, leaving `user:pw` (a port that isn't one) before a path holding the `@`. A
+    URL encoded whole, `//` included, decodes to that same shape."""
+    return any("@" in a or _NOT_A_PORT.match(a)
+               for r in _readings(text) for m in _AUTHORITY.finditer(r)
                for a in _readings(m.group(1)))
 
 
@@ -414,8 +422,7 @@ def _check_request(url: str, headers: dict[str, str], body: str | None) -> None:
     if found := _credential_params(url, headers, body):
         raise Refused(f"it carries what look like credentials in {'; '.join(found)}")
     for k, v in headers.items():
-        if k.lower() not in _URL_HEADERS:   # read whole, above
-            _check_text(v, f"its {_names_shown([k])} header")
+        _check_text(v, f"its {_names_shown([k])} header")
 
 
 _REDACTED = "[redacted]"
