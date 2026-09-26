@@ -127,6 +127,10 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
     {% if c.conflicts %}<span class="b bad">conflict</span>{% endif %}
   </div>
   {% for x in c.conflicts %}<div class="conf">{{ x }}</div>{% endfor %}
+  <div class="meta nchanged hidden" style="color:var(--warn)">{% if c.notes %}The researcher's
+    note below is new, or has changed, since you checked this claim's sources.{% else %}This
+    claim had a researcher's note when you checked its sources, and it has been removed
+    since.{% endif %}</div>
   {% if c.notes %}<div class="rnote"><b>Researcher's note (unverified):</b> {{ c.notes }}</div>{% endif %}
 
   {% for s in c.sources %}
@@ -169,6 +173,9 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
     </div>
     <div class="meta stale hidden" style="color:var(--warn)">You checked this row, but the claim or
       the evidence shown for it has changed since. Check it again.</div>
+    <div class="meta nstale hidden" style="color:var(--warn)">You checked this row, but the
+      researcher's note on this claim has been added, changed or removed since. Read the claim as
+      it is now, then check the row again.</div>
     <input class="note hidden" placeholder="note on this source, shown wherever it is cited (saved with your progress)">
   </div>
   {% endfor %}
@@ -179,7 +186,7 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
 
 <script>
 // Progress lives under STORE:
-//   {v: 2,
+//   {v: 3,
 //    checked: {"<fingerprint>": "<row key>"},
 //    sources: {"<source id>": {flag, note}},
 //    notice: {cleared, uncited, unreadable}}      (until the reviewer dismisses it)
@@ -189,21 +196,37 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
 // has another fingerprint, and so does this row once its claim or evidence changes; a claim
 // moved to another question id without changing keeps it. Beside each check is the row showing
 // it (every row has its own key: report.ROW_KEY_RE), so a row whose evidence changed can say
-// so. A flag or note is a warning about the source, not an attestation, so it stays per source
-// and shows wherever the source is cited.
+// so. A claim with researcher notes adds them to the fingerprint as a part of its own, after a
+// dot. A check that no row shows, but that matches a row on everything before the dot, is on
+// that row's claim and evidence under other notes, so the row says the note is what changed. It
+// is matched by what the row shows, not by the row it names, so it follows a claim moved to
+// another id. A claim without notes has no such part, as before notes were hashed. A flag or
+// note is a warning about the source, not an attestation, so it stays per source and shows
+// wherever the source is cited.
+//
+// V2 holds what the page saved before notes were hashed: this shape, with v: 2 and one-part
+// fingerprints. A one-part check means now what it meant then, a check on a claim with no note,
+// so it carries over whole, and on a claim that has a note now it reads as a note change. V2 is
+// only read, when STORE is absent: a page from before read two-part checks as its own version's,
+// and would drop them and save over them.
 //
 // KEY holds what earlier versions of this page saved, per source: {"<source id>": {done, flag,
-// note}}. It is only read, to migrate from when STORE is absent, so neither version's tab
+// note}}. It is only read, to migrate from when neither store is there, so neither version's tab
 // overwrites the other's progress. Its "vgpipe:" prefix predates the rename to provenance (#6)
 // and stays: it names progress already saved, and a new prefix would read every review as empty.
 const KEY = "vgpipe:{{ run_id }}";
-const STORE = KEY + ":v2";
+const V2 = KEY + ":v2";
+const STORE = KEY + ":v3";
 const UNREADABLE = STORE + ":unreadable";
 const ROW_RE = new RegExp({{ row_key_re|tojson }});
-const FP_RE = /^[0-9a-f]{16}$/;
+const FP_RE = /^[0-9a-f]{16}(\.[0-9a-f]{16})?$/;
 const SID_RE = /^[0-9a-f]{12}$/;
 const srcs = [...document.querySelectorAll('.src')];
 const shown = new Set(srcs.map(el => el.dataset.fp));
+// A fingerprint without its notes part: the claim and the evidence the row shows.
+function evidence(fp){ return fp.split('.')[0]; }
+const shownEvidence = new Set([...shown].map(evidence));
+function lapsed(){ return Object.keys(state.checked).filter(f => !shown.has(f)); }
 let cur = 0;
 
 // Progress can come from localStorage or from a file someone hands you, so coerce it into
@@ -216,9 +239,9 @@ function annotation(v){
 function count(n){ return Number.isInteger(n) && n > 0 ? Math.min(n, 1e6) : 0; }
 function entries(v){ return v && typeof v === 'object' ? Object.keys(v).map(k => [k, v[k]]) : []; }
 function sanitizeState(raw){
-  const out = {v: 2, checked: Object.create(null), sources: Object.create(null)};
+  const out = {v: 3, checked: Object.create(null), sources: Object.create(null)};
   if (!raw || typeof raw !== 'object') return out;
-  if (raw.v !== 2) return migrate(out, raw);
+  if (raw.v !== 3 && raw.v !== 2) return migrate(out, raw);
   for (const [fp, row] of entries(raw.checked)){
     if (FP_RE.test(fp) && typeof row === 'string' && ROW_RE.test(row)) out.checked[fp] = row;
   }
@@ -269,23 +292,24 @@ let state;
 function load(raw){ state = sanitizeState(raw); showNotice(); }
 function stored(k){ try { return localStorage.getItem(k); } catch (e) { return null; } }
 function parse(text){ try { return JSON.parse(text); } catch (e) { return undefined; } }
-// What saved progress is: this version's ({v: 2, ...}), an earlier version's (a per-source map,
-// with no `v`), or neither: unparseable, another version's, a hand edit. Neither is never read
-// as empty, because the next save would replace it with nothing.
+// What saved progress is: this version's ({v: 3, ...}), the one before notes were hashed
+// ({v: 2, ...}), an earlier version's (a per-source map, with no `v`), or none of them:
+// unparseable, another version's, a hand edit. That is never read as empty, because the next
+// save would replace it with nothing.
 function kind(x){
   if (!x || typeof x !== 'object' || Array.isArray(x)) return null;
   if (!Object.prototype.hasOwnProperty.call(x, 'v')) return 'legacy';
-  return x.v === 2 ? 'v2' : null;
+  return x.v === 3 ? 'v3' : x.v === 2 ? 'v2' : null;
 }
-const kept = stored(STORE), got = kept === null ? undefined : parse(kept);
-if (kept === null) load(parse(stored(KEY)));
-else if (kind(got) !== 'v2'){
-  // Not a fallback to KEY: that would bring back flags cleared since. The first save replaces
-  // this text, so it is kept where a person can recover it.
-  try { localStorage.setItem(UNREADABLE, kept); } catch (e) {}
-  load({v: 2, notice: {unreadable: true}});
+const kept = stored(STORE), text = kept !== null ? kept : stored(V2);
+if (text === null) load(parse(stored(KEY)));
+else if (kind(parse(text)) !== (kept !== null ? 'v3' : 'v2')){
+  // Not a fallback to an older store: that would bring back flags cleared since. The first save
+  // replaces STORE, so the text is kept where a person can recover it.
+  try { localStorage.setItem(UNREADABLE, text); } catch (e) {}
+  load({v: 3, notice: {unreadable: true}});
 }
-else load(got);
+else load(parse(text));
 
 function save(){ try { localStorage.setItem(STORE, JSON.stringify(state)); } catch(e){} }
 function ann(el){
@@ -296,9 +320,10 @@ function ann(el){
 function isChecked(el){ return el.dataset.fp in state.checked; }
 function setChecked(el, on){
   const row = el.dataset.key, fp = el.dataset.fp;
-  // Either way, a check this row made on evidence no row shows any more is settled now.
-  for (const f of Object.keys(state.checked)) {
-    if (state.checked[f] === row && !shown.has(f)) delete state.checked[f];
+  // Either way, a check no row shows any more that this row made, or that was on what this row
+  // shows under other notes, is settled now.
+  for (const f of lapsed()) {
+    if (state.checked[f] === row || evidence(f) === evidence(fp)) delete state.checked[f];
   }
   if (on) state.checked[fp] = row; else delete state.checked[fp];
 }
@@ -307,14 +332,19 @@ function render(){
   // A check follows its claim, so it names the row showing it now: when a claim moves to another
   // question id, a check made under its old row key moves to the new one.
   for (const el of srcs) if (isChecked(el)) state.checked[el.dataset.fp] = el.dataset.key;
-  // Rows holding a check on evidence no row shows now: their claim or what they show changed.
-  const stale = new Set(Object.keys(state.checked).filter(f => !shown.has(f))
-                          .map(f => state.checked[f]));
+  // Checks no row shows now. One on what a row still shows, under other notes, is a note change
+  // on every row showing that; any other names the row whose claim or evidence changed.
+  const old = lapsed();
+  const noteChanged = new Set(old.map(evidence).filter(e => shownEvidence.has(e)));
+  const changed = new Set(old.filter(f => !shownEvidence.has(evidence(f)))
+                             .map(f => state.checked[f]));
+  const noteStale = el => !isChecked(el) && noteChanged.has(evidence(el.dataset.fp));
   let done = 0;
   for (const el of srcs){
     const a = ann(el), ok = isChecked(el);
     el.querySelector('.cb').checked = ok;
-    el.querySelector('.stale').classList.toggle('hidden', ok || !stale.has(el.dataset.key));
+    el.querySelector('.stale').classList.toggle('hidden', ok || !changed.has(el.dataset.key));
+    el.querySelector('.nstale').classList.toggle('hidden', !noteStale(el));
     el.classList.toggle('flagged', a.flag);
     const n = el.querySelector('.note');
     // Don't clobber a note being typed — rewriting .value would jump the caret to the end.
@@ -325,6 +355,7 @@ function render(){
   for (const c of document.querySelectorAll('.claim')){
     const all = [...c.querySelectorAll('.src')];
     c.classList.toggle('done', all.length > 0 && all.every(isChecked));
+    c.querySelector('.nchanged').classList.toggle('hidden', !all.some(noteStale));
   }
   const pct = srcs.length ? Math.round(100*done/srcs.length) : 0;
   document.getElementById('pbar').style.width = pct + '%';
