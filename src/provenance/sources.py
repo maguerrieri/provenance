@@ -34,7 +34,7 @@ KEYS = (*CATEGORIES, LEGAL_TEXT)
 # starting with `www.`, which it strips. A label is letters and digits, Unicode ones included
 # (`domain()` returns a host as the URL spells it), with hyphens inside. An entry of any other
 # shape (a scheme, a path, a port) matches nothing.
-_LABEL = r"[^\W_](?:[\w-]*[^\W_])?"
+_LABEL = r"[^\W_](?:(?:[^\W_]|-)*[^\W_])?"
 _HOST = re.compile(rf"(?!www\.){_LABEL}(?:\.{_LABEL})+")
 
 
