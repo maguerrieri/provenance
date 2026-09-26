@@ -790,8 +790,11 @@ def load_all(registry: Path | None = None) -> dict[str, SourceAccess]:
         try:
             raw = _read_entry(p)
             check_entry(raw, host)
-            recipes = [Recipe(**{**r, "headers": r.get("headers") or {}})
-                       for r in (raw.pop("recipes", None) or [])]
+            # A `null` the check read as empty is read as empty here too: `params: null` loaded
+            # as None, and running the recipe then failed on it.
+            recipes = [Recipe(**{**r, "headers": _unless_null(r.get("headers"), {}),
+                                 "params": _unless_null(r.get("params"), [])})
+                       for r in _unless_null(raw.pop("recipes", None), [])]
             raw.pop("host", None)
             out[host] = SourceAccess(host=host, recipes=recipes,
                                      **{k: v for k, v in raw.items()

@@ -331,6 +331,21 @@ def test_save_refuses_to_write_in_an_installed_copy(registry, monkeypatch):
     assert not registry.exists()
 
 
+def test_a_null_field_the_check_reads_as_empty_loads_as_empty(registry, monkeypatch):
+    """`check_entry()` reads `params: null` and `headers: null` as none, and so must the
+    recipe `load_all()` builds: a `params` of None failed the run."""
+    registry.mkdir()
+    (registry / "portal.example.yaml").write_text(
+        "host: portal.example\nrecipes:\n  - {id: r, method: GET, url: 'https://portal.example/',"
+        " params: null, headers: null}\n")
+    (recipe,) = access.find("portal.example").recipes
+    assert (recipe.params, recipe.headers) == ([], {})
+    sent = []
+    monkeypatch.setattr(access.httpx, "request", lambda *a, **kw: sent.append(a[1]))
+    run(recipe, {})
+    assert sent == ["https://portal.example/"]
+
+
 def test_a_host_argument_with_a_port_names_the_host(registry):
     """The registry is kept by host, and a URL's port was always dropped: so is a bare one."""
     code, out = _invoke("source-note", "portal.example:8443", "a finding")
