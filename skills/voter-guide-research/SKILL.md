@@ -249,7 +249,8 @@ summarize it. The project's `sources` names which source lists apply (`sources =
 → the tool's `us` and `ca` lists, which ship with it).
 
 **Never paste the project's `completeness_check` into a researcher prompt**, and never paste
-`provenance.toml` itself. The check lists claims already known to exist, and a researcher told
+`provenance.toml` itself or tell a researcher to read it: the researcher's instructions say to
+take its context from the brief alone. The check lists claims already known to exist, and a researcher told
 what it is looking for confirms that item instead of searching — so anything not on the list
 (a second incident, a bigger donor, a more recent filing) never surfaces, and the
 "corroboration" you get back is the pipeline agreeing with itself. `provenance brief` never
