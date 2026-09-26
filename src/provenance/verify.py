@@ -814,12 +814,17 @@ def revalidate_from_cache(src: Source, root: Path, *,
             return _discard(f"claimed {claimed!r} but the query could not be re-run: {e}")
         if not result.found or not queries.matches(src.query.expected, result.value):
             # with what it leaves out, if anything: the filing to open, not a retry. A miss that
-            # counts nothing is verify_query_source()'s unsettled miss, so it is marked as one.
+            # counts nothing is verify_query_source()'s unsettled miss, so it is marked as one;
+            # a found figure that no longer matches is a plain mismatch, as verify's is.
             why = result.unsettled
+            if why and not result.found:
+                left_out = f"; {UNSETTLED}: {why}"
+            elif why:
+                left_out = f"; {why}"
+            else:
+                left_out = ""
             _discard(f"claimed {claimed!r} but re-running the query gives {result.value!r} "
-                     f"({result.note}), not {src.query.expected!r}"
-                     + (f"; {UNSETTLED}: {why}" if why and not result.found
-                        else f"; {why}" if why else ""))
+                     f"({result.note}), not {src.query.expected!r}{left_out}")
             v.query_run = run   # what this re-run read: build's own run, so it can vouch for it
             return src
         if why := result.unsettled:
