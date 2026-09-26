@@ -1286,14 +1286,17 @@ check each way:
   under `sources/access/`, and `dump_entry()` the only YAML an entry becomes (printed to be
   pasted, too); both call it. `load_all()` calls it on every file, since a person with an editor
   is a writer too: a committed credential stops every command that reads the registry, and the
-  suite. It refuses a login in any URL or host, in any string, in every reading `_readings()`
-  knows (NFKC, percent-encoding, HTML and backslash escapes): nested in a query, fragment, form
-  field or JSON value at any depth (#163), written into prose, or with no scheme at all
-  (`user:x@host`, which `.hostname` never dropped, so `source-note` wrote it into a file name,
-  #161). Each recipe's request gets `_check_request()`, which `run()` also calls after filling
-  and `parse_curl()` on the request it records. A field or recipe param named like a credential
-  is refused, and the host must be a host name, since it names the file (`../x` wrote outside
-  the registry).
+  suite. It refuses a login in any URL, in any string, in every reading `_readings()` knows
+  (NFKC, percent-encoding, HTML and backslash escapes): nested in a query, fragment, form field
+  or JSON value at any depth (#163), or written into prose. A login is an `@` in a URL's
+  authority. A scheme-less `user:x@host` counts only where a host is expected, since in a query
+  it reads the same as a search (`from:alice@agency.example`); there any `@` is refused (a host
+  argument, which `.hostname` never cleaned without a `://`, so `source-note` wrote the login
+  into a file name, #161). Each recipe's request gets `_check_request()`, which `run()` also
+  calls after filling and `parse_curl()` on the request it records; a template is read with a
+  neutral value in each placeholder, since `{"year": {year}}` is no JSON until it is filled. A
+  field or recipe param named like a credential is refused, and the host must be a host name
+  (a port is dropped), since it names the file (`../x` wrote outside the registry).
 - **Out: `redact()`.** Every exception `access.py` raises is a `Refused`, whose message is made
   through it, and `_refusing` turns a library's error into one at every function the CLI calls.
   The access commands run inside `cli._access_refusals()`, which prints through
@@ -1317,9 +1320,10 @@ Three things learned building it:
   is and what it is, never the lines. When a library's error quotes its input, drop the quote
   rather than trust the redactor with it.
 - **A refusal never reads `name: reason`.** To the redactor that is a field and its value, so a
-  recipe called `token`, or an entry for `auth.example`, lost its reason. Messages say
-  `in recipe 'x', …` and `… can't be used, …`, and an exception's type (`KeyError: …`) is not
-  read as a field.
+  recipe called `token`, an entry for `auth.example` or the option `--cookie-jar` lost its
+  reason. Messages say `in recipe 'x', …`, `… can't be used, …` and `option x; remove it`, and
+  an exception's type (`KeyError: …`) is not read as a field. The redactor reads a line name by
+  name, so a pair it passes over (`ValueError: bad; api_key: x`) does not hide the next one.
 
 The importer let credentials through in two ways. Both were fixed by failing closed, not by
 listing more names:

@@ -15,6 +15,7 @@ from __future__ import annotations
 import ast
 import json
 import re
+import time
 from pathlib import Path
 
 import httpx
@@ -68,7 +69,6 @@ NESTED_LOGINS = [
     f"curl 'https://x.example/api#next=https://{LOGIN}@y.example/'",    # the fragment
     f"curl 'https://x.example/api?q=see%20https://{LOGIN}@y.example/%20first'",  # inside text
     "curl 'https://x.example/api?next=https://canary-user:fake\uff20canary.example/'",
-    f"curl 'https://x.example/api?proxy={LOGIN}@y.example'",            # no scheme
     f"curl -H 'Origin: https://x.example/?next=https://{LOGIN}@y.example/' https://x.example/api",
 ]
 
@@ -102,10 +102,19 @@ def test_run_refuses_a_login_in_a_nested_url(recipe, registry):
 
 
 @pytest.mark.parametrize("query", ["next=https://y.example/@canary", "q=records@agency.example",
-                                   "next=mailto:records@agency.example"])
-def test_an_at_sign_that_is_not_a_login_still_imports(query):
+                                   "next=mailto:records@agency.example",
+                                   "q=from:alice@agency.example"])
+def test_an_at_sign_that_is_not_a_login_still_imports_and_runs(query, registry, monkeypatch):
+    """A login is an `@` in a URL's authority. A scheme-less `name:x@host` is refused only where
+    a host is expected: in a query it reads the same as a search (`from:alice@…`)."""
     url = f"https://x.example/api?{query}"
     assert parse_curl(f"curl '{url}'")["entry"]["recipes"][0]["url"] == url
+    sent = []
+    monkeypatch.setattr(access.httpx, "request", lambda *a, **kw: sent.append(a[1]))
+    name, _, value = query.partition("=")
+    run(Recipe(id="r", method="GET", url=f"https://x.example/api?{name}={{v}}", params=["v"]),
+        {"v": value})
+    assert sent == [url]
 
 
 # --- in: a host argument, and every other value a command writes (#161) ----------------------
@@ -143,7 +152,7 @@ def test_a_host_that_is_not_a_host_name_names_no_file(host, registry, tmp_path):
     ("portal.example", f"works at https://{LOGIN}@portal.example/api"),
     ("portal.example", f"api at https://portal.example/api?api_key={CANARY}"),
     ("portal.example", "fine", "--access", f"https://{LOGIN}@portal.example/"),
-    ("portal.example", "fine", "--verified", f"{LOGIN}@portal.example"),
+    ("portal.example", "fine", "--verified", f"https://{LOGIN}@portal.example/"),
 ])
 def test_source_note_refuses_a_credential_in_any_value_it_writes(args, registry):
     code, out = _invoke("source-note", *args)
@@ -190,7 +199,7 @@ def _recipe(**fields) -> dict:
     (_entry(host=f"{LOGIN}@portal.example"), "username or password"),
     (_entry(host="../portal.example"), "not a host name"),
     (_entry(notes=f"see https://{LOGIN}@portal.example/"), "field notes holds a username"),
-    (_entry(limits=f"proxy {LOGIN}@proxy.example works"), "field limits holds a username"),
+    (_entry(limits=f"proxy http://{LOGIN}@proxy.example works"), "field limits holds a username"),
     (_entry(extra=[{"deep": f"//{LOGIN}@portal.example/"}]), "field extra.deep holds"),
     (_entry(notes=f"see https:\\/\\/{LOGIN}@portal.example\\/"), "holds a username"),  # escaped
     (_entry(ui_url=f"https://portal.example/?api_key={CANARY}"), r"credentials in its URL"),
@@ -222,9 +231,34 @@ def test_check_entry_refuses_each_shape_naming_where_not_what(entry, match):
     _entry(notes="write to records@agency.example; see https://portal.example/@records"),
     _entry(**_recipe(url="https://{host}/api?session={session}", params=["host", "session"])),
     _entry(verified=__import__("datetime").date(2030, 1, 2), notes=404, recipes=None),
+    # A placeholder for a whole JSON value is no JSON until it is filled.
+    _entry(**_recipe(headers={"content-type": "application/json"}, body='{"year": {year}}',
+                     params=["year"])),
+    _entry(notes="search from:alice@agency.example to find the filings"),
 ])
 def test_check_entry_accepts_what_is_not_a_credential(entry):
     check_entry(entry)
+
+
+def test_a_recipe_is_checked_as_it_will_be_sent(registry, monkeypatch):
+    """Checked as recorded, a template refused `{"year": {year}}` as neither JSON nor a form,
+    though it runs: each placeholder is read as a neutral value first, then as filled."""
+    sent = []
+    monkeypatch.setattr(access.httpx, "request", lambda *a, **kw: sent.append(kw["content"]))
+    r = Recipe(id="r", method="POST", url="https://portal.example/api",
+               headers={"content-type": "application/json"}, body='{"year": {year}}',
+               params=["year"])
+    run(r, {"year": "2030"})
+    assert sent == [b'{"year": 2030}']
+    with pytest.raises(Refused, match=r"its body \(token\)"):
+        run(r, {"year": f'1, "token": "{CANARY}"'})
+
+
+def test_a_host_argument_with_a_port_names_the_host(registry):
+    """The registry is kept by host, and a URL's port was always dropped: so is a bare one."""
+    code, out = _invoke("source-note", "portal.example:8443", "a finding")
+    assert code == 0, out
+    assert list(_files(registry)) == ["portal.example.yaml"]
 
 
 def test_the_committed_registry_passes_the_entry_check():
@@ -397,11 +431,23 @@ def test_every_command_that_writes_the_registry_is_held_to_the_check(registry, t
     f"https://portal.example/?next=https%253A%252F%252Fcanary-user%253A{CANARY}%2540y.example",
     f"session_id={CANARY}",
     f"-H 'X-CSRF-Token: {CANARY}'",
+    # A pair whose name is not a credential's gives up its name, not the rest of the line.
+    f"ValueError: bad; api_key: {CANARY}",
+    f"note: see token: {CANARY}",
 ])
 def test_redact_removes_every_credential_shape(message):
     out = redact(message)
     _clean(out)
     assert "[redacted]" in out and redact(out) == out
+
+
+@pytest.mark.parametrize("word", ["x" * 20000, "a:" * 10000, "a=" * 10000, "/" * 20000])
+def test_redact_takes_time_in_proportion_to_a_long_word(word):
+    """A name pattern tried at every position in a word backtracked over the rest of it: 3.7s
+    for 16,000 characters, four times as long for twice as many."""
+    start = time.monotonic()
+    redact(word)
+    assert time.monotonic() - start < 1
 
 
 @pytest.mark.parametrize("message", [
@@ -411,6 +457,8 @@ def test_redact_removes_every_credential_shape(message):
     "a username or password",
     "the pasted request: its URL can't be parsed, so it can't be checked for a credential",
     "KeyError: 'token'",
+    "unsupported curl option --cookie-jar; remove it if the request works without it, or "
+    "record the endpoint by hand",
     "no recipe '[/] [sic] :ok:'",
     "Nothing recorded for session.example.",
     "write to records@agency.example, or see https://portal.example/@records",

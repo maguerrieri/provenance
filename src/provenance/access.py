@@ -169,21 +169,20 @@ def _readings(text: str) -> list[str]:
 
 # Where a URL's authority starts, and what it runs to: an `@` in it follows a login.
 _AUTHORITY = re.compile(r"//([^/?#\s\"'<>`\\]*)")
-# `name:secret@host` with no scheme: a host argument, a proxy setting, curl's `-u` value pasted
-# whole. The colon is what tells it from an email address, and `mailto:` is one.
+# `name:secret@host` with no scheme: a proxy setting, curl's `-u` value pasted whole. Only the
+# redactor reads text for it. Going in, search text reads the same (`from:alice@example.org`),
+# so a scheme-less login is refused only where a host is expected (`_norm_host()`).
 _BARE_LOGIN = re.compile(r"(?<![^\s\"'<>`(=,;&?])(?!mailto:)[^\s/?#@\"'<>`:=&;]+:"
                          r"[^\s/?#@\"'<>`]*@[^\s/?#@\"'<>`]", re.IGNORECASE)
 
 
 def _login_in(text: str) -> bool:
-    """Whether a URL or host anywhere in `text`, in any reading of it, carries a username or
-    password: an `@` in an authority (`https://user:x@host/`, `//user@host`), or a bare
-    `name:secret@host`. It fails toward refusing: a URL nested in a parameter, a body field or a
-    note is a login wherever it sits and whatever the field is called. An `@` in a path
-    (`https://host/@user`) or in an email address is not one."""
-    readings = _readings(text)
-    return (any("@" in m.group(1) for r in readings for m in _AUTHORITY.finditer(r))
-            or any(_BARE_LOGIN.search(r) for r in readings))
+    """Whether a URL anywhere in `text`, in any reading of it, carries a username or password:
+    an `@` in its authority (`https://user:x@host/`, `//user@host`). It fails toward refusing:
+    a URL nested in a parameter, a body field or a note is a login wherever it sits and whatever
+    the field is called. An `@` in a path (`https://host/@user`) or an email address is not
+    one."""
+    return any("@" in m.group(1) for r in _readings(text) for m in _AUTHORITY.finditer(r))
 
 
 def _has_login(url: str, where: str) -> bool:
@@ -400,12 +399,16 @@ def _check_request(url: str, headers: dict[str, str], body: str | None) -> None:
 
 
 _REDACTED = "[redacted]"
-# A name and its value in a message: a header line or a YAML or JSON field (`Authorization:
-# Bearer x`, `"token": "x"`), whose value runs to its closing quote or the end of the line.
-_COLON_PAIR = re.compile(r"""(?P<name>[A-Za-z_$][\w.\-\[\]$]*)["']?[ \t]*:[ \t]*"""
-                         r"""(?P<value>"[^"\n]*"|'[^'\n]*'|[^"'\s][^"'\n]*)""")
+# A name and its separator in a message: a header line or a YAML or JSON field (`Authorization:
+# Bearer x`, `"token": "x"`). A name starts only where no name character precedes it: tried at
+# every position, a long word cost time quadratic in its length.
+_COLON_NAME = re.compile(r"""(?<![\w.\-\[\]$])(?P<name>[A-Za-z_$][\w.\-\[\]$]*)["']?[ \t]*:"""
+                         r"""[ \t]*""")
+# ... and its value, which runs to its closing quote or the end of the line.
+_COLON_VALUE = re.compile(r""""[^"\n]*"|'[^'\n]*'|[^"'\s][^"'\n]*""")
 # ... and a query or form pair (`api_key=x`), whose value runs to the next separator.
-_EQUALS_PAIR = re.compile(r"""(?P<name>[^\s&;?#=/"'<>`]+)=(?P<value>[^\s&;#"'<>`]+)""")
+_EQUALS_PAIR = re.compile(r"""(?<![^\s&;?#=/"'<>`])(?P<name>[^\s&;?#=/"'<>`]+)="""
+                          r"""(?P<value>[^\s&;#"'<>`]+)""")
 _AUTH_SCHEME = re.compile(r"\b(Bearer|Basic|Digest|Negotiate)[ \t]+[^\s\"',;]+", re.IGNORECASE)
 _TOKEN_EDGE = re.compile(r"(\s+|[\"'`<>])")
 # `KeyError: 'x'` names an exception, not a field.
@@ -428,21 +431,29 @@ def redact(text: str) -> str:
     fail toward refusing: a message that says too little costs a look at the file, and one that
     says too much prints the credential it refused. Names are left alone, since they say what to
     fix, and a message repeats only names that read like ones a person wrote."""
-    def colon_pair(m: re.Match) -> str:
-        if m.group("value").startswith(_REDACTED) or not _named_credential(m.group("name")):
-            return m.group(0)
-        return m.group(0)[:m.start("value") - m.start()] + _REDACTED
+    # Name by name, not match by match: a pair whose name is not a credential's gives up only
+    # its name, so its value is read for pairs too (`ValueError: bad; api_key: x`).
+    out, pos = [], 0
+    while m := _COLON_NAME.search(text, pos):
+        out.append(text[pos:m.end()])
+        pos = m.end()
+        value = _COLON_VALUE.match(text, pos)
+        if value and not value.group().startswith(_REDACTED) and _named_credential(m["name"]):
+            out.append(_REDACTED)
+            pos = value.end()
+    text = "".join(out) + text[pos:]
+    text = _AUTH_SCHEME.sub(lambda m: f"{m.group(1)} {_REDACTED}", text)
 
     def word(w: str) -> str:
         if not w or _TOKEN_EDGE.fullmatch(w) or w == _REDACTED:
             return w
-        if _login_in(w) or any(credential_param(unquote_plus(p.group("name")))
-                               for r in _readings(w) for p in _EQUALS_PAIR.finditer(r)):
+        readings = _readings(w)
+        if (_login_in(w) or any(_BARE_LOGIN.search(r) for r in readings)
+                or any(credential_param(unquote_plus(p["name"]))
+                       for r in readings for p in _EQUALS_PAIR.finditer(r))):
             return _REDACTED
         return w
 
-    text = _COLON_PAIR.sub(colon_pair, text)
-    text = _AUTH_SCHEME.sub(lambda m: f"{m.group(1)} {_REDACTED}", text)
     return "".join(word(w) for w in _TOKEN_EDGE.split(text))
 
 
@@ -490,11 +501,12 @@ def _norm_host(host_or_url: str) -> str:
     or without a scheme: `user:x@host` has no `://` for `.hostname` to drop it from, and
     `provenance source-note` wrote it into the registry's file name and `host:` field (#161)."""
     h = host_or_url.strip()
-    authority = _split(h, "the host").netloc if "://" in h else re.split(r"[/?#]", h, 1)[0]
+    authority = (_split(h, "the host").netloc if "://" in h
+                 else re.split(r"[/?#]", h, maxsplit=1)[0])
     if any("@" in r for r in _readings(authority)):
         raise Refused("the host holds a username or password; name the host alone")
-    if "://" in h:
-        h = _split(h, "the host").hostname or h
+    # A port is dropped, as `.hostname` drops it from a URL: the registry is kept by host.
+    h = (_split(h, "the host").hostname or h) if "://" in h else re.sub(r":\d+$", "", h)
     h = h.lower()
     return h[4:] if h.startswith("www.") else h
 
@@ -574,18 +586,19 @@ def check_entry(entry, host: str | None = None) -> None:
         headers = r.get("headers") or {}
         if not isinstance(headers, dict):
             raise Refused(f"{where}'s headers are not a mapping")
+        params = r.get("params") or []
+        params = [str(p) for p in (params if isinstance(params, list) else [params])]
+        if bad := [p for p in params if credential_param(p)]:
+            raise Refused(f"{where} asks for what look like credentials ({_names_shown(bad)})")
         body = r.get("body")
         try:
-            _check_request(str(r.get("url") or ""), {str(k): str(v) for k, v in headers.items()},
-                           None if body is None else str(body))
+            _check_request(_template(str(r.get("url") or ""), params),
+                           {str(k): str(v) for k, v in headers.items()},
+                           None if body is None else _template(str(body), params))
         except Refused as e:
             # Never `name: reason`: to the redactor that reads as a field and its value, and a
             # recipe called `token` would lose its reason.
             raise Refused(f"in {where}, {e}") from None
-        params = r.get("params") or []
-        if bad := [str(p) for p in (params if isinstance(params, list) else [params])
-                   if credential_param(str(p))]:
-            raise Refused(f"{where} asks for what look like credentials ({_names_shown(bad)})")
     _check_fields(entry)
 
 
@@ -611,13 +624,17 @@ def entry_path(host: str) -> Path:
 @_refusing
 def save(host: str, entry: dict) -> Path:
     """Write `entry` as the registry's entry for `host`: the only write under `sources/access/`,
-    and a checked one (`dump_entry()`). Whole or not at all: a temp file, then a rename."""
+    and a checked one (`dump_entry()`). Whole or not at all, as `judgments._write()` writes: a
+    temp file on disk, then a rename. A file cut short would stop every read of the registry."""
     path = entry_path(host)
     text = dump_entry(entry, host)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     try:
-        tmp.write_text(text)
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())   # otherwise a power loss can keep the rename and lose the text
         os.replace(tmp, path)
     finally:
         tmp.unlink(missing_ok=True)
@@ -629,7 +646,7 @@ def _read_entry(path: Path) -> dict:
     the problem, cut to fit (`https://user:secr ... `), so a login in them can be cut before
     its `@`, where no redactor can find it. Only where the problem is, and what it is."""
     try:
-        raw = yaml.safe_load(path.read_text()) or {}
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as e:
         mark = getattr(e, "problem_mark", None)
         at = f" at line {mark.line + 1}, column {mark.column + 1}" if mark else ""
@@ -702,6 +719,21 @@ def find(host_or_url: str, registry: Path | None = None) -> SourceAccess | None:
 _MANUAL_RECIPE = "record it as access: manual instead"
 
 
+def _fill(text: str, values: dict[str, str]) -> str:
+    """Substitute only the declared params. str.format() would choke on the JSON braces in a
+    body — which is most of them, since these are XHR endpoints."""
+    for k, v in values.items():
+        text = text.replace("{" + k + "}", v)
+    return text
+
+
+def _template(text: str, params: list[str]) -> str:
+    """A recipe as recorded, read as it will be sent: each declared param a neutral `0`. A
+    placeholder can stand for a whole JSON value (`{"year": {year}}`), which is no JSON until
+    it is filled, and a body that isn't JSON or a form is refused."""
+    return _fill(text, dict.fromkeys(params, "0"))
+
+
 @_refusing
 def run(recipe: Recipe, params: dict[str, str], *, timeout: float = 45.0) -> httpx.Response:
     """Execute a recipe. Credential headers and parameters are refused, not stripped: a
@@ -714,19 +746,13 @@ def run(recipe: Recipe, params: dict[str, str], *, timeout: float = 45.0) -> htt
         except Refused as e:
             raise Refused(f"in recipe {recipe.id!r}, {e}; {_MANUAL_RECIPE}") from None
 
-    checked(recipe.url, recipe.body)
+    checked(_template(recipe.url, recipe.params),
+            _template(recipe.body, recipe.params) if recipe.body else None)
     missing = [p for p in recipe.params if p not in params]
     if missing:
         raise Refused(f"recipe {recipe.id!r} needs {', '.join(missing)}")
-    # Substitute only the declared params. str.format() would choke on the JSON braces in
-    # a body — which is most of them, since these are XHR endpoints.
-    def fill(text: str) -> str:
-        for k in recipe.params:
-            text = text.replace("{" + k + "}", params[k])
-        return text
-
-    url = fill(recipe.url)
-    body = fill(recipe.body) if recipe.body else None
+    url = _fill(recipe.url, {p: params[p] for p in recipe.params})
+    body = _fill(recipe.body, {p: params[p] for p in recipe.params}) if recipe.body else None
     checked(url, body)
     headers = {"user-agent": "Mozilla/5.0", **recipe.headers}
     try:
@@ -776,7 +802,7 @@ def _refuse_option(option: str) -> NoReturn:
     name = option.partition("=")[0]
     if name in _CURL_CREDENTIAL_OPTIONS:
         raise Refused(f"curl {name} passes a credential. {_MANUAL}")
-    raise Refused(f"unsupported curl option {name}: remove it if the request works "
+    raise Refused(f"unsupported curl option {name}; remove it if the request works "
                   "without it, or record the endpoint by hand")
 
 
@@ -844,7 +870,7 @@ def parse_curl(text: str) -> dict:
         try:
             return check(*args)
         except Refused as e:
-            raise Refused(f"the pasted request: {e}. {_PASTE_REFUSED}") from None
+            raise Refused(f"in the pasted request, {e}. {_PASTE_REFUSED}") from None
 
     def header(name: str, value: str) -> None:
         name = name.strip().lower()
@@ -923,6 +949,5 @@ def parse_curl(text: str) -> dict:
                      "relying on it.",
         }],
     }
-    checked(check_entry, entry)
     return {"entry": entry, "dropped_credentials": sorted(set(dropped)),
             "dropped_headers": sorted(set(unknown))}
