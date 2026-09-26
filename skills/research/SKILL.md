@@ -45,15 +45,15 @@ Claude Code in it with this skill invoked. Neither command researches anything: 
 `provenance.toml` and copies the template to `template.md`, at the project root. Run every
 phase below from there. Before Phase 0, read `provenance.toml` yourself: if its `context` is
 empty, ask the operator where the records are (which bodies keep minutes, which hosts serve
-which documents), since that is what every researcher is told. The operator edits the file:
-no command does, and nor do you.
+which documents), since that is what every researcher and verifier is told. The operator edits
+the file: no command does, and nor do you.
 
 If `provenance.toml` lists `subjects`, each is a separate run. Once the operator approves the
 split and Phase 0 has written the root's `questions.json`, run `provenance new-subject <id>`
 for each subject. It copies the questions into the subject's directory, retargeted to the
 subject's name. Then research each subject's run: its researchers get the subject's own
-questions and `provenance brief --subject <id>`, and every command after that takes
-`--subject <id>`. With no `subjects`, the root is the only run.
+questions, its researchers and verifiers get `provenance brief --subject <id>`, and every
+command after that takes `--subject <id>`. With no `subjects`, the root is the only run.
 
 **`provenance ask "<question>" --source <list>`** creates a new project holding one question,
 `q1`, in `questions.json`, with no template. Its hand-off invokes this skill with `ask`. A
