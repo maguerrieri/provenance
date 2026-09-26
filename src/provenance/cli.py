@@ -2677,19 +2677,53 @@ def _already_a_project(root: Path) -> NoReturn:
             f"create a project, and no command edits one")
 
 
-def _scaffold(root: Path, name: str, sources: list[str], cache: str,
-              files: dict[str, str]) -> proj.Project:
+def _install(path: Path, body: str) -> None:
+    """Create `path` holding `body`, whole or not at all, and never over a file already there:
+    written to a temporary file beside it, fsynced, then hard-linked into place, which raises
+    FileExistsError if `path` exists. A run killed while writing leaves only the temporary file
+    (a dotfile nothing reads), never a partial `path`: a partial provenance.toml read as the
+    project, a partial template refusing the retry as not the one given. On a filesystem with
+    no hard links, `path` is created exclusively and written in place instead."""
+    import errno
+    import os
+    import tempfile
+
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(body)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.link(tmp, path)
+        except OSError as e:
+            if e.errno not in (errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EXDEV):
+                raise
+            with open(path, "x", encoding="utf-8") as f:
+                f.write(body)
+                f.flush()
+                os.fsync(f.fileno())
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _scaffold(root: Path, name: str, sources: list[str], cache: str, files: dict[str, str],
+              *, create: bool) -> proj.Project:
     """Write `root`/provenance.toml and `files` beside it, and read the project back as every
     command reads it, or refuse and leave nothing behind: what was written removed, and every
     directory created for it that is still empty. Read back through `project.resolve()`, so it
     is refused for anything any command would refuse it for, a subject of another project's
     included.
 
-    Everything is created exclusively, `root` too when it does not exist yet: `new` and `ask`
-    only create a project, so a directory or file made meanwhile is refused, never written into
-    or over. The project file is written last. An interrupted run leaves no project file, so
-    nothing reads what it left as a project: `new` run again finds the same template, and `ask`
-    refuses the directory, saying what may have left it."""
+    Nothing is written into or over anything another process made. With `create` (the caller
+    found no `root`), `root` is created exclusively, so one made since the caller looked is
+    refused. Each file is installed whole or not at all (`_install()`), and never over a file.
+    The project file goes last, so an interrupted run leaves no project, and nothing reads what
+    it left as one: `new` run again finds the same template, and `ask` refuses the directory,
+    saying what may have left it."""
     import os
 
     created: list[Path] = []   # directories made for the project, deepest first
@@ -2711,12 +2745,12 @@ def _scaffold(root: Path, name: str, sources: list[str], cache: str,
             except OSError:
                 break
 
-    if not os.path.lexists(root):
+    if create:
         missing = _missing_dirs(root)
         try:
             created = missing[1:]
             root.parent.mkdir(parents=True, exist_ok=True)
-            os.mkdir(root)   # exclusive: never a directory another process made meanwhile
+            os.mkdir(root)   # exclusive: never a directory made since the caller looked
             created = missing
         except OSError as e:
             # FileExistsError too: `root` made meanwhile, or a part of the path that is a file.
@@ -2725,9 +2759,8 @@ def _scaffold(root: Path, name: str, sources: list[str], cache: str,
     for rel, body in {**files, proj.FILE: text}.items():
         path = root / rel
         try:
-            with open(path, "x", encoding="utf-8") as f:
-                written.append(path)
-                f.write(body)
+            _install(path, body)
+            written.append(path)
         except FileExistsError:
             undo()
             if rel == proj.FILE:
@@ -2795,6 +2828,7 @@ def new(directory: Annotated[Path, typer.Argument(
         _refuse(f"--from {from_} can't be read as a template: {e}")
     if not template.strip():
         _refuse(f"--from {from_} is empty: the template is the research questions to split")
+    create = not os.path.lexists(root)
     if os.path.islink(root):
         # Written through, the project file would land in the link's target, which can be
         # another project's subject: whether one declares it is asked of the path as given, and
@@ -2821,7 +2855,8 @@ def new(directory: Annotated[Path, typer.Argument(
             _refuse(f"{dest} exists and is not --from {from_}: `provenance new` writes over no "
                     f"file. Pass it as --from, or move it.")
 
-    p = _scaffold(root, name, sources, setting, {} if keep else {dest.name: template})
+    p = _scaffold(root, name, sources, setting, {} if keep else {dest.name: template},
+                  create=create)
     con.print(Text(_printable(
         f"created {p.root}\n"
         f"  {proj.FILE}  name {name!r}, checked against {', '.join(sources)}, the shared "
@@ -2907,7 +2942,8 @@ def ask(question: Annotated[str, typer.Argument(
            "claim_type": "adversarial" if adversarial else "mechanical",
            "parent": None, "rationale": "asked with provenance ask"}]
     p = _scaffold(root, name, sources, setting,
-                  {"questions.json": json.dumps(qs, indent=1, ensure_ascii=False) + "\n"})
+                  {"questions.json": json.dumps(qs, indent=1, ensure_ascii=False) + "\n"},
+                  create=True)
     kind = "adversarial: two independent sources" if adversarial else "mechanical"
     con.print(Text(_printable(
         f"created {p.root}\n"

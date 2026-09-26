@@ -342,16 +342,19 @@ def test_a_directory_made_meanwhile_is_refused_and_left_alone(tmp_path, home, mo
 
 
 def _interrupted_at_the_project_file(monkeypatch, *args) -> None:
-    """Run a command killed as it writes provenance.toml, the last file it writes."""
-    import builtins
+    """Run a command killed as it installs provenance.toml, the last file it writes: its
+    content is written out, and the link into place never happens."""
+    import os
 
-    def fake_open(path, *a, **kw):
-        if Path(path).name == "provenance.toml":
+    real = os.link
+
+    def killed(src, dst, *a, **kw):
+        if Path(dst).name == "provenance.toml":
             raise KeyboardInterrupt
-        return builtins.open(path, *a, **kw)
+        return real(src, dst, *a, **kw)
 
     with monkeypatch.context() as m:
-        m.setattr(cli, "open", fake_open, raising=False)
+        m.setattr(os, "link", killed)
         CliRunner().invoke(cli.app, [str(a) for a in args])
 
 
@@ -365,6 +368,53 @@ def test_an_interrupted_new_leaves_no_project_and_runs_again(tmp_path, monkeypat
     code, out = _provenance(*args)
     assert code == 0 and "already there" in out, out
     assert project.load(root).name == "p"
+
+
+def test_a_partial_file_a_killed_run_left_is_never_read_or_in_the_way(tmp_path):
+    """Files are written beside their names and linked into place whole, so a run killed while
+    writing leaves only a temporary dotfile: never a partial provenance.toml that every command
+    would read as the project, nor a partial template that refuses the retry."""
+    root = tmp_path / "p"
+    root.mkdir()
+    (root / ".provenance.toml.abc123.tmp").write_text('name = "half')
+    (root / ".template.md.def456.tmp").write_text("# Quest")
+    code, out = _provenance("new", root, "--from", _template(tmp_path), "--source", "us")
+    assert code == 0, out
+    assert (root / "template.md").read_text() == TEMPLATE
+    assert project.load(root).name == "p"
+
+
+def test_a_filesystem_without_hard_links_still_gets_its_project(tmp_path, monkeypatch):
+    import errno
+    import os
+
+    def no_links(src, dst, *a, **kw):
+        raise OSError(errno.ENOTSUP, "Operation not supported")
+
+    monkeypatch.setattr(os, "link", no_links)
+    code, out = _provenance("new", tmp_path / "p", "--from", _template(tmp_path),
+                            "--source", "us")
+    assert code == 0, out
+    assert project.load(tmp_path / "p").name == "p"
+    assert sorted(p.name for p in (tmp_path / "p").iterdir()) == ["provenance.toml",
+                                                                   "template.md"]
+
+
+def test_a_new_directory_made_meanwhile_is_refused_not_written_into(tmp_path, monkeypatch):
+    """`new` found no directory, so it creates one, exclusively: one made since, holding a run's
+    files, is not a directory `new` checked, and a project file beside them would adopt them."""
+    real = cli._missing_dirs
+
+    def racing(path):
+        missing = real(path)
+        (path / "claims").mkdir(parents=True)
+        return missing
+
+    monkeypatch.setattr(cli, "_missing_dirs", racing)
+    code, out = _provenance("new", tmp_path / "p", "--from", _template(tmp_path),
+                            "--source", "us")
+    assert code == 1 and "could not create" in out, out
+    assert sorted(p.name for p in (tmp_path / "p").iterdir()) == ["claims"]
 
 
 def test_an_interrupted_ask_leaves_no_project_and_says_so(tmp_path, home, monkeypatch):
