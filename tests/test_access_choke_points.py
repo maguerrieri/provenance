@@ -72,6 +72,8 @@ NESTED_LOGINS = [
     # An encoded `/` before an encoded `@`: decoded, the authority ends before the `@`.
     f"curl 'https://x.example/api?next=https://canary-user:x%2F{CANARY}%40y.example/'",
     f"curl -d 'next=https://canary-user:x%252F{CANARY}%2540y.example/' https://x.example/api",
+    # Encoded seven times over: read to the end, however deep.
+    f"curl 'https://x.example/api?next=https://canary-user:{CANARY}%25252525252540y.example/'",
     f"curl -H 'Origin: https://x.example/?next=https://{LOGIN}@y.example/' https://x.example/api",
 ]
 
@@ -88,6 +90,18 @@ def test_a_login_in_a_nested_url_is_refused_on_import(curl, registry, tmp_path):
     assert code == 1, out
     _clean(out)
     assert not registry.exists()
+
+
+def test_a_value_encoded_past_reading_is_refused_not_read_no_further(registry):
+    """Four rounds of decoding, then a stop, let a login one layer deeper through. A value that
+    still decodes after the last round can't be shown to hold no login, so it is refused, and
+    the redactor removes it."""
+    deep = "%" + "25" * 11 + "40"   # an `@` percent-encoded twelve times over
+    url = f"https://x.example/api?next=https://canary-user:{CANARY}{deep}y.example/"
+    with pytest.raises(Refused, match="encoded more than 8 times over") as e:
+        parse_curl(f"curl '{url}'")
+    _clean(str(e.value))
+    assert redact(f"see https://x.example/?n={CANARY}{deep}") == "see [redacted]"
 
 
 @pytest.mark.parametrize("recipe", [
@@ -208,6 +222,8 @@ def _recipe(**fields) -> dict:
     (_entry(ui_url=f"https://portal.example/?api_key={CANARY}"), r"credentials in its URL"),
     (_entry(api_key=CANARY), "field named like a credential"),
     (_entry(extra={"session_token": CANARY}), "field named like a credential"),
+    (_entry(cookie=f"session={CANARY}"), r"field named like a credential \(cookie\)"),
+    (_entry(extra={"Set-Cookie": CANARY}), "field named like a credential"),
     (_entry(**_recipe(url=f"https://{LOGIN}@portal.example/api")), "its URL carries a username"),
     (_entry(**_recipe(url=f"https://portal.example/api?token={CANARY}")), r"its URL \(token\)"),
     (_entry(**_recipe(headers={"Authorization": f"Basic {CANARY}"})), "credential headers"),

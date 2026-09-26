@@ -157,14 +157,21 @@ def _readings(text: str) -> list[str]:
     """`text`, then `text` as each round of decoding reads it: NFKC (the fullwidth `@`, U+FF20,
     is an `@` to `urlsplit()`), percent-encoding (`%40`, and `%2540` in a second round), HTML
     entities and backslash escapes (`\\u0040`, JSON's `\\/`). Every check for a login looks at
-    every reading, so none hides behind an encoding some reader decodes and the check doesn't."""
+    every reading, so none hides behind an encoding some reader decodes and the check doesn't.
+
+    Read until nothing changes. A value that still decodes after `_MAX_DECODINGS` rounds is
+    refused, not read no further: stopping there let a login encoded one layer deeper through."""
     out = [text]
-    for _ in range(4):
+    for _ in range(_MAX_DECODINGS):
         t = _unbackslash(html.unescape(unquote(unicodedata.normalize("NFKC", out[-1]))))
         if t == out[-1]:
-            break
+            return out
         out.append(t)
-    return out
+    raise Refused(f"a value is encoded more than {_MAX_DECODINGS} times over, so it can't be "
+                  "checked for a credential")
+
+
+_MAX_DECODINGS = 8
 
 
 # Where a URL's authority starts, and what it runs to: an `@` in it follows a login.
@@ -424,8 +431,24 @@ _EXCEPTION_NAME = re.compile(r"[A-Z]\w*(?:Error|Exception|Warning)")
 
 
 def _named_credential(name: str) -> bool:
-    return (not _EXCEPTION_NAME.fullmatch(name)
-            and any(credential_param(r) or credential_header(r) for r in _readings(name)))
+    if _EXCEPTION_NAME.fullmatch(name):
+        return False
+    try:
+        return any(credential_param(r) or credential_header(r) for r in _readings(name))
+    except Refused:
+        return True   # encoded past reading: whatever it is, remove its value
+
+
+def _redacts(word: str) -> bool:
+    """Whether the redactor removes `word`: a login in any URL in it, a bare `name:x@host`, or a
+    query or form pair named like a credential, in any reading."""
+    try:
+        readings = _readings(word)
+        return (_login_in(word) or any(_BARE_LOGIN.search(r) for r in readings)
+                or any(credential_param(unquote_plus(p["name"]))
+                       for r in readings for p in _EQUALS_PAIR.finditer(r)))
+    except Refused:
+        return True   # encoded past reading: it can't be shown not to hold one
 
 
 def redact(text: str) -> str:
@@ -455,12 +478,7 @@ def redact(text: str) -> str:
     def word(w: str) -> str:
         if not w or _TOKEN_EDGE.fullmatch(w) or w == _REDACTED:
             return w
-        readings = _readings(w)
-        if (_login_in(w) or any(_BARE_LOGIN.search(r) for r in readings)
-                or any(credential_param(unquote_plus(p["name"]))
-                       for r in readings for p in _EQUALS_PAIR.finditer(r))):
-            return _REDACTED
-        return w
+        return _REDACTED if _redacts(w) else w
 
     return "".join(word(w) for w in _TOKEN_EDGE.split(text))
 
