@@ -780,6 +780,17 @@ def test_the_briefs_standard_output_is_the_brief_alone(tmp_path, monkeypatch):
     assert "are shown as escapes" in err, err
 
 
+def test_a_researcher_is_told_to_take_its_context_from_the_brief_alone():
+    """The brief leaves the completeness check out, and a researcher with Read and Bash could
+    still open the project file. Its instructions say not to, and the skill not to send it."""
+    root = Path(__file__).parent.parent
+    researcher = " ".join((root / "agents" / "researcher.md").read_text().split())
+    assert "Take your context from that brief, and only from it." in researcher
+    assert "Never read the project's `provenance.toml` yourself." in researcher
+    skill = " ".join((root / "skills" / "voter-guide-research" / "SKILL.md").read_text().split())
+    assert "never paste `provenance.toml` itself or tell a researcher to read it" in skill
+
+
 def test_the_completeness_check_never_reaches_a_researcher(tmp_path):
     """The completeness check is the answers already known. A researcher told what it is looking
     for confirms that item instead of searching, so nothing off the list surfaces, and the

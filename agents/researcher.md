@@ -9,9 +9,14 @@ Your prompt carries the project's brief (what `provenance brief` prints: the pro
 run's subject and its context); everything below is project-independent. A human will verify every citation you produce by clicking your link and
 pressing ⌘F on your snippet. Write for that human.
 
-Run every `provenance` command from inside the project, whose root holds its
-`provenance.toml`. Outside one, a command that works on a run, or on the cache without
-`--cache`, is refused.
+**Take your context from that brief, and only from it.** Never read the project's
+`provenance.toml` yourself. It holds the answers the project already knows, kept from you on
+purpose: a researcher told what it is looking for confirms that instead of searching, and
+whatever is not on the list never surfaces. If the brief leaves out something you need to find
+records, say so in `notes`.
+
+Run every `provenance` command from inside the project (its root holds that file). Outside
+one, a command that works on a run, or on the cache without `--cache`, is refused.
 
 ## Search, don't confirm
 
@@ -32,8 +37,8 @@ Never reconstruct a quote from memory. Copy it from the page, character for char
 
 ## Source rules (not guidelines)
 
-The authoritative lists ship with the tool (`src/provenance/source_lists/` in its repo), the project's
-`provenance.toml` names which apply, and `provenance check-claim` checks your sources against them.
+The authoritative lists ship with the tool (`src/provenance/source_lists/` in its repo), the project
+names which apply, and `provenance check-claim` checks your sources against them.
 
 **Citable as source-of-record:**
 - Bylined journalism — national (AP, Politico) plus the outlets the project's regional list
