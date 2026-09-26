@@ -170,6 +170,13 @@ def publishes_legal_text(url: str, rules: dict[str, tuple[str, ...]] | None = No
 NOT_A_NAME = frozenset({"staff", "unknown", "n/a", "none", "editorial board"})
 
 
+def names_nobody(name: str) -> bool:
+    """Whether `name` is one of `NOT_A_NAME`, compared folded as a question is: a fullwidth
+    "Staff" or an "Editorial Board" spaced with a no-break space prints the same, and compared
+    by `.lower()` alone it passed as a name."""
+    return normalize(unicodedata.normalize("NFC", name))[0] in NOT_A_NAME
+
+
 def check_source_class(src: Source, rules: dict[str, tuple[str, ...]] | None = None) -> tuple[bool, str | None]:
     """(ok, reason). Unknown domains are allowed but must carry a named or institutional
     author — the rule is 'human-written', not 'on our list'. That keeps a good local
@@ -186,7 +193,7 @@ def check_source_class(src: Source, rules: dict[str, tuple[str, ...]] | None = N
                        "says X' (source_type must be campaign_statement)")
     if not src.author or not src.author.strip():
         return False, "no named or institutional author-of-record"
-    if src.author.strip().lower() in NOT_A_NAME:
+    if names_nobody(src.author):
         return False, f"author {src.author!r} is not a named or institutional author-of-record"
     return True, None
 
@@ -252,8 +259,7 @@ def speakers(src: Source) -> list[str]:
     names = [src.author.strip(), src.publisher.strip()]
     if re.match(r"(?i)the\s", names[1]):
         names.append(names[1][4:].strip())
-    return [n for n in dict.fromkeys(names)
-            if _folded(n) and n.lower() not in NOT_A_NAME]
+    return [n for n in dict.fromkeys(names) if _folded(n) and not names_nobody(n)]
 
 
 def attributes(answer: str, src: Source) -> bool:

@@ -1643,6 +1643,14 @@ What is unchanged, and why:
   taking them, and the tier made `render()`'s default wrong, so those two require them.
 - **An official analysis from an issuing body's own unlisted host reads as a copy**, as a primary
   document does there (#179).
+- **A verdict does not carry the tier it was judged under.** A relabel keeps the verdict, as it
+  keeps the sid, and every direction of relabel fails safe:
+  - relabeled to opinion or advocacy with the answer unchanged, the attribution check sends the
+    claim to review if the answer doesn't name the arguer;
+  - relabeled from them to reporting, the answer still says whose argument it is, which is true;
+  - an answer rewritten to match lapses the verdict through its claim fingerprint.
+
+  The hand-off token covers `source_type`, so a relabel between hand-off and `judge` is refused.
 - **A new `source_type` needs a tier.** `test_every_source_type_has_a_tier` fails until
   `TIER_OF` classifies it, so adding one (#41 may) means deciding what it can carry.
 

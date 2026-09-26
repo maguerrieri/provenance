@@ -22,6 +22,7 @@ from provenance.sources import (
     TIER_LABEL,
     TIER_OF,
     attributes,
+    check_source_class,
     load_rules,
     speakers,
     tier,
@@ -102,6 +103,11 @@ def test_a_name_is_told_from_a_word_by_its_capitals():
     staff = _source(source_type="opinion", author="Staff", publisher="")
     assert speakers(staff) == []
     assert not attributes("City staff say the levy is a mistake.", staff)
+    # Folded as a question is: a fullwidth "Staff" and a no-break space print the same.
+    for nobody in ("\uff33\uff54\uff41\uff46\uff46", "Editorial\u00a0Board", " N/A "):
+        assert speakers(_source(source_type="opinion", author=nobody, publisher="")) == []
+        ok, why = check_source_class(_source(author=nobody), RULES)
+        assert not ok and "is not a named or institutional author-of-record" in why
 
 
 def test_a_mixed_tier_article_is_tiered_per_citation():
