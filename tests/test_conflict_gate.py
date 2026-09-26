@@ -234,7 +234,7 @@ def test_build_and_status_hold_it_and_a_claim_built_on_it(tmp_path):
     assert code == 0, out
     for qid, sid in (("q1", base.sid), ("q2", built_on.sid)):
         code, out = _provenance("judge", qid, sid, "supports", "--note", "states it", "--data", data,
-                        *_handed(data, qid, sid))
+                                *_handed(data, qid, sid))
         assert code == 0, out
 
     code, out = _provenance("build", "--data", data)

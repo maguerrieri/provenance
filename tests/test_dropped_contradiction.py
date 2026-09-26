@@ -22,7 +22,7 @@ from provenance import cli, judgments
 from provenance.conflicts import detect
 from provenance.fetch import cache_path
 from provenance.models import (EXTRACTOR_VERSION, Claim, DroppedContradiction, PageCache, Source,
-                           strip_machine_fields)
+                               strip_machine_fields)
 from provenance.verify import check_corroboration, check_inputs
 
 LEDGER = "https://daily-ledger.example/levy-vote"
@@ -92,7 +92,7 @@ def _handed(data, qid: str, sid: str) -> list[str]:
 
 def _judge(data: Path, sid: str, verdict: str, note: str, qid: str = "q1") -> None:
     code, out = _provenance("judge", qid, sid, verdict, "--note", note, "--data", data,
-                    *_handed(data, qid, sid))
+                            *_handed(data, qid, sid))
     assert code == 0, out
 
 
@@ -171,7 +171,7 @@ def test_only_a_person_at_a_terminal_can_clear_it(tmp_path):
     before = judgments.path_for(data, "q1").read_bytes()
 
     code, out = _provenance("clear-contradiction", "q1", weekly, "--data", data,
-                    input="the verifier was wrong\n")
+                            input="the verifier was wrong\n")
     assert code == 1 and "a person's decision" in out and "Nothing was cleared" in out
     assert judgments.path_for(data, "q1").read_bytes() == before
     assert not judgments.archive_dir(data).exists()
@@ -368,7 +368,7 @@ def test_clearing_says_when_another_claim_cites_the_source(tmp_path, monkeypatch
            "this one leaves those as they are." in flat
 
     code, out = _provenance("clear-contradiction", "q1", weekly, "--data", data,
-                    input="the claim was narrowed\n")
+                            input="the claim was narrowed\n")
     assert code == 0, out
     assert weekly not in judgments.load(data, "q1")
     assert judgments.path_for(data, "q2").read_bytes() == theirs

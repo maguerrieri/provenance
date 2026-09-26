@@ -126,7 +126,7 @@ def test_judge_stamps_the_claim_it_judged(tmp_path):
     shared = src("shared")
     run = _verified_run(tmp_path / "run", c := claim("q1", shared))
     code, out = _provenance("judge", "q1", shared.sid, "supports", "--data", run,
-                    *_handed(run, "q1", shared.sid))
+                            *_handed(run, "q1", shared.sid))
     assert code == 0, out
     assert judgments.load(run, "q1")[shared.sid].claim_fingerprint == c.fingerprint
     entry = json.loads(judgments.path_for(run, "q1").read_text())[0]
@@ -141,7 +141,7 @@ def test_a_verdict_shows_that_a_retry_rewrote_its_claim(tmp_path):
     s = src("a")
     run = _verified_run(tmp_path / "run", claim("q1", s, answer="It approved the appeal."))
     assert _provenance("judge", "q1", s.sid, "supports", "--data", run,
-               *_handed(run, "q1", s.sid))[0] == 0
+                       *_handed(run, "q1", s.sid))[0] == 0
     _rewrite_answer(run, "q1", "It denied the appeal.")
 
     (now,) = cli.load_claims(run / "claims")
@@ -156,11 +156,11 @@ def test_judging_again_after_a_retry_stamps_what_the_claim_says_now(tmp_path):
     s = src("a")
     run = _verified_run(tmp_path / "run", claim("q1", s, answer="It approved the appeal."))
     assert _provenance("judge", "q1", s.sid, "supports", "--data", run,
-               *_handed(run, "q1", s.sid))[0] == 0
+                       *_handed(run, "q1", s.sid))[0] == 0
     _rewrite_answer(run, "q1", "It denied the appeal.")
 
     code, out = _provenance("judge", "q1", s.sid, "topic_only", "--data", run,
-                    *_handed(run, "q1", s.sid))
+                            *_handed(run, "q1", s.sid))
     assert code == 0, out
     (now,) = cli.load_claims(run / "claims")
     j = judgments.load(run, "q1")[s.sid]

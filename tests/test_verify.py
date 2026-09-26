@@ -5918,7 +5918,7 @@ def test_judge_success_line_prints_a_note_as_written(tmp_path):
 
     _, cand, s = _candidate_run(tmp_path)
     code, out = _provenance("judge", "q1", s.sid, "topic_only", "--note", "roster only [/] no [sic]",
-                    "--data", cand, *_ctx(cand, s.sid))
+                            "--data", cand, *_ctx(cand, s.sid))
     assert code == 0 and "roster only [/] no [sic]" in out, out
     assert judgments.load(cand, "q1")[s.sid].note == "roster only [/] no [sic]"
 
@@ -5995,7 +5995,7 @@ def test_a_cache_root_holding_only_the_calaccess_database_is_accepted(tmp_path, 
     (root / "cache" / "calaccess").mkdir(parents=True)
     assert _provenance("verify", "--data", run, "--cache", root)[0] == 0
     code, out = _provenance("judge", "q1", q.sid, "supports", "--data", run, "--cache", root,
-                    *_ctx(run, q.sid, cache=root))
+                            *_ctx(run, q.sid, cache=root))
     assert code == 0, out
     assert judgments.load(run, "q1")[q.sid].verdict == "supports"
 
@@ -6478,20 +6478,20 @@ def _definition_fingerprint(name):
 # citations), the export metadata, and the comparison and command a result is checked with.
 _NOT_A_DEFINITION = {
     "provenance.queries": {"AS_FILED", "LATE_SHOWN", "LEFT_OUT", "LateReport", "NOT_COMPLETE",
-                       "Query", "QueryResult", "REGISTRY", "SPLIT", "UNSETTLED_SHOWN",
-                       "_contender_line", "_elsewhere", "_identity", "_late_names", "_late_note",
-                       "_late_part", "_listed", "_name_line", "_names_note", "_other_schedules",
-                       "_schedule_label", "_unread", "_whereabouts", "dataset",
-                       "describe_export", "export_date", "human_command", "late_text",
-                       "left_out_text", "matches", "share_text"},
+                           "Query", "QueryResult", "REGISTRY", "SPLIT", "UNSETTLED_SHOWN",
+                           "_contender_line", "_elsewhere", "_identity", "_late_names", "_late_note",
+                           "_late_part", "_listed", "_name_line", "_names_note", "_other_schedules",
+                           "_schedule_label", "_unread", "_whereabouts", "dataset",
+                           "describe_export", "export_date", "human_command", "late_text",
+                           "left_out_text", "matches", "share_text"},
     "provenance.calaccess": {"COVER_FALLBACK", "Contribution", "DegradedDatabaseWarning",
-                         "EMPTY_COVERS", "EXPORT_META", "EXPORT_URL", "LATE_FALLBACK",
-                         "NO_COVERS", "Reattributed", "SCHEDULE_FALLBACK", "_UNUSABLE",
-                         "_export_date", "_read_export_info", "citable_snapshot",
-                         "committee_url", "contributions_to", "cover_names", "cover_problem_at",
-                         "db_path", "export_info", "filing_url", "find_filers",
-                         "independent_expenditures", "latest_cover", "shown_date", "Unrestated",
-                         "UnrestatedSchedule", "unusable", "zip_path"},
+                             "EMPTY_COVERS", "EXPORT_META", "EXPORT_URL", "LATE_FALLBACK",
+                             "NO_COVERS", "Reattributed", "SCHEDULE_FALLBACK", "_UNUSABLE",
+                             "_export_date", "_read_export_info", "citable_snapshot",
+                             "committee_url", "contributions_to", "cover_names", "cover_problem_at",
+                             "db_path", "export_info", "filing_url", "find_filers",
+                             "independent_expenditures", "latest_cover", "shown_date", "Unrestated",
+                             "UnrestatedSchedule", "unusable", "zip_path"},
 }
 
 

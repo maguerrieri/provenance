@@ -90,7 +90,7 @@ def _handed(data, qid: str, sid: str) -> list[str]:
 
 def _judge(run: Path, qid: str, s: Source, verdict: str, note: str = "") -> None:
     code, out = _provenance("judge", qid, s.sid, verdict, "--data", run, "--note", note or verdict,
-                    *_handed(run, qid, s.sid))
+                            *_handed(run, qid, s.sid))
     assert code == 0, out
 
 

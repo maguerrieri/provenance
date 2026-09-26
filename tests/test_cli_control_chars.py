@@ -143,7 +143,7 @@ def test_a_recipe_response_prints_its_escapes_and_keeps_its_lines(registry, monk
     body = f'{{"a": "one{CTRL}",\r\n "b": "two\x85"}}\n'
     monkeypatch.setattr(access, "run", lambda recipe, params: httpx.Response(200, text=body))
     code, lines = _provenance("source-access", "news.example", "--run-recipe", "search", "--param",
-                      "q=levy", lines=True)
+                              "q=levy", lines=True)
     assert code == 0
     assert f'{{"a": "one{SHOWN}",' in lines and ' "b": "two\\x85"}' in lines, lines
     assert NOTE in " ".join(lines), lines
@@ -279,7 +279,7 @@ def test_calaccess_cite_prints_snapshot_notes_through_printable(tmp_path, monkey
                     (None, f"no capture{LONE}")])
     monkeypatch.setattr(calaccess, "citable_snapshot", lambda url, **kw: next(answers))
     code, lines = _provenance("calaccess", "cite", "1001", "--filing-id", "2002", "--data", tmp_path,
-                      lines=True)
+                              lines=True)
     assert code == 0, lines
     # Its own line breaks stay: the snapshot, the note and the live URL are one line each.
     assert f"  checked{SHOWN}" in lines and "filing: no capture\\ud800" in lines, lines
@@ -422,7 +422,7 @@ def test_agent_written_claims_and_verdicts_print_through_printable(tmp_path):
     assert code == 0 and f"{URL}\\x9b2K\\u202e" in out, out
     token = re.search(rf"sid {re.escape(s.sid)}\s+context token (\w+)", out).group(1)
     code, out = _provenance("judge", "q1", s.sid, "topic_only", "--note", f"roll call{CTRL}",
-                    "--context", token, "--data", cand)
+                            "--context", token, "--data", cand)
     assert code == 0 and f"recorded for q1/{s.sid}: roll call{SHOWN}" in out, out
 
     code, out = _provenance("judgments", "--data", cand)

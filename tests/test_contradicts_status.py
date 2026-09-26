@@ -197,7 +197,7 @@ def test_build_and_status_list_a_recorded_contradiction_and_only_that(tmp_path):
     for sid, verdict, note in ((ledger.sid, "supports", "states the vote"),
                                (weekly.sid, "contradicts", "says the vote went the other way")):
         code, out = _provenance("judge", "q1", sid, verdict, "--note", note, "--data", data,
-                        *_handed(data, "q1", sid))
+                                *_handed(data, "q1", sid))
         assert code == 0, out
     built = _built(data)
     assert built["corroboration_ok"] is True
