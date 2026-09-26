@@ -414,6 +414,8 @@ def _check_request(url: str, headers: dict[str, str], body: str | None) -> None:
     those two. Names what it found, never a value."""
     if bad := [k for k in headers if credential_header(k)]:
         raise Refused(f"it carries credential headers ({_names_shown(bad)})")
+    if any(_prose_login(k) for k in headers):
+        raise Refused("a header's name holds a username or password")
     for k, v in headers.items():
         if k.lower() in _URL_HEADERS and _has_login(v, f"its {k.lower()} header's URL"):
             raise Refused(f"its {k.lower()} header's URL carries a username or password")
@@ -582,6 +584,12 @@ def _field(path: str, name) -> str:
     return f"{path}.{name}" if path else name
 
 
+def _prose_login(text: str) -> bool:
+    """A login where no search syntax can be: in a URL, or a bare `name:x@host`, in any reading.
+    Prose, a field's name and a header's name are read this way."""
+    return _login_in(text) or any(_BARE_LOGIN.search(r) for r in _readings(text))
+
+
 def _check_text(text: str, where: str, *, prose: bool = True) -> None:
     """Text is read for the URLs in it: any login, and the parameters of any URL a reader
     would open (one with a scheme, or `//`), in every reading of it, as a login is: a URL
@@ -591,7 +599,7 @@ def _check_text(text: str, where: str, *, prose: bool = True) -> None:
     Prose (a note, a name, anything that is not part of a request) is also refused a bare
     `name:x@host`, which is a login written without its scheme. Part of a request, the same
     shape is search syntax (`from:alice@agency.example`), so a request is read without it."""
-    if _login_in(text) or (prose and any(_BARE_LOGIN.search(r) for r in _readings(text))):
+    if _prose_login(text) if prose else _login_in(text):
         raise Refused(f"{where} holds a username or password in a URL or host")
     for r in _readings(text):
         for url in re.findall(r"(?:[A-Za-z][A-Za-z0-9+.-]*:)?//[^\s\"'<>`]+", r):
@@ -604,7 +612,7 @@ def _check_fields(value, path: str = "") -> None:
     """Every field of an entry, at any depth: a name like a credential's, and every string."""
     if isinstance(value, dict):
         for k, v in value.items():
-            if credential_param(str(k)) or _login_in(str(k)):
+            if credential_param(str(k)) or _prose_login(str(k)):
                 raise Refused(f"it has a field named like a credential "
                               f"({_names_shown([str(k)])})")
             _check_fields(v, _field(path, k))
