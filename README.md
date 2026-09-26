@@ -262,9 +262,13 @@ title = "<the race file's title>"
 sources = ["us", "ca"]                 # moved from the race file's `sources:`
 cache = "."                            # data/cache, as before
 subjects = [{id = "<id>", name = "<name>"}]   # each data/<id>/, named as the race file's candidates
-context = """<the race file's prose, up to its completeness check>"""
+context = """<the race file's prose, every section but its completeness check>"""
 completeness_check = """<the race file's completeness check section>"""
 ```
+
+The race file's completeness check ran from its `# Completeness check` heading to the next
+top-level heading. A section after it (a list of places to look, say) was context, and goes
+into `context` with the rest.
 
 Give any subject without a `questions.json` its own copy. Commit the project file in the
 project's own repository, so the move is reviewed like any other change. Commands then run in
