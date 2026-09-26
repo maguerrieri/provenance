@@ -147,11 +147,15 @@ async function main() {
       fp: el.dataset.fp,
       checked: el.querySelector(".cb").checked,
       stale: !el.querySelector(".stale").classList.contains("hidden"),
+      noteStale: !el.querySelector(".nstale").classList.contains("hidden"),
       flagged: el.classList.contains("flagged"),
       note: el.querySelector(".note").value,
     })),
     claims: doc.querySelectorAll(".claim").map(c => ({
       qid: c.dataset.qid, done: c.classList.contains("done"), shown: c.style.display !== "none",
+      // Whether the claim says its researcher's note is new, changed or removed since its rows
+      // were checked.
+      noteChanged: !c.querySelector(".nchanged").classList.contains("hidden"),
     })),
     progress: doc.getElementById("pct").textContent,
     notice: notice.classList.contains("hidden") ? ""

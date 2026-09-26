@@ -22,7 +22,8 @@ from provenance.report import render, review_fingerprint
 HARNESS = Path(__file__).parent / "review_app_harness.js"
 NODE = shutil.which("node")
 LEGACY = "vgpipe:t"          # what earlier versions of the page saved, per source
-STORE = "vgpipe:t:v2"
+V2 = "vgpipe:t:v2"          # what the page saved before a claim's notes were hashed
+STORE = "vgpipe:t:v3"
 
 CONTEXT = "At its March meeting the council approved the levy by a vote of four to one."
 SNIPPET = "the council approved the levy"
@@ -242,6 +243,40 @@ def test_the_fingerprint_covers_what_the_row_attests():
         "with none, the snapshot is the reviewer's route to the text"
 
 
+def test_the_fingerprint_covers_the_claims_researcher_notes():
+    """The reviewer reads a claim's researcher notes above its rows, and they carry what a
+    person has to act on, so a check covers them too. They get a part of their own, after a dot,
+    and only when there are any: the page can then tell a changed note from changed evidence,
+    and a claim without notes hashes exactly as it did before notes were hashed, so the checks
+    saved then still stand."""
+    c = claim("q1", "The council approved the levy.")
+    base = review_fingerprint(c, c.sources[0])
+    # Pinned: this is what the page saved for this row before notes were hashed. Changing how a
+    # claim without notes hashes clears every check saved on one.
+    assert base == "284a91bc9c80d54f"
+
+    def with_notes(notes):
+        n = claim("q1", c.answer)
+        n.notes = notes
+        return review_fingerprint(n, n.sources[0])
+
+    assert with_notes(None) == with_notes("") == with_notes(" \n ") == base, \
+        "nothing shown, nothing hashed"
+    noted = with_notes("The filing cited may not be the newest.")
+    head, notes = noted.split(".")
+    assert head == base and len(notes) == 16, "the evidence part is unchanged"
+    assert with_notes("\n The filing cited may not be the newest.  \n") == noted, \
+        "the note as shown, which is stripped"
+    two = with_notes("The filing cited may not be the newest.\nPage 3 is a scan.")
+    for same in ("The filing cited may not be the newest.\r\nPage 3 is a scan.",
+                 "The filing cited may not be the newest.\rPage 3 is a scan.",
+                 "The filing cited may not be the newest. \t\nPage 3 is a scan."):
+        assert with_notes(same) == two, "a line ending or trailing blank doesn't show"
+    assert with_notes("The filing cited may not be the newest; page 3 is a scan.") != noted
+    assert with_notes("The filing cited  may not be the newest.") != noted, \
+        "the note shows its spacing, so a change in it is a change in what was read"
+
+
 def test_a_query_rows_fingerprint_is_its_run_not_its_printout():
     """A query row is checked by re-running it, so what it attests is the definition and the
     export the figure came from. The printed command carries the `--cache` path, and the context
@@ -313,13 +348,23 @@ def test_unreadable_progress_is_kept_and_not_replaced_by_older(tmp_path):
     # Progress that parses but isn't this version's is unreadable too, per-source progress in
     # the new store included. Read as empty, a later version's store or a hand-edited one was
     # saved over with nothing on the first render.
-    later = json.dumps({"v": 3, "checked": {"1" * 16: f"q1/{sid}"}})
-    for text in ('{"v": 2, "checked": {', later, "null", "[]", legacy):
-        result = run(tmp_path, [c], storage={STORE: text, LEGACY: legacy})
+    later = json.dumps({"v": 4, "checked": {"1" * 16: f"q1/{sid}"}})
+    before = json.dumps({"v": 2, "checked": {"1" * 16: f"q1/{sid}"}})
+    for text in ('{"v": 3, "checked": {', later, before, "null", "[]", legacy):
+        result = run(tmp_path, [c], storage={STORE: text, V2: before, LEGACY: legacy})
         assert not rows(result)[f"q1/{sid}"]["flagged"], text
         assert "could not be read" in result["notice"], text
         assert STORE + ":unreadable" in result["notice"], text
         assert result["storage"][STORE + ":unreadable"] == text
+
+    # The same holds for the store from before notes were hashed, read when there is no newer
+    # one: it is never written, but falling back past it would bring those flags back too.
+    for text in ('{"v": 2, "checked": {', later, json.dumps({"v": 3}), "null", legacy):
+        result = run(tmp_path, [c], storage={V2: text, LEGACY: legacy})
+        assert not rows(result)[f"q1/{sid}"]["flagged"], text
+        assert "could not be read" in result["notice"], text
+        assert result["storage"][STORE + ":unreadable"] == text
+        assert result["storage"][V2] == text, "only read, never rewritten"
 
     # Imported, it is refused, and what the page holds is left alone.
     ticked = run(tmp_path, [c], actions=[{"do": "tick", "row": f"q1/{sid}", "checked": True}])
@@ -337,16 +382,21 @@ def test_stored_progress_is_sanitized(tmp_path):
     not assigned), annotations reduced to the two fields it uses."""
     c = claim("q1", "The council approved the levy.")
     sid = c.sources[0].sid
-    hostile = {"v": 2,
+    hostile = {"v": 3,
                "checked": {"__proto__": f"q1/{sid}", "0" * 16: "../q1/" + sid,
-                           "1" * 16: f"q1/{sid}", "not a fingerprint": f"q1/{sid}"},
+                           "1" * 16: f"q1/{sid}", "not a fingerprint": f"q1/{sid}",
+                           "2" * 16 + "." + "3" * 16: f"q1/{sid}",
+                           "4" * 16 + ".": f"q1/{sid}", "5" * 16 + ".6": f"q1/{sid}",
+                           "7" * 16 + "." + "8" * 16 + "." + "9" * 16: f"q1/{sid}"},
                "sources": {"__proto__": {"flag": True},
                            sid: {"flag": "yes", "note": 7, "extra": "dropped"}},
                "notice": {"cleared": "<b>9</b>", "uncited": -1, "unreadable": "yes"},
                "extra": {"dropped": True}}
     for result in (run(tmp_path, [c], storage={STORE: json.dumps(hostile)}),
+                   run(tmp_path, [c], storage={V2: json.dumps({**hostile, "v": 2})}),
                    run(tmp_path, [c], actions=[{"do": "import", "text": json.dumps(hostile)}])):
-        assert stored(result) == {"v": 2, "checked": {"1" * 16: f"q1/{sid}"},
+        assert stored(result) == {"v": 3, "checked": {"1" * 16: f"q1/{sid}",
+                                                      "2" * 16 + "." + "3" * 16: f"q1/{sid}"},
                                   "sources": {sid: {"flag": False, "note": ""}}}
         assert not rows(result)[f"q1/{sid}"]["checked"]
         assert not rows(result)[f"q1/{sid}"]["flagged"]
@@ -383,3 +433,164 @@ def test_the_notes_filter_shows_the_claims_with_researcher_notes(tmp_path):
     result = run(tmp_path, [noted, claim("q2", "Approved.")],
                  actions=[{"do": "filter", "value": "notes"}])
     assert {c["qid"]: c["shown"] for c in result["claims"]} == {"q1": True, "q2": False}
+
+
+NOTE = "The filing cited may not be the newest."
+
+
+def test_a_note_added_after_checking_clears_the_claims_checks(tmp_path):
+    """A check covers what the reviewer saw, and a claim's researcher note is part of that: it
+    carries what a person has to act on. A note added after every row was checked left the
+    claim reading done, dimmed and out of "Unchecked only", so the reviewer who had signed off
+    never saw it. Now every check on the claim lapses, each row says the note is why, and the
+    note is marked new."""
+    answer = "The council approved the levy."
+    k3 = f"q1/{cited().sid}"
+    k7 = k3 + "/2"
+
+    def build(notes="", *sources):
+        c = claim("q1", answer, *(sources or (cited(page=3), cited(page=7))))
+        c.notes = notes
+        return c
+
+    checked = run(tmp_path, [build()], actions=[{"do": "tick", "row": k3, "checked": True},
+                                                {"do": "tick", "row": k7, "checked": True}])
+    assert checked["claims"][0]["done"]
+
+    added = run(tmp_path, [build(NOTE)], storage=checked["storage"],
+                actions=[{"do": "filter", "value": "unchecked"}])
+    for key in (k3, k7):
+        row = rows(added)[key]
+        assert not row["checked"], key
+        assert row["noteStale"] and not row["stale"], "the row names the note, not the evidence"
+    c = added["claims"][0]
+    assert not c["done"] and c["shown"], "not done, so 'Unchecked only' shows it"
+    assert c["noteChanged"], "the note itself is marked new"
+    assert added["progress"].startswith("0/2")
+
+    # Reloading changes nothing: the warning stays until the rows are checked again.
+    reloaded = run(tmp_path, [build(NOTE)], storage=added["storage"])
+    assert reloaded["claims"][0]["noteChanged"]
+    assert all(r["noteStale"] for r in reloaded["rows"])
+
+    # Checking the rows again, with the note on the page, records the note with them. The
+    # marker stays until the last lapsed row is settled.
+    half = run(tmp_path, [build(NOTE)], storage=added["storage"],
+               actions=[{"do": "tick", "row": k3, "checked": True}])
+    assert rows(half)[k3]["checked"] and rows(half)[k7]["noteStale"]
+    assert half["claims"][0]["noteChanged"] and not half["claims"][0]["done"]
+    rechecked = run(tmp_path, [build(NOTE)], storage=half["storage"],
+                    actions=[{"do": "tick", "row": k7, "checked": True}])
+    assert rechecked["claims"][0]["done"] and not rechecked["claims"][0]["noteChanged"]
+    assert not any(r["noteStale"] or r["stale"] for r in rechecked["rows"])
+    assert run(tmp_path, [build(f"\n  {NOTE}  \n")],
+               storage=rechecked["storage"])["claims"][0]["done"], "the note as shown is unchanged"
+
+    # A change to only what the page doesn't show (line endings, blanks at a line's end) is none.
+    crlf = run(tmp_path, [build("Page 3 is a scan.  \nRead it by eye.")],
+               storage=run(tmp_path, [build("Page 3 is a scan.\r\nRead it by eye.")],
+                           actions=[{"do": "tick", "row": k3, "checked": True}])["storage"])
+    assert rows(crlf)[k3]["checked"] and not rows(crlf)[k3]["noteStale"]
+
+    # Changing the note lapses the checks again, and so does removing it: the check vouched for
+    # the claim as it read with its caveat. The claim says which.
+    for notes in ("The filing cited may not be the newest; page 3 is a scan.", ""):
+        after = run(tmp_path, [build(notes)], storage=rechecked["storage"])
+        assert not after["claims"][0]["done"], notes
+        assert all(r["noteStale"] and not r["stale"] and not r["checked"]
+                   for r in after["rows"]), notes
+        assert after["claims"][0]["noteChanged"], notes
+    page = HTMLParser(render([build(), build(NOTE)], tmp_path, title="T")[0].read_text())
+    assert ["has been removed" in m.text() for m in page.css(".nchanged")] == [True, False]
+
+    # Unchecking a row settles its warning, as it does for changed evidence.
+    dismissed = run(tmp_path, [build("Page 3 is a scan.")], storage=rechecked["storage"],
+                    actions=[{"do": "tick", "row": k3, "checked": True},
+                             {"do": "tick", "row": k3, "checked": False}])
+    assert not rows(dismissed)[k3]["noteStale"] and not rows(dismissed)[k3]["checked"]
+    assert rows(dismissed)[k7]["noteStale"]
+
+    # When the evidence changed as well, the row can't say the note is all that changed.
+    moved = cited("The minutes record that the council approved the levy in closed session.",
+                  page=3)
+    both = run(tmp_path, [build("Page 3 is a scan.", moved, cited(page=7))],
+               storage=rechecked["storage"])
+    assert rows(both)[k3]["stale"] and not rows(both)[k3]["noteStale"]
+    assert rows(both)[k7]["noteStale"] and not rows(both)[k7]["stale"]
+
+    # Another lapsed check naming the row (one a claim that sat on this id before left behind)
+    # keeps its own warning beside the note's.
+    mixed = run(tmp_path, [build("Page 3 is a scan.")], storage={STORE: json.dumps(
+        {"v": 3, "checked": {"0123456789abcdef": k3, rows(rechecked)[k3]["fp"]: k3}})})
+    assert rows(mixed)[k3]["stale"] and rows(mixed)[k3]["noteStale"]
+
+
+def test_a_note_change_is_found_by_what_the_row_shows_not_where(tmp_path):
+    """A lapsed check names the row it was made on. When the claim has moved since (to another
+    question id, or its citations reordered), that row shows something else or nothing, and
+    the note change must still land on the row showing what was checked."""
+    answer = "The council approved the levy."
+    sid = cited().sid
+
+    def build(qid, notes, *sources):
+        c = claim(qid, answer, *sources)
+        c.notes = notes
+        return c
+
+    checked = run(tmp_path, [build("q3", NOTE, cited(page=3), cited(page=7))],
+                  actions=[{"do": "tick", "row": f"q3/{sid}", "checked": True},
+                           {"do": "tick", "row": f"q3/{sid}/2", "checked": True}])
+    assert checked["claims"][0]["done"]
+
+    # Moved to another id, and the note reworded.
+    other = claim("q3", "The levy failed.", question="Did the levy fail?")
+    moved = run(tmp_path, [other, build("q7", "Page 3 is a scan.", cited(page=3), cited(page=7))],
+                storage=checked["storage"])
+    for key in (f"q7/{sid}", f"q7/{sid}/2"):
+        assert rows(moved)[key]["noteStale"] and not rows(moved)[key]["stale"], key
+    left = rows(moved)[f"q3/{sid}"]
+    assert not (left["checked"] or left["stale"] or left["noteStale"]), \
+        "the claim now on the old id was never checked, and nothing it shows changed"
+    assert [c["noteChanged"] for c in moved["claims"]] == [False, True]
+
+    # Its two citations swapped, and the note reworded: each warning follows its page.
+    swapped = run(tmp_path, [build("q3", "Page 3 is a scan.", cited(page=7), cited(page=3))],
+                  storage=checked["storage"])
+    assert all(r["noteStale"] and not r["stale"] for r in swapped["rows"])
+
+    # Checking the row where it now sits settles the check made where it was.
+    settled = run(tmp_path, [other, build("q7", "Page 3 is a scan.", cited(page=3),
+                                          cited(page=7))],
+                  storage=checked["storage"],
+                  actions=[{"do": "tick", "row": f"q7/{sid}", "checked": True},
+                           {"do": "tick", "row": f"q7/{sid}/2", "checked": True}])
+    assert [c["done"] for c in settled["claims"]] == [False, True]
+    assert sorted(stored(settled)["checked"].values()) == [f"q7/{sid}", f"q7/{sid}/2"]
+
+
+def test_progress_saved_before_notes_were_hashed_lapses_only_on_noted_claims(tmp_path):
+    """Checks saved before this change recorded no note. A claim without notes hashes as it did,
+    so its check stands and nothing is cleared wholesale. A claim that has notes now reads as
+    changed, once, and its rows say the note is why. That progress sits under its own key,
+    which this page only reads: a page from before would read two-part checks as its own
+    version's, and drop them the next time it saved."""
+    plain = claim("q1", "The council approved the levy.")
+    noted = claim("q2", "The levy passed.", question="Did the levy pass?")
+    sid = plain.sources[0].sid
+    # What the page saved for each row before, when a fingerprint carried no notes.
+    before = {"v": 2, "checked": {review_fingerprint(c, c.sources[0]): f"{c.question_id}/{sid}"
+                                  for c in (plain, noted)},
+              "sources": {sid: {"flag": True, "note": "check the vote count"}}}
+    assert all("." not in fp for fp in before["checked"])
+    noted.notes = NOTE
+
+    result = run(tmp_path, [plain, noted], storage={V2: json.dumps(before)})
+    assert result["storage"][V2] == json.dumps(before), "only read, never rewritten"
+    assert stored(result)["v"] == 3
+    assert rows(result)[f"q1/{sid}"]["checked"] and not rows(result)[f"q1/{sid}"]["stale"]
+    row = rows(result)[f"q2/{sid}"]
+    assert not row["checked"] and row["noteStale"] and not row["stale"]
+    assert [(c["done"], c["noteChanged"]) for c in result["claims"]] == [(True, False),
+                                                                         (False, True)]
+    assert result["notice"] == "", "nothing was migrated, so there is nothing to announce"
+    assert all(r["flagged"] and r["note"] == "check the vote count" for r in result["rows"])
