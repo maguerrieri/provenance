@@ -220,6 +220,7 @@ const STORE = KEY + ":v3";
 const UNREADABLE = STORE + ":unreadable";
 const ROW_RE = new RegExp({{ row_key_re|tojson }});
 const FP_RE = /^[0-9a-f]{16}(\.[0-9a-f]{16})?$/;
+const FP_V2_RE = /^[0-9a-f]{16}$/;      // before notes were hashed, a fingerprint had one part
 const SID_RE = /^[0-9a-f]{12}$/;
 const srcs = [...document.querySelectorAll('.src')];
 const shown = new Set(srcs.map(el => el.dataset.fp));
@@ -242,8 +243,10 @@ function sanitizeState(raw){
   const out = {v: 3, checked: Object.create(null), sources: Object.create(null)};
   if (!raw || typeof raw !== 'object') return out;
   if (raw.v !== 3 && raw.v !== 2) return migrate(out, raw);
+  // A v2 page wrote only one-part fingerprints, and dropped any other, so this does too.
+  const fpRe = raw.v === 2 ? FP_V2_RE : FP_RE;
   for (const [fp, row] of entries(raw.checked)){
-    if (FP_RE.test(fp) && typeof row === 'string' && ROW_RE.test(row)) out.checked[fp] = row;
+    if (fpRe.test(fp) && typeof row === 'string' && ROW_RE.test(row)) out.checked[fp] = row;
   }
   for (const [sid, v] of entries(raw.sources)){
     if (SID_RE.test(sid) && v && typeof v === 'object') out.sources[sid] = annotation(v);
