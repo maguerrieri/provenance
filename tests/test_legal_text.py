@@ -130,6 +130,20 @@ def test_a_malformed_source_list_is_refused(tmp_path, text, says):
         sources.load_rules(("x",), _lists(tmp_path, text))
 
 
+@pytest.mark.parametrize("make", [
+    lambda p: p.mkdir(),
+    lambda p: p.write_bytes(b"legal_text:\n  - codes.example.gov\n  - \xff\n"),
+], ids=["a directory", "not utf-8"])
+def test_a_source_list_that_cannot_be_read_is_refused_the_same_way(tmp_path, make):
+    """A read that fails, not only a parse, is the ValueError `project.load()` reports: a
+    traceback from whichever command reads the rules first is what that report replaces."""
+    d = tmp_path / "lists"
+    d.mkdir()
+    make(d / "x-sources.yaml")
+    with pytest.raises(ValueError, match=re.escape("can't be read")):
+        sources.load_rules(("x",), str(d))
+
+
 def test_an_empty_key_lists_no_host(tmp_path):
     rules = sources.load_rules(("x",), _lists(tmp_path, "legal_text:\nprimary_document: []\n"))
     assert rules[sources.LEGAL_TEXT] == () and rules["primary_document"] == ()
