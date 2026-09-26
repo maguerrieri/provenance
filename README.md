@@ -51,7 +51,8 @@ PyPI belongs to an unrelated project, so don't install it by name.
 uv tool install git+https://github.com/maguerrieri/provenance@v0.1.0
 ```
 
-Then run it from your research project's directory:
+Then run it from your research project's directory, the one holding its `provenance.toml`
+(write one first: see [Projects](#projects)):
 
 ```bash
 provenance --version                                                    # provenance 0.1.0
