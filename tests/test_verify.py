@@ -1851,7 +1851,7 @@ def test_query_citation_verifies_by_rerunning_not_by_text(tmp_path, monkeypatch)
     out = verify_source(s, tmp_path)
     assert out.verification.status == "verified"
     assert "re-running the query" in out.verification.reason
-    assert "uv run provenance query test.total" in out.verification.reason
+    assert "check it yourself: provenance query test.total" in out.verification.reason
 
     wrong = src(query=QueryCitation(name="test.total", params={"filer_id": "1"},
                                     expected="99999"))
@@ -3680,7 +3680,7 @@ def _argv_in_a_real_shell(cmd: str, cwd: Path) -> list[str]:
     import subprocess
     import sys
 
-    prefix = "uv run provenance query "
+    prefix = "provenance query "
     assert cmd.startswith(prefix)
     show_argv = f"{shlex.quote(sys.executable)} -c 'import json, sys; print(json.dumps(sys.argv[1:]))'"
     out = subprocess.run(["sh", "-c", f"{show_argv} {cmd[len(prefix):]}"],
@@ -3711,7 +3711,7 @@ def test_the_printed_query_command_passes_every_parameter_as_inert_data(value, t
     cmd = queries.human_command("calaccess.contributor_total",
                                 {"filer_id": "9990001", "contributor": value})
     want = ["--param", "filer_id=9990001", "--param", f"contributor={value}"]
-    assert shlex.split(cmd) == ["uv", "run", "provenance", "query", "calaccess.contributor_total",
+    assert shlex.split(cmd) == ["provenance", "query", "calaccess.contributor_total",
                                 *want], "each parameter must come back as one argument"
     (tmp_path / "decoy").write_text("")  # something for an unquoted * to expand to
     assert _argv_in_a_real_shell(cmd, tmp_path) == ["calaccess.contributor_total", *want], (
@@ -6173,7 +6173,7 @@ def test_a_query_citation_is_stamped_with_what_it_was_checked_against(tmp_path):
     assert v.query_run.version == queries.REGISTRY["calaccess.ie_total"].version
     assert v.query_run.export_date == "2026-09-20"
     assert v.query_run.cache_root == str(root)
-    assert shlex.split(v.reason.split(": ", 1)[1])[5:7] == ["--cache", str(root)]
+    assert shlex.split(v.reason.split(": ", 1)[1])[3:5] == ["--cache", str(root)]
 
     # a mismatch is stamped too: the reviewer has to be able to reproduce a failure
     wrong = verify_source(_ie_citation(expected="615000"), root).verification
@@ -6185,7 +6185,8 @@ def test_a_query_citation_is_stamped_with_what_it_was_checked_against(tmp_path):
     page = html.unescape(render([claim], tmp_path / "out")[0].read_text())
     assert f"calaccess.ie_total v{v.query_run.version}" in page
     assert "CAL-ACCESS export of 2026-09-20" in page
-    assert f"uv run provenance query calaccess.ie_total --cache {shlex.quote(str(root))}" in page
+    assert f">provenance query calaccess.ie_total --cache {shlex.quote(str(root))}" in page
+    assert "uv run" not in page
 
 
 def test_the_stamp_is_the_pipelines_to_write(tmp_path):
@@ -6233,9 +6234,9 @@ def test_a_stamped_cache_root_cannot_smuggle_text_into_the_command():
 
     cmd = queries.human_command("calaccess.filer_total", {"filer_id": "1"},
                                 "/tmp/my cache $(echo INJECTED)")
-    assert shlex.split(cmd)[5:7] == ["--cache", "/tmp/my cache $(echo INJECTED)"]
+    assert shlex.split(cmd)[3:5] == ["--cache", "/tmp/my cache $(echo INJECTED)"]
     # a relative root starting with '-' would be read as an option
-    assert shlex.split(queries.human_command("calaccess.filer_total", {}, "-x"))[5:7] == [
+    assert shlex.split(queries.human_command("calaccess.filer_total", {}, "-x"))[3:5] == [
         "--cache", "./-x"]
 
 
@@ -6266,9 +6267,9 @@ def test_a_query_verified_with_cache_reproduces_as_printed(tmp_path):
     assert built["verification"]["query_run"]["cache_root"] == str(shared)
 
     page = html.unescape((data / "out" / "review.html").read_text())
-    argv = shlex.split(re.search(r"uv run provenance query [^<\n]*", page).group(0))
-    assert argv[:3] == ["uv", "run", "provenance"] and "--cache" in argv
-    res = CliRunner().invoke(cli.app, argv[3:], terminal_width=200)
+    argv = shlex.split(re.search(r">(provenance query [^<\n]*)", page).group(1))
+    assert argv[0] == "provenance" and "--cache" in argv
+    res = CliRunner().invoke(cli.app, argv[1:], terminal_width=200)
     assert res.exit_code == 0, res.output
     out = _plain(res.output)
     assert out.startswith("612345.67")
@@ -6277,7 +6278,7 @@ def test_a_query_verified_with_cache_reproduces_as_printed(tmp_path):
 
     # the same command without the root is exactly what failed before
     i = argv.index("--cache")
-    assert CliRunner().invoke(cli.app, argv[3:i] + argv[i + 2:]).exit_code == 1
+    assert CliRunner().invoke(cli.app, argv[1:i] + argv[i + 2:]).exit_code == 1
 
 
 @pytest.mark.parametrize("command", [
@@ -6653,7 +6654,7 @@ def test_a_red_query_row_prints_the_builds_own_root(tmp_path):
     assert built["verification"]["status"] == "snippet_not_found"
     assert built["verification"]["query_run"] is None
     page = html.unescape((data / "out" / "review.html").read_text())
-    argv = shlex.split(re.search(r"uv run provenance query [^<\n]*", page).group(0))
+    argv = shlex.split(re.search(r">(provenance query [^<\n]*)", page).group(1))
     assert argv[argv.index("--cache") + 1] == str(shared)
     assert str(tmp_path / "crafted") not in page
 

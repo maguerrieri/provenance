@@ -330,7 +330,7 @@ COVER_FALLBACK = (
     "that column was loaded), so cover records cannot be narrowed to the latest amendment. "
     "An independent expenditure can be attributed to a candidate or stance that a later "
     "amendment replaced, and no figure can be checked for rows a later amendment dropped. "
-    "Rebuild the database: uv run provenance calaccess build")
+    "Rebuild the database: provenance calaccess build")
 
 
 def connect_citable(root: Path) -> sqlite3.Connection:
@@ -394,13 +394,13 @@ def cover_problem_at(root: Path) -> str | None:
 NO_COVERS = (
     "this CAL-ACCESS database has no CVR_CAMPAIGN_DISCLOSURE_CD table, so no figure can be "
     "checked for rows a filing's later amendment dropped. The export it was built from lacked "
-    "the cover table: download a complete export, then uv run provenance calaccess build")
+    "the cover table: download a complete export, then provenance calaccess build")
 
 EMPTY_COVERS = (
     "this CAL-ACCESS database's CVR_CAMPAIGN_DISCLOSURE_CD table has no rows, so no filing has a "
     "cover record to say which amendment is its latest, and no figure can be checked for rows a "
     "filing's later amendment dropped. The export it was built from lacked the cover records: "
-    "download a complete export, then uv run provenance calaccess build")
+    "download a complete export, then provenance calaccess build")
 
 
 @dataclass(frozen=True)
@@ -587,7 +587,7 @@ LATE_FALLBACK = (
     "this CAL-ACCESS database cannot read Form 497 late contribution reports (S497_CD): it was "
     "built before they were loaded, or the export's table lacks a column they need. So a "
     "contribution total cannot tell whether a late contribution is missing from it, whether "
-    "or not it names schedule A. Rebuild the database: uv run provenance calaccess build")
+    "or not it names schedule A. Rebuild the database: provenance calaccess build")
 
 # What queries._pending_late reads from S497_CD. DATE_THRU is optional.
 LATE_COLUMNS = ("FILING_ID", "AMEND_ID", "TRAN_ID", "FORM_TYPE", "ENTY_NAML", "ENTY_NAMF",
@@ -618,7 +618,7 @@ SCHEDULE_FALLBACK = (
     "this CAL-ACCESS database has no {table}.FORM_TYPE (it was built before that column was "
     "loaded), so its schedules cannot be told apart, and no figure from that table can be "
     "checked for a schedule a filing's later amendment left out. Rebuild the database: "
-    "uv run provenance calaccess build")
+    "provenance calaccess build")
 
 
 @dataclass(frozen=True)

@@ -495,7 +495,7 @@ def test_a_short_total_does_not_verify_green(tmp_path):
     assert "the query reproduces 8000.0, but it leaves out late-reported" in by_name.reason
     assert "filing 9990664 (Form 497): $700.00 in 1 entry" in by_name.reason, by_name.reason
     assert f"open {calaccess.filing_url(F497)}" in by_name.reason
-    assert "uv run provenance query calaccess.filer_total" in by_name.reason
+    assert "Re-run: provenance query calaccess.filer_total" in by_name.reason
     assert by_name.query_run is not None, "stamped, as a mismatch is, for provenance judge"
     # A mismatch is still a mismatch, not a question for a person.
     assert cite("9000", form_type="A").status == "snippet_not_found"
@@ -514,7 +514,7 @@ def test_a_database_built_before_late_reports_were_loaded_refuses_the_default(tm
     for name, params in (("contributor_total", {"contributor": "Fernhollow Growers PAC"}),
                          ("filer_total", {}), ("top_contributor", {})):
         for form_type in ({}, {"form_type": "A"}, {"form_type": ""}):
-            with pytest.raises(calaccess.DegradedDatabase, match="uv run provenance calaccess build"):
+            with pytest.raises(calaccess.DegradedDatabase, match="database: provenance calaccess build"):
                 run(root, name, **params, **form_type)
     # another schedule never depended on late reports: a miss, not a refusal
     assert not run(root, "filer_total", form_type="C").found
