@@ -14,17 +14,19 @@ recipes:
     url: https://web.archive.org/save
     headers:
       Accept: application/json
-      Authorization: LOW $ARCHIVE_ORG_ACCESS_KEY:$ARCHIVE_ORG_SECRET_KEY
     body: url={target}&skip_first_archive=1
     params: [target]
     notes: |
       Returns {"job_id": ...}; poll /save/status/<job_id> until status=success, then build
       https://web.archive.org/web/<timestamp>/<original_url>.
 
-      Keys come from https://archive.org/account/s3.php and require an archive.org login, so
-      a human has to create them. They are read from the environment
-      (ARCHIVE_ORG_ACCESS_KEY / ARCHIVE_ORG_SECRET_KEY) and never stored here — the
-      Authorization value above is a placeholder, not a credential.
+      The higher quota needs an Authorization header of the form
+      "LOW <access key>:<secret key>", which `provenance archive` adds from the environment
+      (ARCHIVE_ORG_ACCESS_KEY / ARCHIVE_ORG_SECRET_KEY). It is not recorded here: the registry
+      holds no credential header, not even a placeholder, and `--run-recipe` refuses one, so
+      run as a recipe this request is the anonymous one. Keys come from
+      https://archive.org/account/s3.php and require an archive.org login, so a human has to
+      create them.
 
 limits: |
   Some hosts cannot be archived at all regardless of quota: cal-access.sos.ca.gov returns 500

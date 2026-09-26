@@ -189,10 +189,12 @@ def test_no_write_still_prints_in_an_installed_copy(installed, tmp_path):
 
 
 def test_the_refusal_prints_the_host_as_data(installed, monkeypatch):
-    """The host is typed by a person or an agent, and the refusal names the file it would be."""
+    """The host is typed by a person or an agent. One holding a control character is not a
+    host name (#161), so it is refused before anything names the file it would be, and the
+    refusal doesn't print it."""
     monkeypatch.setattr(cli.con, "_color_system", None)   # rich's own escapes, not the host's
     r = CliRunner().invoke(cli.app, ["source-note", "portal\x1b[2K.example", "x"],
                            terminal_width=200)
     assert r.exit_code == 1, r.output
     assert "\x1b" not in r.output
-    assert "source_access/portal\\x1b[2k.example.yaml" in r.output
+    assert "is not a host name" in r.output and not installed.exists()

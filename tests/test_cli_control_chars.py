@@ -392,8 +392,12 @@ def test_source_import_curl_and_source_note_print_through_printable(tmp_path, re
     assert "name: portal\\u202e\n" in text   # YAML, a line at a time
     assert NOTE in " ".join(lines)
 
-    code, out = _provenance("source-note", f"new{CTRL}.example", "probed; needs a session")
+    code, out = _provenance("source-note", "new.example", f"probed; needs a session{CTRL}")
     assert code == 0 and "recorded " in out, out
+    # A host names a file, so one with a control character in it is refused, not written.
+    code, out = _provenance("source-note", f"new{CTRL}.example", "probed; needs a session")
+    assert code == 1 and "not a host name" in out, out
+    assert sorted(p.name for p in registry.iterdir()) == ["new.example.yaml", "news.example.yaml"]
 
 
 # --- claims, verdicts and the files a run keeps -------------------------------------------------

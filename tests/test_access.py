@@ -218,17 +218,18 @@ def _refused_unrepeated(call, where: str) -> str:
 
 
 @pytest.mark.parametrize("curl, where", [
-    (f"curl 'https://{UNREADABLE_LOGIN}/api'", "the curl command's URL"),
-    (f"curl --url 'https://{UNREADABLE_LOGIN}/api'", "the curl command's URL"),
+    (f"curl 'https://{UNREADABLE_LOGIN}/api'", "its URL"),
+    (f"curl --url 'https://{UNREADABLE_LOGIN}/api'", "its URL"),
     # The stdlib has other errors for a host it can't read, and one quotes the host.
-    ("curl 'https://user:fake@[canary]/api'", "the curl command's URL"),
+    ("curl 'https://user:fake@[canary]/api'", "its URL"),
     (f"curl -H 'Referer: https://{UNREADABLE_LOGIN}/' https://x.example/",
-     "the referer header's URL"),
-    (f"curl -e 'https://{UNREADABLE_LOGIN}/' https://x.example/", "the referer header's URL"),
-    (f"curl -H 'Origin: https://{UNREADABLE_LOGIN}' https://x.example/", "the origin header's URL"),
+     "its referer header's URL"),
+    (f"curl -e 'https://{UNREADABLE_LOGIN}/' https://x.example/", "its referer header's URL"),
+    (f"curl -H 'Origin: https://{UNREADABLE_LOGIN}' https://x.example/", "its origin header's URL"),
 ])
 def test_a_url_whose_host_cant_be_parsed_is_refused_without_repeating_it(curl, where):
-    assert "Record the endpoint by hand" in _refused_unrepeated(lambda: parse_curl(curl), where)
+    msg = _refused_unrepeated(lambda: parse_curl(curl), f"the pasted request: {where}")
+    assert "record the endpoint by hand" in msg
 
 
 @pytest.mark.parametrize("recipe, params, where", [
@@ -244,16 +245,20 @@ def test_run_refuses_a_url_whose_host_cant_be_parsed_without_repeating_it(recipe
                                                                           monkeypatch):
     sent = []
     monkeypatch.setattr(access.httpx, "request", lambda *a, **kw: sent.append(a))
-    msg = _refused_unrepeated(lambda: run(recipe, params), f"recipe 'bad': {where}")
+    msg = _refused_unrepeated(lambda: run(recipe, params), f"in recipe 'bad', {where}")
     assert msg.endswith("record it as access: manual instead") and not sent
 
 
 def test_run_refuses_a_url_httpx_cant_read_without_repeating_it(monkeypatch):
-    """httpx parses the URL again. `%40` is not an `@` to the login check, so `fake%40canary`
-    is a port to httpx, and its error quoted it."""
+    """httpx parses the URL again, and its error quoted the part it couldn't read: a port, and
+    a password written with `%40` for its `@`, which is a port to httpx. That one is a login to
+    the check now, which reads every decoding of a netloc, so it never reaches httpx."""
     monkeypatch.setattr(access.httpx.Client, "send", lambda *a, **kw: pytest.fail("sent"))
     r = Recipe(id="bad", method="GET", url="https://{host}/api", params=["host"])
     with pytest.raises(ValueError, match="its URL can't be sent as it is") as e:
+        run(r, {"host": "portal.example:fakecanary"})
+    assert not re.search("fake|canary", str(e.value)), str(e.value)
+    with pytest.raises(ValueError, match="its URL carries a username or password") as e:
         run(r, {"host": "user:fake%40canary.example"})
     assert not re.search("fake|canary", str(e.value)), str(e.value)
 
@@ -279,14 +284,13 @@ def test_the_commands_refuse_a_url_whose_host_cant_be_parsed_without_repeating_i
         r = CliRunner().invoke(cli.app, args)
         assert r.exit_code == 1 and "can't be parsed" in r.output, r.output
         assert not re.search("fake|canary|\uff20", r.output), r.output
-    # A host argument is split too. These two don't catch the refusal yet (#161), so it is a
-    # traceback, but the traceback repeats nothing either.
+    # A host argument is split too, and the refusal is printed, not a traceback (#161).
     for args in (["source-access", f"https://{UNREADABLE_LOGIN}/"],
                  ["source-note", f"https://{UNREADABLE_LOGIN}/", "a finding"]):
         r = CliRunner().invoke(cli.app, args)
-        said = f"{r.output}{r.exception}"
-        assert r.exit_code == 1 and "the host can't be parsed" in said, said
-        assert not re.search("fake|canary|\uff20", said), said
+        assert r.exit_code == 1 and "the host can't be parsed" in r.output, r.output
+        assert isinstance(r.exception, SystemExit), r.exception
+        assert not re.search("fake|canary|\uff20", r.output), r.output
     assert [p.name for p in reg.iterdir()] == ["x.example.yaml"]
 
 
