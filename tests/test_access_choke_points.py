@@ -183,9 +183,10 @@ def test_a_host_argument_holding_a_login_is_refused_and_nothing_is_written(host,
                                   "portal.example/x", "", "."])
 def test_a_host_that_is_not_a_host_name_names_no_file(host, registry, tmp_path):
     """The host is the file's name, so a path in it wrote outside the registry."""
+    before = _files(tmp_path)   # conftest's project file, among others
     code, out = _invoke("source-note", host, "a finding")
     assert code == 1 and "not a host name" in out, out
-    assert _files(tmp_path) == {}
+    assert _files(tmp_path) == before
 
 
 @pytest.mark.parametrize("args", [
