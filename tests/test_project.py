@@ -24,6 +24,7 @@ from typer.testing import CliRunner
 
 from provenance import cli, project
 from provenance.models import EXTRACTOR_VERSION, Claim, PageCache, Source
+from provenance.sources import load_rules
 
 URL = "https://example.org/minutes"
 SNIPPET = "voted 4-1 to approve the lease"
@@ -779,7 +780,7 @@ def test_the_briefs_standard_output_is_the_brief_alone(tmp_path, monkeypatch):
     goes to standard error, never into the paste."""
     monkeypatch.setattr(cli, "_noted_defaults", set())
     root = write_project(tmp_path / "data", subjects=["lind"], context="Minutes\xadonline.\n",
-                         sources=("us",))
+                         sources=("us",), extra='primary_hosts = ["records.example.gov"]\n')
     (root / "lind").mkdir()
     here = Path.cwd()
     os.chdir(root / "lind")
@@ -788,7 +789,10 @@ def test_the_briefs_standard_output_is_the_brief_alone(tmp_path, monkeypatch):
     finally:
         os.chdir(here)
     assert res.exit_code == 0, res.output
-    assert res.stdout == "Project: Example County Assessor\n\nMinutes\\xadonline.\n", res.stdout
+    hosts = ", ".join(sorted({*load_rules(("us",))["primary_document"], "records.example.gov"}))
+    assert res.stdout == ("Project: Example County Assessor\n\nMinutes\\xadonline.\n\n"
+                          f"Issuing authorities, each with its subdomains: {hosts}\n"
+                          f"{cli.ISSUING_AUTHORITIES}\n"), res.stdout
     err = " ".join(res.stderr.split())
     assert "this is the project root's run, not lind's" in err, err
     assert "are shown as escapes" in err, err

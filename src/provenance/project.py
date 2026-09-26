@@ -27,7 +27,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 FILE = "provenance.toml"
-KEYS = ("name", "title", "sources", "cache", "subjects", "context", "completeness_check")
+KEYS = ("name", "title", "sources", "primary_hosts", "cache", "subjects", "context",
+        "completeness_check")
 SUBJECT_KEYS = ("id", "name")
 
 # A completeness check section pasted into `context`, as a race file's whole body would bring
@@ -87,10 +88,20 @@ class Project:
     subjects: tuple[Subject, ...]  # each a run in root/<id>
     context: str = ""              # prompt-safe: `provenance brief` gives it to every researcher
     completeness_check: str = ""   # the orchestrator's and the reviewer's: never in a brief
+    primary_hosts: tuple[str, ...] = ()   # the hosts that issue this project's own records
 
     @property
     def file(self) -> Path:
         return self.root / FILE
+
+    def rules(self) -> dict[str, tuple[str, ...]]:
+        """The source rules this project's citations are checked against: its lists, merged,
+        with the hosts it names as issuing authorities among their primary-document hosts.
+        Every command reads them here. One that read the lists alone would call an official
+        record from a host they don't name a copy, as check-claim did before `primary_hosts`."""
+        from .sources import load_rules
+
+        return load_rules(self.sources, primary_hosts=self.primary_hosts)
 
     @property
     def subject_ids(self) -> tuple[str, ...]:
@@ -129,7 +140,7 @@ def find(start: Path) -> Path | None:
 def load(root: Path) -> Project:
     """Read `root`/provenance.toml, refusing anything it can't read as a project. Every problem
     is named in one message, so a repair is not a loop of re-runs."""
-    from .sources import available, load_rules
+    from .sources import available, bare_host, classify, load_rules
 
     root = _real(root) or absolute(root)
     path = root / FILE
@@ -179,6 +190,46 @@ def load(root: Path) -> Project:
             load_rules(tuple(sources))
         except (ValueError, OSError) as e:   # OSError: a list `available()` saw is gone
             problems.append(str(e))
+    # The lists that exist, so a misnamed one doesn't hide what the others say about a host.
+    known = [s for s in sources if s in available()]
+
+    primary = raw.get("primary_hosts", [])
+    hosts: list[str] = []
+    if not isinstance(primary, list) or not all(isinstance(h, str) for h in primary):
+        problems.append("`primary_hosts` must list the hosts that issue this project's own "
+                        "records, e.g. [\"records.example.gov\"]")
+    elif bad := [h for h in primary if bare_host(h) is None]:
+        # Refused, not skipped: a host that matches nothing leaves every record from the real
+        # one reading as a copy, and a bare top-level domain makes every host under it an
+        # issuing authority, which is the silent substitution secondary_host() exists to catch.
+        problems.append(f"`primary_hosts` holds what is not a host name: "
+                        f"{', '.join(map(repr, bad))} (write `records.example.gov`: no scheme, "
+                        f"path, port or `www.`, and more than a top-level domain)")
+    else:
+        hosts = list(dict.fromkeys(bare_host(h) for h in primary))
+    listed = None
+    if hosts and known:
+        try:
+            listed = load_rules(tuple(known))
+        except (ValueError, OSError) as e:
+            # One of them can't be read. Named once: with every list found, it is named above.
+            if str(e) not in problems:
+                problems.append(str(e))
+    if listed is not None:
+        # Classification takes the most restrictive class first, so an excluded or
+        # lead-generator host named here would stay what it is while the brief told every
+        # researcher it was an issuing authority. And a news outlet would stop being one, named
+        # itself or through a host above it (primary_document is checked before journalism):
+        # its copy of a record would pass as the record.
+        for h in hosts:
+            if (cls := classify(f"https://{h}/", listed)) not in ("unknown", "primary_document"):
+                problems.append(f"`primary_hosts` names {h!r}, which the project's source lists "
+                                f"class as {cls}: a project names the issuing authorities its "
+                                f"lists leave out, and can't reclass a host they class")
+            elif outlets := [j for j in listed["bylined_journalism"] if j.endswith("." + h)]:
+                problems.append(f"`primary_hosts` names {h!r}, which covers "
+                                f"{', '.join(map(repr, outlets))}, a news outlet on the "
+                                f"project's source lists: name the issuing authority's own host")
 
     cache = raw.get("cache")
     cache_path = None
@@ -283,7 +334,7 @@ def load(root: Path) -> Project:
                                 root)
     return Project(root=root, name=name.strip(), title=title.strip(), sources=tuple(sources),
                    cache=cache_path, subjects=tuple(found), context=context,
-                   completeness_check=check)
+                   completeness_check=check, primary_hosts=tuple(hosts))
 
 
 def _path(root: Path, value: str, key: str, problems: list[str]) -> Path | None:

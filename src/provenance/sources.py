@@ -5,7 +5,8 @@ project loads `us` + `ca`, and a future city project could add a city list. The 
 domain in any loaded list counts. Besides the classes, a list names the hosts that publish legal
 text (`legal_text`), whose citations must carry the version they quote. A list can ship notes
 beside it (`<name>-notes.md`), which `provenance brief` hands to researchers and verifiers
-(`notes()`).
+(`notes()`). A project adds the hosts that issue its own records (`primary_hosts` in its
+provenance.toml), which the tool's lists can't know.
 """
 
 from __future__ import annotations
@@ -63,7 +64,8 @@ def available(sources_dir: Path | None = None) -> list[str]:
 
 
 @lru_cache(maxsize=8)
-def load_rules(names: tuple[str, ...] = ("us",), sources_dir: str | None = None) -> dict[str, tuple[str, ...]]:
+def load_rules(names: tuple[str, ...] = ("us",), sources_dir: str | None = None, *,
+               primary_hosts: tuple[str, ...] = ()) -> dict[str, tuple[str, ...]]:
     """Merge the named source lists. Order doesn't matter — classification checks the
     most restrictive category first, so a domain listed as excluded stays excluded even
     if another list also names it.
@@ -72,7 +74,12 @@ def load_rules(names: tuple[str, ...] = ("us",), sources_dir: str | None = None)
     ValueError naming it (`project.load()` reports it as a problem with the project). Read past,
     each of these fails open: a misspelled or repeated `legal_text` lists no host, or only some,
     and every undated statute on the rest passes; a host written without the list's `-` is read
-    one letter at a time; and a host with a scheme, a path or `www.` matches no URL."""
+    one letter at a time; and a host with a scheme, a path or `www.` matches no URL.
+
+    `primary_hosts` are the hosts a project names as the issuing authorities for its own
+    records, added to the lists' `primary_document` hosts. A command reads its rules through
+    `Project.rules()`, never by passing the project's lists here alone: checked against the
+    lists alone, every official record from a host they don't name reads as a copy."""
     d = Path(sources_dir) if sources_dir else SOURCES_DIR
     merged: dict[str, list[str]] = {k: [] for k in KEYS}
     for name in names:
@@ -101,7 +108,8 @@ def load_rules(names: tuple[str, ...] = ("us",), sources_dir: str | None = None)
                 raise ValueError(f"source list {p}: {k!r} holds what is not a bare host name: "
                                  f"{', '.join(map(repr, bad))} (write `example.gov`: no "
                                  f"scheme, path, port or `www.`)")
-            merged[k].extend(h.strip().lower() for h in hosts)
+            merged[k].extend(_ascii(h.strip().lower()) for h in hosts)
+    merged["primary_document"].extend(primary_hosts)
     return {k: tuple(dict.fromkeys(v)) for k, v in merged.items()}
 
 
@@ -131,6 +139,25 @@ def notes(names: tuple[str, ...], sources_dir: str | Path | None = None) -> list
     return found
 
 
+def bare_host(value: str) -> str | None:
+    """`value` as a host `classify()` can match, trimmed and lowercased, or None when it is not
+    one: a scheme, a path, a port or a leading `www.` (which `domain()` strips from every URL)
+    would match nothing, and a single label would match a whole top-level domain."""
+    host = _ascii(value.strip().lower().rstrip("."))   # a trailing dot names the same host
+    return host if _HOST.fullmatch(host) else None
+
+
+def _ascii(host: str) -> str:
+    """`host` in its ASCII form (IDNA), the one form list entries, a project's hosts and a URL's
+    host are compared in. `domain()` gives a URL's host as the URL spells it, and an entry can be
+    written either way, so compared as spelled a host matched only an entry spelled like it. A
+    host the codec refuses is compared as it is."""
+    try:
+        return host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return host
+
+
 def default_rules() -> dict[str, tuple[str, ...]]:
     """`us` alone: the lists for a caller that has no project. Every command passes the lists
     its project names (`sources = ["us", "ca"]` in provenance.toml), so a California project
@@ -141,7 +168,9 @@ def default_rules() -> dict[str, tuple[str, ...]]:
 
 
 def domain(url: str) -> str:
-    host = (urlparse(url).hostname or "").lower()
+    # A trailing dot names the same host (`example.gov.` is fully qualified `example.gov`), and
+    # left on, it matched no entry: an excluded host's page passed as unlisted.
+    host = (urlparse(url).hostname or "").lower().rstrip(".")
     return host[4:] if host.startswith("www.") else host
 
 
@@ -153,7 +182,7 @@ def classify(url: str, rules: dict[str, tuple[str, ...]] | None = None) -> str:
     """One of: bylined_journalism, primary_document, lead_generator_only,
     excluded, campaign_statement_only, unknown."""
     r = rules if rules is not None else default_rules()
-    host = domain(url)
+    host = _ascii(domain(url))
     for key in CATEGORIES:  # most restrictive first
         if _matches(host, r.get(key, ())):
             return key
@@ -163,7 +192,7 @@ def classify(url: str, rules: dict[str, tuple[str, ...]] | None = None) -> str:
 def publishes_legal_text(url: str, rules: dict[str, tuple[str, ...]] | None = None) -> bool:
     """True when `url` is on a host a loaded list names under `legal_text`."""
     r = rules if rules is not None else default_rules()
-    return _matches(domain(url), r.get(LEGAL_TEXT, ()))
+    return _matches(_ascii(domain(url)), r.get(LEGAL_TEXT, ()))
 
 
 # Bylines that name nobody. Refused as an author, and never taken as naming who argues something.

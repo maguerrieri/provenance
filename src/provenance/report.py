@@ -18,8 +18,8 @@ from markupsafe import Markup
 
 from . import queries
 from .models import QID_PATTERN, Claim, Source
-from .sources import ARGUED, TIER_LABEL, tier
-from .verify import secondary_host
+from .sources import ARGUED, TIER_LABEL, domain, tier
+from .verify import secondary_host, unacked_copy
 
 # Package data, so an installed copy (uv tool install) has it. files() gives a Path for a
 # package on disk, which Jinja's FileSystemLoader needs; anything else fails loudly here.
@@ -179,8 +179,9 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "citation review"
            store: str) -> tuple[Path, Path]:
     """`cache_root` is the root this build resolved: the `--cache` for a query row that carries
     no stamp of its own (one build did not re-run, whose file stamp revalidation dropped).
-    `rules` are the project's source lists, which the "copy, not the issuing authority" badge
-    is decided by, as `provenance check-claim` decides it, and so is each row's tier. Required:
+    `rules` are the project's (`Project.rules()`: its source lists and its `primary_hosts`),
+    which the secondary-host badge is decided by, as `provenance check-claim` decides it, and so
+    is each row's tier. Required:
     defaulted to `us`, every regional outlet showed as an unlisted one beside a status that
     counted it as reporting. `store` is the run's `store_id()`:
     required, since a default would be one store every caller that forgot it shared."""
@@ -213,6 +214,10 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "citation review"
                 fingerprint=review_fingerprint(c, s), context_html=context_html(s),
                 badge_class=BADGE.get(s.verification.status, "bad"),
                 secondary=secondary_host(s, rules), query_command=command,
+                acked=secondary_host(s, rules) and not unacked_copy(s, rules),
+                # The host as primary_hosts names it (no port, no `www.`), since the page
+                # tells the reviewer to add it there.
+                host=domain(s.url),
                 tier=TIER_LABEL[t], argued=t in ARGUED, unlisted=t == "unlisted_outlet",
                 query_provenance=query_provenance(s)))
         return views

@@ -31,7 +31,7 @@ from .models import (
     strip_machine_fields,
 )
 from .report import clear_render, render, store_id
-from .sources import TIER_LABEL, domain, load_rules, notes, speakers, tier
+from .sources import TIER_LABEL, domain, notes, speakers, tier
 from .terminal import printable as _printable
 from .verify import (
     GOOD,
@@ -494,7 +494,8 @@ def races():
 @app.command()
 def brief(data: Path = None, project: Path = None, subject: str = None):
     """Print what every researcher and verifier on the run is told: its subject, the project's
-    context, and the notes that ship with the project's source lists.
+    context, the hosts that issue its records, and the notes that ship with the project's source
+    lists.
 
     Paste it into each researcher's and verifier's prompt verbatim. It never holds the project's
     completeness check: those are the answers already known, and a researcher told what it is
@@ -505,6 +506,17 @@ def brief(data: Path = None, project: Path = None, subject: str = None):
     if data is None and subject is None:
         _note_root_run(p, out=err)
     _print_copied(researcher_brief(p, p.subject_of(run)), notes=err)
+
+
+ISSUING_AUTHORITIES = (
+    "A primary_document, official_record or official_analysis cited from any other host is a "
+    "copy: cite the authority's own, or set `secondary_host_ack` saying what you could not "
+    "reach and why the copy is the same document. If the host you cite is itself the body that "
+    "issues the record and isn't named here, don't acknowledge a copy, don't relabel the "
+    "source, and don't edit the project file, since a researcher who can name its own issuing "
+    "authorities can pass off any copy as the record. Hand the claim on with `notes` naming the "
+    "host and why it issues the record: it goes to human_review, and a person adds it to the "
+    "project's `primary_hosts`.")
 
 
 def researcher_brief(p: proj.Project, subject: str | None) -> str:
@@ -518,6 +530,12 @@ def researcher_brief(p: proj.Project, subject: str | None) -> str:
         lines.append(f"Subject: {s.name}")
     if p.context.strip():
         lines += ["", p.context.strip()]
+    # The hosts check-claim takes as issuing authorities, from the project's lists and its own
+    # `primary_hosts`, and what to do about any other. Without them a researcher citing an
+    # unlisted authority's own record had to guess, and relabelled it `own_statement` to get
+    # past the secondary-host check. Here, beside the lists' notes, and nowhere else.
+    hosts = ", ".join(sorted(p.rules()["primary_document"])) or "none named"
+    lines += ["", f"Issuing authorities, each with its subdomains: {hosts}", ISSUING_AUTHORITIES]
     for name, text in notes(p.sources):
         lines += ["", f"Notes that ship with the `{name}` source list (the tool's, not this "
                       "project's):", "", text]
@@ -531,7 +549,7 @@ def verify(data: Path = None, cache: Path = None, refresh: bool = False, qid: st
     _explicit_cache(cache)
     p, data = _project(data, project, subject=subject)
     cache_root = _cache_root(data, cache, resolved=(p, data))
-    rules = load_rules(p.sources)
+    rules = p.rules()
     claims_dir = data / "claims"
     claims = [c for c in _load_or_exit(claims_dir)   # never trust: this run decides status
               if not qid or c.question_id == qid]
@@ -956,7 +974,7 @@ def build(data: Path = None, cache: Path = None, title: str = "", project: Path 
     if not title:
         title = f"{run_subject.name} — {p.title}" if run_subject else p.title
     cache_root = _verdict_cache_root(data, cache, resolved=(p, data))
-    rules = load_rules(p.sources)
+    rules = p.rules()
 
     # Trusted, then immediately re-checked: _settle() discards any status that cannot be
     # reproduced from the cached page, and replaces every support verdict with the recorded
@@ -1545,7 +1563,7 @@ def handoff(question_id: str, data: Path = None, cache: Path = None, project: Pa
     cache_root = _verdict_cache_root(data, cache, resolved=(p, data))
     claim, _ = _claim_or_exit(data, question_id, "so what it cites cannot be shown")
     _apply_archive_rows(data, claim.sources, cache_root)
-    _print_handoff(_handed(claim, cache_root, rules=load_rules(p.sources)),
+    _print_handoff(_handed(claim, cache_root, rules=p.rules()),
                    _run_args(data, cache))
 
 
@@ -1634,7 +1652,7 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
     _explicit_cache(cache)
     p, data = _project(data, project, subject=subject)
     cache_root = _verdict_cache_root(data, cache, resolved=(p, data))
-    rules = load_rules(p.sources)
+    rules = p.rules()
     claim, claims = _claim_or_exit(data, question_id,
                                    f"so whether it cites {sid} cannot be checked")
     source = next((s for s in claim.sources if s.sid == sid), None)
@@ -1736,7 +1754,7 @@ def show_judgments(data: Path = None, question_id: str = "",
     _explicit_cache(cache)
     p, data = _project(data, project, subject=subject)
     cache_root = _verdict_cache_root(data, cache, resolved=(p, data))
-    rules = load_rules(p.sources)
+    rules = p.rules()
     skipped: list[str] = []
     claims = _load_or_exit(data / "claims", trust_machine_fields=True, skipped=skipped)
     # As build does, before the verdicts: an archive-verified row is checked against its
@@ -2254,7 +2272,7 @@ def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path
     at = proj.absolute(path)
     _explicit_cache(cache)
     p, run = _project(at.parent.parent if at.parent.name == "claims" else data, project)
-    rules = load_rules(p.sources)
+    rules = p.rules()
     cache_root = _cache_root(run, cache, resolved=(p, run))
     try:
         raw = json.loads(path.read_text())
@@ -2262,10 +2280,10 @@ def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path
         con.print(f"[red]cannot read {escape(_printable(f'{path}: {e}', lines=True))}[/]")
         raise typer.Exit(1) from None
 
-    ok = True
+    ok, fixable = True, False
     asked_in, asked = questions.find(run), None
     if why := _no_own_set(p, run):
-        ok = False
+        ok, fixable = False, True
         con.print(Text(_printable(why), style="red"), soft_wrap=True)
     elif asked_in is None:
         con.print(f"[dim]no {questions.FILE} for {escape(_printable(str(run)))}, so the "
@@ -2274,7 +2292,7 @@ def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path
         try:
             asked = questions.load(asked_in)
         except questions.UnreadableQuestions as e:
-            ok = False
+            ok, fixable = False, True
             con.print(f"[red]cannot check the question:[/] "
                       f"{escape(_printable(str(e), lines=True))}")
     for item in (raw if isinstance(raw, list) else [raw]):
@@ -2289,17 +2307,17 @@ def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path
         qid = escape(claim.question_id)
         where = escape(_printable(str(asked_in)))
         if listed := found.case_of.get(claim.question_id):
-            ok = False
+            ok, fixable = False, True
             con.print(f"  [red]question id[/] {qid} is not in {where}, which "
                       f"has {escape(_printable(listed))}: they differ only in case\n"
                       f"      Use the question_id you were given, exactly.")
         elif found.unlisted:
-            ok = False
+            ok, fixable = False, True
             con.print(f"  [red]question id[/] {qid} is not in {where}\n"
                       f"      Use the question_id you were given, exactly. If you did, the "
                       f"question set changed under you: report that, and do not edit it.")
         for _qid, answered, text in found.reworded:
-            ok = False
+            ok, fixable = False, True
             con.print(f"  [red]question[/] is not the one {where} asks at {qid}\n"
                       f"      Copy it exactly as you were given it, into `question`:")
             con.print(Text(f"      yours: {answered!r}\n      asked: {text!r}"), soft_wrap=True)
@@ -2312,27 +2330,36 @@ def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path
             elif st in ("normalized_match", "pdf_normalized_match"):
                 con.print(f"  [yellow]{st}[/] {escape(cited)}")
             else:
-                ok = False
+                ok, fixable = False, True
                 # One run with the reason, which can quote the snippet or the page.
                 con.print(f"  [red]{st}[/] " + escape(
                     f"{cited}\n      {_printable(src_.verification.reason or '')}"))
         for src_ in claim.sources:
             if unacked_copy(src_, rules):
+                # Not fixable by the researcher when the host is the authority itself, so it
+                # doesn't set `fixable`. "Not named" is all the pipeline knows, so the message
+                # says that and gives both ways on: told only "not the authority", a researcher
+                # citing the authority itself acknowledged a copy it wasn't or relabelled the
+                # source. One escaped run, since the host is printed twice.
                 ok = False
-                con.print(f"  [red]secondary host[/] {escape(_printable(domain(src_.url)))} is "
-                          f"not the "
-                          f"authority that issues this record\n"
-                          f"      Cite the issuing authority's own copy. If you genuinely "
-                          f"cannot reach it, set `secondary_host_ack` saying what you could "
-                          f"not reach and why this copy is the same document — but never "
-                          f"substitute silently.")
+                host = domain(src_.url)
+                con.print("  [red]secondary host[/] " + escape(_printable(
+                    f"{host} is not one of the project's issuing authorities (`provenance "
+                    f"brief` lists them)\n"
+                    f"      If it is a copy, cite the issuing authority's own. If you genuinely "
+                    f"cannot reach it, set `secondary_host_ack` saying what you could not reach "
+                    f"and why this copy is the same document — but never substitute silently.\n"
+                    f"      If {host} is itself the body that issues this record, do neither, "
+                    f"and don't relabel the source: hand the claim on with `notes` naming the "
+                    f"host, for a person to add it to the project's `primary_hosts`.",
+                    lines=True)))
             if missing_filing_date(src_):
-                ok = False
+                ok, fixable = False, True
                 con.print(f"  [red]no filing date[/] {escape(_printable(src_.url))}\n"
                           f"      periodic filings are a series — set `date` to the filing's "
                           f"own date, and make sure it is the most recent one")
             if missing_legal_version(src_, rules):
-                ok = False
+                ok, fixable = False, True
                 con.print(f"  [red]no effective date or version[/] "
                           f"{escape(_printable(src_.url))}\n"
                           f"      this host publishes legal text, which is a series — set "
@@ -2341,7 +2368,7 @@ def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path
                           f"its version, or the date of the action you cite), and make sure "
                           f"it is the version the claim is about")
         for src_ in unattributed(claim, rules):
-            ok = False
+            ok, fixable = False, True
             t = tier(src_, rules)
             con.print(f"  [red]not attributed[/] {TIER_LABEL[t]} " + escape(_printable(
                 f"{src_.publisher}: {src_.snippet!r}")))
@@ -2365,7 +2392,24 @@ def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path
         check_corroboration(claim, rules=rules)
         if claim.corroboration_ok is False:
             ok = False
-            con.print(f"  [red]corroboration[/] {escape(_printable(claim.corroboration_note))}")
+            # A claim that fails corroboration only on its unacknowledged copies is the line
+            # above again, and reads as a second thing to fix. Asked again as it will stand once
+            # a person names the host (the ack here is a stand-in, on a copy of the claim).
+            released = claim.model_copy(deep=True)
+            for src_ in released.sources:
+                if unacked_copy(src_, rules):
+                    src_.secondary_host_ack = "counted as named"
+            if check_corroboration(released, rules=rules).corroboration_ok is not True:
+                fixable = True
+                con.print(f"  [red]corroboration[/] "
+                          f"{escape(_printable(claim.corroboration_note))}")
+    if not ok and not fixable:
+        # Every failure is a host the project doesn't name. The brief says to hand that on when
+        # the host is the issuing authority, and "do not hand this on" would contradict it.
+        con.print("[yellow]Only the issuing-authority check failed. If the host is the body "
+                  "that issues the record, hand this on with `notes` naming it, as the brief "
+                  "says. If it is a copy, fix it and re-run.[/]")
+        raise typer.Exit(1)
     if not ok:
         con.print("[red]Not ready. Fix these and re-run — do not hand this on.[/]")
         raise typer.Exit(1)
@@ -2499,7 +2543,7 @@ def status(data: Path = None, cache: Path = None, project: Path = None, subject:
     claims = [c for c in claims if c.question_id not in failing]
 
     # The lists build checks against: the project's, as build reads them.
-    rules = load_rules(p.sources)
+    rules = p.rules()
     cache_root = _verdict_cache_root(data, cache, resolved=(p, data))
     _settle(claims, data, cache_root, rules, _archive_records(data))
     t = Table("qid", "type", "status", "sources", "corroboration", "conflicts", box=None)
