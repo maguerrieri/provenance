@@ -1542,7 +1542,7 @@ def show_judgments(data: Path = DATA, question_id: str = "",
     from . import judgments
 
     if repair or rollback or moved or gone:
-        # Retired with `provenance remap`: they re-homed verdicts after claims moved, and claims no longer
+        # Retired with `vg remap`: they re-homed verdicts after claims moved, and claims no longer
         # move. A backup an interrupted re-home left behind still stops every reader, naming the
         # checkout that undoes it, so say that first.
         with _judgments_or_exit():

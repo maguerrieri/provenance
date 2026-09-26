@@ -1,4 +1,4 @@
-"""`provenance remap` and the verdict re-homing it needed are retired: question ids are stable and never
+"""`vg remap` and the verdict re-homing it needed are retired: question ids are stable and never
 reused, so a claim never moves between ids. What stays is that an old invocation is told why,
 that a backup an interrupted re-home left behind still stops every reader, and that files
 carrying the fields remap wrote still load and build."""

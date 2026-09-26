@@ -44,7 +44,8 @@ Two things keep the old name on purpose:
 
 ## Quick start
 
-Install from a clone and run the command, `provenance`, from it with `uv run`.
+Install from a clone and run the command, `provenance`, from it with `uv run`. The name
+`provenance` on PyPI belongs to an unrelated project, so don't install it by name.
 
 ```bash
 git clone https://github.com/maguerrieri/provenance.git
