@@ -69,19 +69,27 @@ To move to another release, install over it:
 uv tool install --force git+https://github.com/maguerrieri/provenance@v<version>
 ```
 
-Without installing, `uvx --from git+https://github.com/maguerrieri/provenance@v0.1.0 provenance
-<command>` runs one command. It resolves the git source on every call, and floats with the
-default branch unless pinned, so it suits a try-out, not an agent running hundreds of commands.
+Without installing, this runs one command:
+
+```bash
+uvx --from git+https://github.com/maguerrieri/provenance@v0.1.0 provenance <command>
+```
+
+It resolves the git source on every call, and floats with the default branch unless pinned,
+so it suits a try-out, not an agent running hundreds of commands.
 
 ### The Claude Code plugin
 
 The researcher and verifier agents and the orchestration skill are a Claude Code plugin,
-`provenance`, listed in the `maguerrieri-toolbox` marketplace:
+`provenance`, listed in the `maguerrieri-toolbox` marketplace from its first release, v0.1.0:
 
 ```bash
 claude plugin marketplace add maguerrieri/claude-toolbox
 claude plugin install provenance@maguerrieri-toolbox
 ```
+
+Until the marketplace lists a release, load it from a clone with `claude --plugin-dir <clone>`
+(see "Developing the tool" below).
 
 The plugin and the command are released together, at one version. Before a run the skill
 checks `provenance --version` against the plugin's, and gives the install command for the
