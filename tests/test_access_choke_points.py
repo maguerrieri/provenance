@@ -153,6 +153,7 @@ HOST_LOGINS = [
     "https://canary-user:fake\uff20canary@portal.example/",  # #158's, which urlsplit refuses
     "canary-user:fake%40canary.example",
     f"http://{LOGIN}@portal.example:8080/path",
+    f"/tmp/{LOGIN}@portal.example",                   # no scheme, and a `/` before the login
 ]
 
 
@@ -251,6 +252,14 @@ def _recipe(**fields) -> dict:
     (_entry(**_recipe(body=f"q=1&csrf_token={CANARY}")), r"its body \(csrf_token\)"),
     (_entry(**_recipe(params=["token"])), "asks for what look like credentials"),
     (_entry(recipes="not a list"), "not a list"),
+    # A false value is not an absent one: read as none, `source-note` rewrote it as none.
+    (_entry(recipes=False), "not a list"),
+    (_entry(recipes=""), "not a list"),
+    (_entry(**_recipe(headers=False)), "headers are not a mapping"),
+    # A URL encoded whole, in a header that isn't a URL header, is read decoded too.
+    (_entry(**_recipe(headers={"x-endpoint": "https%3A%2F%2Fportal.example%2F%3Fapi_key%3D"
+                                              + CANARY})),
+     r"its x-endpoint header holds a URL carrying .* \(api_key\)"),
     ([], "a mapping of fields"),
 ])
 def test_check_entry_refuses_each_shape_naming_where_not_what(entry, match):
@@ -344,6 +353,18 @@ def test_an_entry_whose_host_field_names_another_host_is_refused(registry):
     assert code == 1 and "names another host" in out, out
     code, out = _invoke("source-note", "portal.example", "a finding")
     assert code == 1 and "names another host" in out, out
+
+
+@pytest.mark.parametrize("text", ["[]\n", "false\n", "0\n", "''\n"])
+def test_a_registry_file_that_is_not_a_mapping_is_refused_not_read_as_empty(text, registry):
+    """Read as an empty entry, `source-note` rewrote it as a stub: a delete. Only an empty file
+    (or `null`) is an entry with no fields."""
+    registry.mkdir()
+    (registry / "portal.example.yaml").write_text(text)
+    for args in (("source-access",), ("source-note", "portal.example", "a finding")):
+        code, out = _invoke(*args)
+        assert code == 1 and "not a mapping of fields" in out, (args, out)
+    assert (registry / "portal.example.yaml").read_text() == text
 
 
 def test_a_registry_file_not_named_for_a_host_is_refused_without_its_name(registry):
@@ -490,6 +511,7 @@ def test_every_command_that_writes_the_registry_is_held_to_the_check(registry, t
     f"https://portal.example/?next=https%253A%252F%252Fcanary-user%253A{CANARY}%2540y.example",
     f"session_id={CANARY}",
     f"-H 'X-CSRF-Token: {CANARY}'",
+    f"Nothing recorded for /tmp/{LOGIN}@portal.example.",   # a login after a `/`
     f"see https://canary-user:x%2F{CANARY}%40y.example/ first",
     f"next=https%3A%2F%2Fcanary-user%3A{CANARY}%2Fpart%40y.example%2F",
     # A pair whose name is not a credential's gives up its name, not the rest of the line.
