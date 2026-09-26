@@ -14,6 +14,7 @@ import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from conftest import write_project
 from typer.testing import CliRunner
 
 from provenance import cli
@@ -217,7 +218,7 @@ def _handed(data, qid: str, sid: str) -> list[str]:
 
 
 def test_build_and_status_hold_it_and_a_claim_built_on_it(tmp_path):
-    data = tmp_path / "data"
+    data = write_project(tmp_path / "data")
     _cache(data, LEDGER)
     _cache(data, WEEKLY)
     base = _source(status="pending", support="unreviewed")

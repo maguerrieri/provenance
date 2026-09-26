@@ -11,6 +11,7 @@ import shlex
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from conftest import write_project
 from typer.testing import CliRunner
 
 from provenance import cli, judgments
@@ -49,7 +50,8 @@ def _legacy_run(tmp_path):
     """A candidate run whose files carry what `vg remap` wrote: `maps_from` and `mapped_from`
     in the question template, `previous_question` in the claim. The cited page is cached, so
     everything below runs offline."""
-    data, run = tmp_path / "data", tmp_path / "data" / "cand"
+    data = write_project(tmp_path / "data", subjects=["cand", "ng"])
+    run = data / "cand"
     page = PageCache(url=URL, final_url=URL, status=200, content_type="text/html", title="T",
                      text=f"At the meeting the member {SNIPPET}, the minutes show.",
                      fetched_at=datetime.now(UTC) - timedelta(hours=6),
@@ -59,8 +61,9 @@ def _legacy_run(tmp_path):
         {"id": "q1", "text": "How did they vote on the levy?", "claim_type": "mechanical",
          "mapped_from": "q3"},
         {"id": "q2", "text": "Who funds them?", "claim_type": "mechanical", "maps_from": "q1"}]
-    (data / "questions.json").write_text(json.dumps(questions))
     (run / "claims").mkdir(parents=True)
+    for d in (data, run):
+        (d / "questions.json").write_text(json.dumps(questions))
     claim = json.loads(Claim(question_id="q1", question="How did they vote on the levy?",
                              answer="Against.", sources=[_source()]).model_dump_json())
     claim["previous_question"] = "What was their levy vote?"

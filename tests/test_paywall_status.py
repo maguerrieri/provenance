@@ -17,6 +17,7 @@ import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from conftest import write_project
 from typer.testing import CliRunner
 
 from provenance import archive, cli, judgments
@@ -149,7 +150,7 @@ def _handed(data, qid: str, sid: str) -> list[str]:
 def _paywalled_run(tmp_path: Path, *, snapshot: bool) -> tuple[Path, Source]:
     """A run whose one source is gated live, verified offline as `provenance verify` leaves it. With
     `snapshot`, the run's archive records hold a capture that contains the quote."""
-    data, now = tmp_path / "data", datetime.now(UTC)
+    data, now = write_project(tmp_path / "data"), datetime.now(UTC)
     _cache(data, PAYWALLED, now - timedelta(days=3), status=403, text="",
            paywall_suspected=True)
     if snapshot:

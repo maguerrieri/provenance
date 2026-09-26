@@ -15,6 +15,7 @@ import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from conftest import write_project
 from typer.testing import CliRunner
 
 from provenance import cli
@@ -174,7 +175,7 @@ def test_build_and_status_list_a_recorded_contradiction_and_only_that(tmp_path):
     """Conflicts are detected after the recorded verdicts are applied. They used to be detected
     first, on the claim file as loaded, whose `support` is exactly what must never render: a
     `contradicts` written into the file would have been listed, and a recorded one missed."""
-    data = tmp_path / "data"
+    data = write_project(tmp_path / "data")
     _cache(data, LEDGER)
     _cache(data, WEEKLY)
     ledger, weekly = _source(status="pending"), _weekly(status="pending")

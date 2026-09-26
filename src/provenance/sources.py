@@ -46,15 +46,12 @@ def load_rules(names: tuple[str, ...] = ("us",), sources_dir: str | None = None)
 
 
 def default_rules() -> dict[str, tuple[str, ...]]:
-    """The source lists the active race declares, falling back to `us` alone. Races name
-    their lists (`sources: [us, ca]`) so a CA race sees CalMatters and LegInfo while a
-    future race elsewhere doesn't inherit them."""
-    from .races import load as load_race
-
-    try:
-        return load_rules(tuple(load_race().sources))
-    except (FileNotFoundError, ValueError):
-        return load_rules(("us",))
+    """`us` alone: the lists for a caller that has no project. Every command passes the lists
+    its project names (`sources = ["us", "ca"]` in provenance.toml), so a California project
+    sees CalMatters and LegInfo while a project elsewhere doesn't inherit them. This used to
+    read the one race in the tool's races/, which a command checking another project's
+    citations could silently disagree with."""
+    return load_rules(("us",))
 
 
 def domain(url: str) -> str:

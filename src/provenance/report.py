@@ -141,9 +141,12 @@ def query_provenance(claim_source) -> str:
 
 
 def render(claims: list[Claim], out_dir: Path, *, title: str = "voter guide",
-           cache_root: Path | None = None) -> tuple[Path, Path]:
+           cache_root: Path | None = None,
+           rules: dict[str, tuple[str, ...]] | None = None) -> tuple[Path, Path]:
     """`cache_root` is the root this build resolved: the `--cache` for a query row that carries
-    no stamp of its own (one build did not re-run, whose file stamp revalidation dropped)."""
+    no stamp of its own (one build did not re-run, whose file stamp revalidation dropped).
+    `rules` are the project's source lists, which the "copy, not the issuing authority" badge
+    is decided by, as `provenance check-claim` decides it."""
     from .cli import qid_sort_key
 
     claims = sorted(claims, key=lambda c: qid_sort_key(c.question_id))
@@ -171,7 +174,7 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "voter guide",
                 **s.model_dump(), sid=s.sid, row_key=row_key,
                 fingerprint=review_fingerprint(c, s), context_html=context_html(s),
                 badge_class=BADGE.get(s.verification.status, "bad"),
-                secondary=secondary_host(s), query_command=command,
+                secondary=secondary_host(s, rules), query_command=command,
                 query_provenance=query_provenance(s)))
         return views
 
@@ -218,7 +221,7 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "voter guide",
         d["status"] = c.status
         for src_json, src_obj in zip(d.get("sources", []), c.sources):
             src_json["sid"] = src_obj.sid
-            src_json["secondary_host"] = secondary_host(src_obj)
+            src_json["secondary_host"] = secondary_host(src_obj, rules)
         export.append(d)
     _write_whole(json_path, json.dumps(export, indent=2))
 

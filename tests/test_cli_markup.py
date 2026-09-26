@@ -17,6 +17,7 @@ import re
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from conftest import write_project
 from rich.errors import MarkupError
 
 from provenance.models import Claim, PageCache, Source
@@ -63,7 +64,7 @@ def _run(tmp_path, s: Source):
     from provenance.fetch import cache_path
     from provenance.models import EXTRACTOR_VERSION
 
-    data, cand = tmp_path / "data", tmp_path / "data" / "cand"
+    data, cand = write_project(tmp_path / "data", subjects=["cand"]), tmp_path / "data" / "cand"
     cache_path(data, s.url).write_text(PageCache(
         url=s.url, final_url=s.url, status=200, content_type="text/html", title="T", text=TEXT,
         fetched_at=datetime.now(UTC) - timedelta(hours=6),
@@ -227,7 +228,7 @@ def test_calaccess_build_names_its_paths_as_given(tmp_path):
     """The operator's --data path, in the refusal and in the success line."""
     import zipfile
 
-    root = tmp_path / "[b]"
+    root = write_project(tmp_path / "[b]")
     code, out = _provenance("calaccess", "build", "--data", root)
     assert code == 1 and "/[b]/" in out, out
 
@@ -419,7 +420,7 @@ def test_a_tag_split_across_two_values_prints_as_written(tmp_path, monkeypatch):
     value and "x]" in the next, with plain text between, still made the closing tag "[/ x]":
     a MarkupError, or with "[b" a silently dropped run of text. A run of data is escaped as one
     string."""
-    from provenance import calaccess, fppc, races
+    from provenance import calaccess, fppc
 
     monkeypatch.setattr(fppc, "search", lambda first, last: [])
     code, out = _provenance("form700", "[/", "x]")
@@ -432,12 +433,13 @@ def test_a_tag_split_across_two_values_prints_as_written(tmp_path, monkeypatch):
     assert code == 0 and "committee page: no capture [/ live URL: " in out, out
     assert calaccess.committee_url("x]") in out
 
-    d = tmp_path / "races"
-    d.mkdir()
-    (d / "split.md").write_text('---\nname: split\ntitle: "[b"\nsources: ["x]"]\n---\n')
-    monkeypatch.setattr(races, "RACES_DIR", d)
-    code, out = _provenance("races")
-    assert code == 0 and "split [b sources: x]" in out, out
+    # A race that still names source lists is refused, quoting its path and the lists.
+    race = tmp_path / "[b" / "split.md"
+    race.parent.mkdir()
+    race.write_text('---\nname: split\ntitle: "[b"\nsources: ["x]"]\n---\n')
+    write_project(tmp_path, race=race)
+    code, out = _provenance("build", "--data", tmp_path)
+    assert code == 1 and f"{race} names source lists (sources: ['x]'])" in out, out
 
 
 def test_a_path_beside_another_value_prints_as_written(tmp_path, monkeypatch):
@@ -446,12 +448,12 @@ def test_a_path_beside_another_value_prints_as_written(tmp_path, monkeypatch):
     nothing checks), or the error that names the path."""
     from provenance import cli
 
-    data = tmp_path / "x]" / "[" / "c"
+    data = write_project(tmp_path / "x]" / "[" / "c")
     (data / "claims").mkdir(parents=True)
     (data / "claims" / "q1.json").write_text(
         Claim(question_id="q1", question="?", answer="a").model_dump_json())
     code, out = _provenance("status", "--data", data)
-    assert code == 0 and f"no questions.json in {data} or {data.parent}, so" in out, out
+    assert code == 0 and f"no questions.json in {data}, so" in out, out
 
     (data / "questions.json").write_text(
         json.dumps([{"id": "q1", "text": "?", "maps_from": "x]"}]))
@@ -516,12 +518,12 @@ def test_check_claim_names_an_unreadable_file_as_given(tmp_path):
 
 
 def test_verify_names_an_empty_claims_directory_as_given(tmp_path):
-    code, out = _provenance("verify", "--data", tmp_path / "[b]")
+    code, out = _provenance("verify", "--data", write_project(tmp_path / "[b]"))
     assert code == 1 and f"No claims found in {tmp_path}/[b]/claims" in out, out
 
 
 def test_build_names_what_it_wrote_as_it_is(tmp_path):
-    data = tmp_path / "[b]"
+    data = write_project(tmp_path / "[b]")
     (data / "claims").mkdir(parents=True)
     code, out = _provenance("build", "--data", data)
     assert code == 0 and f"wrote {data}/out/review.html" in out, out
@@ -537,7 +539,7 @@ def test_serve_names_what_it_serves_as_it_is(tmp_path, monkeypatch):
         def serve_forever(self):
             pass
 
-    data = tmp_path / "[b]"
+    data = write_project(tmp_path / "[b]")
     (data / "out").mkdir(parents=True)
     (data / "out" / "review.html").write_text("")
     monkeypatch.setattr(http.server, "ThreadingHTTPServer", NoServer)
@@ -545,47 +547,35 @@ def test_serve_names_what_it_serves_as_it_is(tmp_path, monkeypatch):
     assert code == 0 and f"Serving {data.resolve()}/out at" in out, out
 
 
-def test_status_prints_a_race_error_as_written(tmp_path):
+def test_status_prints_a_project_error_as_written(tmp_path):
     (tmp_path / "claims").mkdir()
-    (tmp_path / "claims" / "q1.json").write_text(
-        Claim(question_id="q1", question="?", answer="a").model_dump_json())
-    code, out = _provenance("status", "--data", tmp_path, "--race", MARK)
-    assert code == 0 and f"no race {MARK!r} in" in out, out
+    (tmp_path / "provenance.toml").write_text(
+        (tmp_path / "provenance.toml").read_text() + f'"{MARK}" = 1\n')
+    code, out = _provenance("status", "--data", tmp_path)
+    assert code == 1 and f"unknown key(s) {MARK!r}" in out, out
 
 
 @pytest.fixture
-def marked_race(tmp_path, monkeypatch):
-    from provenance import races
-
-    d = tmp_path / "races"
-    d.mkdir()
-    (d / "marked.md").write_text(
+def marked_race(tmp_path):
+    race = tmp_path / "races" / "marked.md"
+    race.parent.mkdir()
+    race.write_text(
         "---\n"
         "name: marked\n"
         f'title: "{MARK} Assessor"\n'
-        "sources: [us]\n"
         "candidates:\n"
         '  - {id: pd, name: "[b]Pat Doe"}\n'
         "---\n\nA fictional race.\n")
-    # YAML reads this title as a number, and escape() takes only a str.
-    (d / "numbered.md").write_text("---\nname: numbered\ntitle: 2030\nsources: [us]\n---\n")
-    monkeypatch.setattr(races, "RACES_DIR", d)
-
-
-def test_races_prints_a_race_file_as_written(marked_race):
-    code, out = _provenance("races")
-    assert code == 0 and f"marked {MARK} Assessor sources: us" in out, out
-    assert "numbered 2030 sources: us" in out
+    return race
 
 
 def test_new_candidate_prints_the_candidate_and_its_paths_as_written(tmp_path, marked_race):
-    data = tmp_path / "[b]data"
-    data.mkdir()
+    data = write_project(tmp_path / "[b]data", subjects=["pd"], race=marked_race)
     (data / "questions.json").write_text(json.dumps([{"id": "q1", "text": "What has he said?"}]))
-    code, out = _provenance("new-candidate", "pd", "--data", data, "--race", "marked")
+    code, out = _provenance("new-candidate", "pd", "--data", data)
     assert code == 0, out
     assert f"wrote {data}/pd/questions.json (1 questions retargeted to [b]Pat Doe)" in out
     assert f"ready {data}/pd" in out and f"provenance build --data {data}/pd --candidate pd" in out
 
-    code, out = _provenance("new-candidate", "pd", "--data", data, "--race", "marked")
+    code, out = _provenance("new-candidate", "pd", "--data", data)
     assert code == 0 and f"{data}/pd/questions.json already exists" in out, out

@@ -39,9 +39,9 @@ def test_nothing_the_package_reads_is_found_beside_the_checkout():
     """A path built from `__file__` up past the package (`parents[2]`) is the repo root in a
     checkout and a directory inside the tool's environment in an installed copy, and every test
     passes, because tests run from the checkout. Package data goes through importlib.resources.
-    races/ is the one left, until #8 replaces RACES_DIR with the project file's race key."""
+    races/ was the last one: a race is project data, named by the project file (#8)."""
     found = {p.name for p in PACKAGE.glob("*.py") if "__file__" in p.read_text()}
-    assert found == {"races.py"}, found
+    assert found == set(), found
 
 
 def test_the_wheel_carries_the_data(tmp_path):

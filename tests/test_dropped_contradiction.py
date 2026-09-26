@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from conftest import write_project
 from typer.testing import CliRunner
 
 from provenance import cli, judgments
@@ -100,7 +101,7 @@ def _retried_run(tmp_path: Path) -> Path:
     """The issue's repro, up to its last build: q1 cites the Ledger (judged `supports`) and the
     Weekly (judged `contradicts`); a retry for some other failure rewrites it citing the Ledger
     and the Gazette, which agrees; the Gazette is judged `supports`."""
-    data = tmp_path / "data"
+    data = write_project(tmp_path / "data")
     for url in (LEDGER, WEEKLY, GAZETTE):
         _cache(data, url)
     _write_claim(data, _ledger(), _weekly())
@@ -319,7 +320,7 @@ def test_a_verdict_judged_again_while_the_prompt_waits_is_not_cleared(tmp_path, 
 
 def test_provenance_judgments_names_every_held_verdict(tmp_path):
     """The line is the only list of them, so none is cut off."""
-    data = tmp_path / "data"
+    data = write_project(tmp_path / "data")
     _cache(data, LEDGER)
     _write_claim(data, _ledger())
     sids = [f"{n:012x}" for n in range(1, 11)]
@@ -410,7 +411,7 @@ def test_only_the_shard_says_a_contradiction_was_dropped(tmp_path):
     raw["dropped_contradictions"] = [{"sid": "0123456789ab"}]
     assert "dropped_contradictions" not in strip_machine_fields(raw)
 
-    data = tmp_path / "data"
+    data = write_project(tmp_path / "data")
     _cache(data, LEDGER)
     _write_claim(data, _ledger())
     code, out = _provenance("verify", "--data", data)

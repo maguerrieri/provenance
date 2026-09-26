@@ -12,6 +12,7 @@ import json
 import re
 
 import pytest
+from conftest import write_project
 from typer.testing import CliRunner
 
 from provenance import cli, report
@@ -39,7 +40,7 @@ def _claim(run, qid, question, answer="a"):
 @pytest.fixture
 def run(tmp_path):
     """A run that builds, already built once: the render a later refusal must not leave."""
-    run = tmp_path / "data"
+    run = write_project(tmp_path / "data")
     (run / "claims").mkdir(parents=True)
     (run / "cache").mkdir()
     (run / "questions.json").write_text(json.dumps(
@@ -73,13 +74,17 @@ def _unreadable_archives(run):
     (run / "archives.json").write_text("[]")
 
 
+def _missing_race(run):
+    write_project(run, race=run / "no-such-race.md")
+
+
 REFUSALS = {
     "question set unreadable": ((), _unreadable_questions),
     "claim file unreadable": ((), _unreadable_claim),
     "verdict shard unreadable": ((), _unreadable_verdicts),
     "archive records unreadable": ((), _unreadable_archives),
     "cache root with no cache": (("--cache", "{tmp}"), None),
-    "unknown race": (("--race", "no-such-race"), None),   # a traceback, not a refusal
+    "race file missing": ((), _missing_race),
 }
 
 
@@ -95,6 +100,20 @@ def test_a_build_that_stops_short_leaves_no_review_app_to_serve(run, tmp_path, a
     assert code == 1, out
     assert f"No review.html in {(run / 'out').resolve()}" in out, out
     assert "its last run refused and rendered nothing. Run `provenance build`" in out, out
+
+
+@pytest.mark.parametrize("how", ["run given", "run found from the working directory"])
+def test_a_project_file_that_cannot_be_read_leaves_no_review_app(run, monkeypatch, how):
+    """The run is found without reading the project file, so a project file that can't be read
+    stops the build like any other refusal, after the last render is gone."""
+    (run / "provenance.toml").write_text("name = ")
+    if how == "run given":
+        code, out = _provenance("build", "--data", run)
+    else:
+        monkeypatch.chdir(run / "claims")
+        code, out = _provenance("build")
+    assert code == 1 and "unreadable project file" in out, out
+    assert _left(run) == set(), out
 
 
 def test_the_question_id_refusal_says_the_app_was_not_rendered(run):

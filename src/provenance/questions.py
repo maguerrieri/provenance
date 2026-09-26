@@ -52,18 +52,18 @@ class Findings:
 
 
 def find(data: Path) -> Path | None:
-    """The run's questions.json: its own, else the data root's. None when neither exists.
+    """The run's own questions.json, or None when it has none.
 
-    Which question set belongs to a run is #8. Until a run declares it, a candidate run
-    (`data/<candidate>`, which `provenance new-candidate` gives its own retargeted copy) reads its own,
-    and one without falls back to its parent's template. A file that exists but can't be read
-    is `load()`'s to refuse, never a reason to fall back: a dangling symlink included, which
-    `exists()` alone reads as absent.
+    The project owns its question ids, and each run holds its set: the project root's is the
+    template, and a subject's is its own copy, retargeted to it (`provenance new-candidate`
+    writes it). There is no fallback between them: a subject's run with no copy of its own
+    used to read the template, which is worded for whichever subject it names, and nothing
+    said the run was missing its set. A file that exists but can't be read is `load()`'s to
+    refuse, never read as absent: a dangling symlink included, which `exists()` alone reads as
+    absent.
     """
-    for p in (data / FILE, data.parent / FILE):
-        if p.exists() or p.is_symlink():
-            return p
-    return None
+    p = data / FILE
+    return p if p.exists() or p.is_symlink() else None
 
 
 def load(path: Path) -> QuestionSet:
