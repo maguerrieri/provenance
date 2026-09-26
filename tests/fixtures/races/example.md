@@ -2,7 +2,7 @@
 name: example
 title: 2030 Example County Assessor
 election_date: 2030-11-05
-sources: [us, ca]          # sources/us-sources.yaml + sources/ca-sources.yaml
+sources: [us, ca]          # source_lists/us-sources.yaml + source_lists/ca-sources.yaml
 candidates:
   - {id: lind, name: Avery Lind}
   - {id: ng, name: Jordan Ng}

@@ -1,6 +1,6 @@
 """Source-class enforcement.
 
-Rules live in `sources/<name>-sources.yaml` and are selected per race, so a California
+Rules live in `source_lists/<name>-sources.yaml` and are selected per race, so a California
 race loads `us` + `ca`, and a future city guide could add a city list. The lists merge; a
 domain in any loaded list counts.
 """
@@ -8,6 +8,7 @@ domain in any loaded list counts.
 from __future__ import annotations
 
 from functools import lru_cache
+from importlib.resources import files
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -15,7 +16,8 @@ import yaml
 
 from .models import Source
 
-SOURCES_DIR = Path(__file__).resolve().parents[2] / "sources"
+# Package data, so an installed copy (uv tool install) has it.
+SOURCES_DIR = Path(files(__package__) / "source_lists")
 CATEGORIES = ("excluded", "lead_generator_only", "campaign_statement_only",
               "primary_document", "bylined_journalism")
 

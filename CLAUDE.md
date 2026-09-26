@@ -947,7 +947,7 @@ skip without node only outside CI, and the fingerprint tests, which need no node
 
 Nothing about a candidate, an office, or a state belongs in `src/`, the skill, or the agent
 definitions. A race is one file in `races/` naming its source lists; the source lists are
-`sources/<region>-sources.yaml` and merge. If you find yourself adding a candidate name to
+`src/provenance/source_lists/<region>-sources.yaml` and merge. If you find yourself adding a candidate name to
 the pipeline, put it in the race file instead.
 
 Tests see only the synthetic race in `tests/fixtures/races/`, through conftest's autouse
@@ -1186,7 +1186,7 @@ The rule is not "never cite a copy", it is **never substitute silently**.
 The other half is fixing the reachability where possible, rather than only detecting the
 symptom — and then *recording* it, so the finding outlives the session that made it.
 
-`sources/access/<host>.yaml` is that record: what a naive fetch gets, any endpoint that
+`src/provenance/source_access/<host>.yaml` is that record: what a naive fetch gets, any endpoint that
 works, and the known limits. `provenance source-access [host]` reads it, `--run-recipe` executes one,
 and `provenance source-import-curl` turns a browser "copy as cURL" into an entry. Negative results
 belong here too — "probed, needs a session, retrieve by hand" stops the next run from

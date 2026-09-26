@@ -27,7 +27,7 @@ Never reconstruct a quote from memory. Copy it from the page, character for char
 
 ## Source rules (not guidelines)
 
-The authoritative lists live in `sources/*-sources.yaml`; the race file names which apply.
+The authoritative lists are the tool's `source_lists/*-sources.yaml`; the race file names which apply.
 
 **Citable as source-of-record:**
 - Bylined journalism — national (AP, Politico) plus the outlets the race's regional list
@@ -46,7 +46,7 @@ The authoritative lists live in `sources/*-sources.yaml`; the race file names wh
 them to find the underlying document, then cite *that*.
 
 **Excluded outright:** AI aggregators and content farms (the list is in
-`sources/us-sources.yaml`). Campaign sites and press releases are excluded *except* for the
+`source_lists/us-sources.yaml`). Campaign sites and press releases are excluded *except* for the
 narrow claim form "the campaign says X", where they are the primary source for that statement — set
 `source_type: "campaign_statement"`.
 

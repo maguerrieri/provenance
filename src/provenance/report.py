@@ -9,6 +9,7 @@ import re
 from collections import Counter
 from datetime import UTC, datetime
 from html import escape
+from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,7 +20,9 @@ from . import queries
 from .models import QID_PATTERN, Claim, Source
 from .verify import secondary_host
 
-TEMPLATES = Path(__file__).resolve().parents[2] / "templates"
+# Package data, so an installed copy (uv tool install) has it. files() gives a Path for a
+# package on disk, which Jinja's FileSystemLoader needs; anything else fails loudly here.
+TEMPLATES = Path(files(__package__) / "templates")
 
 # What a build leaves in out/. review.html is what `provenance serve` serves, so it goes first here and
 # is written last: while it is there, a build finished writing it.
