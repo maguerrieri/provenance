@@ -13,10 +13,10 @@ bylined_journalism:
   - politico.com
 
 primary_document:
-  # The federal code and regulations from the offices that compile them: citing their text
-  # there is not a copy (see legal_text below).
+  # The United States Code from the office that compiles it: citing its text there is not a
+  # copy (see legal_text below). Not ecfr.gov, which says it is an editorial compilation and
+  # not an official legal edition.
   - uscode.house.gov
-  - ecfr.gov
 
 lead_generator_only:
   - ballotpedia.org
@@ -37,7 +37,7 @@ excluded:
 # listed here and not as primary_document (#40).
 legal_text:
   - uscode.house.gov        # the United States Code, from the office that compiles it
-  - ecfr.gov                # the Code of Federal Regulations, as currently in force
+  - ecfr.gov                # a current compilation of the Code of Federal Regulations
   - law.cornell.edu         # a widely cited copy of the federal code and regulations
   - municode.com            # municipal and county code publishers
   - amlegal.com

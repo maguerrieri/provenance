@@ -30,9 +30,12 @@ CATEGORIES = ("excluded", "lead_generator_only", "campaign_statement_only",
 # (`verify.missing_legal_version()`). Which hosts those are is list data, per jurisdiction.
 LEGAL_TEXT = "legal_text"
 KEYS = (*CATEGORIES, LEGAL_TEXT)
-# What `domain()` can return for a URL: a bare, lowercase host, never starting with `www.`,
-# which it strips. An entry of any other shape (a scheme, a path, a port) matches nothing.
-_HOST = re.compile(r"(?!www\.)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+")
+# What `domain()` can return for a URL: a bare, lowercase host of two labels or more, never
+# starting with `www.`, which it strips. A label is letters and digits, Unicode ones included
+# (`domain()` returns a host as the URL spells it), with hyphens inside. An entry of any other
+# shape (a scheme, a path, a port) matches nothing.
+_LABEL = r"[^\W_](?:[\w-]*[^\W_])?"
+_HOST = re.compile(rf"(?!www\.){_LABEL}(?:\.{_LABEL})+")
 
 
 class _OneOfEachKey(yaml.SafeLoader):

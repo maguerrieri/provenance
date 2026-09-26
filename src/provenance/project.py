@@ -177,7 +177,7 @@ def load(root: Path) -> Project:
         # not a traceback from whichever command loads the rules first.
         try:
             load_rules(tuple(sources))
-        except ValueError as e:
+        except (ValueError, OSError) as e:   # OSError: a list `available()` saw is gone
             problems.append(str(e))
 
     cache = raw.get("cache")
