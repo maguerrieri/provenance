@@ -942,6 +942,10 @@ def secondary_host(src: Source, rules: dict[str, tuple[str, ...]] | None = None)
 
     A copy is often the only reachable version and may be perfectly faithful. The rule is
     not "never cite a copy", it is "never cite one silently".
+
+    Which hosts issue records is `rules`': the project's source lists and the hosts it names
+    itself (`primary_hosts`, through `Project.rules()`). A host neither names reads as a copy.
+    Passing unlisted hosts instead would reopen the substitution this exists to catch.
     """
     # own_statement/campaign_statement are BY the host about itself, so "not the issuing
     # authority" cannot apply: for an endorsement, the endorsing organization IS the

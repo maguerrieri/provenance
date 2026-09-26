@@ -141,17 +141,22 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
       · <span class="b {{ s.badge_class }}">{{ s.verification.status }}</span>
       · <span class="b {{ 'warn' if s.argued else 'mut' }}">{{ s.tier }}</span>
       {% if s.paywall %}<span class="b warn">paywall</span>{% endif %}
-      {% if s.secondary %}<span class="b bad">copy, not the issuing authority</span>{% endif %}
+      {% if s.secondary %}<span class="b bad">{{ 'copy, not the issuing authority' if s.acked else 'not a named issuing authority' }}</span>{% endif %}
       {% if s.archive_status == 'archive_unusable' %}<span class="b bad">snapshot unusable</span>
       {% elif s.archive_status == 'archive_unconfirmed' %}<span class="b warn">snapshot unconfirmed</span>
       {% elif s.archive_status == 'archive_failed' %}<span class="b warn">not archived</span>{% endif %}
       {% if s.verification.support and s.verification.support != 'unreviewed' %}
       <span class="b {{ 'ok' if s.verification.support=='supports' else 'bad' }}">context: {{ s.verification.support }}</span>{% endif %}
     </div>
-    {% if s.secondary %}<div class="meta" style="color:var(--bad)">Cited from
-      {{ s.url.split('/')[2] }}, which is not the body that issues this record.
-      {{ s.secondary_host_ack or 'No explanation given.' }}
-      Check this copy against the official version.</div>{% endif %}
+    {% if s.secondary and s.acked %}<div class="meta" style="color:var(--bad)">Cited from
+      <bdi>{{ s.host }}</bdi>, which is not the body that issues this record.
+      {{ s.secondary_host_ack }}
+      Check this copy against the official version.</div>
+    {% elif s.secondary %}<div class="meta" style="color:var(--bad)">Cited from
+      <bdi>{{ s.host }}</bdi>, which this project does not name as an issuing authority, with
+      no explanation. If it is the body that issues this record, add it to the project's
+      primary_hosts and rebuild. If it is not, this is an unacknowledged copy: check it against
+      the official version.</div>{% endif %}
     {% if s.argued %}<div class="meta" style="color:var(--warn)">{% if s.unlisted %}{{ s.url.split('/')[2] }}
       is not on this project's source lists as a news outlet, so this is not counted as
       reporting. {% endif %}This supports only what its author argues: check that the claim says
