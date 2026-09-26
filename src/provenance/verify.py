@@ -1105,8 +1105,10 @@ def check_corroboration(claim: Claim, *, rules: dict[str, tuple[str, ...]]) -> C
     answer states bare fails the claim's corroboration however many others back it, so
     `provenance build` sends it to review as `provenance check-claim` refuses it. And all of a
     claim's such documents count as one: two advocacy pieces are each one side's say-so, not
-    two independent sources. `rules` is required, because the tier of a news citation turns on
-    the project's lists: defaulted, every regional outlet would read as unlisted."""
+    two independent sources. A primary text or analysis from a host that doesn't issue it is
+    evidence only as a declared copy, with `secondary_host_ack`. `rules` is required, because
+    the tier of a news citation turns on the project's lists: defaulted, every regional outlet
+    would read as unlisted."""
     # A source judged topic_only/contradicts/superseded is not corroboration. Counting it
     # let a claim whose every source a verifier rejected report "15/1 usable, corroborated".
     usable = [s for s in claim.sources
@@ -1116,14 +1118,19 @@ def check_corroboration(claim: Claim, *, rules: dict[str, tuple[str, ...]]) -> C
         claim.corroboration_ok = True
         claim.corroboration_note = "not_found — no citation required"
         return claim
-    # Tiered once each. One stated bare is no evidence, and fails the claim below.
+    # Tiered once each. One stated bare is no evidence, and fails the claim below. So is a primary
+    # text from a host that doesn't issue it with no ack: otherwise relabeling an unlisted
+    # advocacy page `primary_document` would carry a bare fact past the argued-tier gate.
     argued: dict[str, bool] = {}   # url -> every usable citation of it argued
-    n_bare = 0
+    n_bare = n_copy = 0
     counted = []
     for s in usable:
         is_argued = tier(s, rules) in ARGUED
         if is_argued and not attributes(claim.answer, s):
             n_bare += 1
+            continue
+        if secondary_host(s, rules) and not (s.secondary_host_ack or "").strip():
+            n_copy += 1
             continue
         counted.append(s)
         argued[s.url] = argued.get(s.url, True) and is_argued
@@ -1142,6 +1149,12 @@ def check_corroboration(claim: Claim, *, rules: dict[str, tuple[str, ...]]) -> C
             f"{n_bare} source(s) cited for a claim they cannot carry: opinion, advocacy and an "
             f"unlisted outlet count only for 'X argues Y', with the answer naming X, the "
             f"source's author or publisher")
+    if n_copy:
+        problems.append(
+            f"{n_copy} primary text(s) or official analysis cited from a host that does not "
+            f"issue them, with no secondary_host_ack: cite the issuing authority's copy, or say "
+            f"in secondary_host_ack what could not be reached and why this copy is the same "
+            f"document")
     if n_docs < need:
         rejected = sum(1 for s in claim.sources if s.judged_bad)
         problems.append(

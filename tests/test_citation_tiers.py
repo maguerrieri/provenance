@@ -200,6 +200,22 @@ def test_an_official_analysis_off_its_authoritys_host_is_a_copy():
     assert secondary_host(_source(url=ADVOCACY, source_type="official_analysis"), RULES)
 
 
+def test_relabeling_an_unlisted_page_as_a_primary_text_does_not_carry_a_bare_fact():
+    """The bypass: the advocacy page that cannot carry "the levy will fail" as reporting,
+    relabeled a primary text or an analysis. Off an issuing authority's host with no ack it is
+    no evidence, so `build` holds it as `check-claim` does. With an ack it is a declared copy,
+    badged on the review page: the substitution is loud, not silent."""
+    for relabeled in ("primary_document", "official_record", "official_analysis"):
+        page = _source(url=ADVOCACY, source_type=relabeled, publisher="Levy Watch",
+                       author="Levy Watch")
+        bare = _claim("The levy will fail.", page)
+        assert bare.corroboration_ok is False and bare.status == "human_review", relabeled
+        assert "cited from a host that does not issue them, with no secondary_host_ack" in \
+            bare.corroboration_note
+        page.secondary_host_ack = "The agency's portal is down; this is its filed PDF."
+        assert _claim("The levy will fail.", page).corroboration_ok is True
+
+
 # --- through the commands ---------------------------------------------------------------------
 
 

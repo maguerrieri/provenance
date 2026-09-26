@@ -1384,7 +1384,8 @@ agency — right document, wrong year, perfect verification.
 `official_record` cited from a host that is not the issuing authority. Citing a copy is
 allowed — often it is the only reachable version — but it must carry `secondary_host_ack`
 saying what could not be reached and why this copy is the same document. `provenance check-claim`
-fails without it, and the review app badges the row "copy, not the issuing authority".
+fails without it, `check_corroboration()` fails the claim without it so build holds it too, and
+the review app badges the row "copy, not the issuing authority".
 The rule is not "never cite a copy", it is **never substitute silently**.
 
 The other half is fixing the reachability where possible, rather than only detecting the
@@ -1593,10 +1594,13 @@ host list only lowers it:
   let an advocacy site's "analysis" carry a bare fact.
 - A label can lower a tier but never raise one. It can say a page on a news host is opinion, but
   only a source-list entry, a reviewed change, can say a page on an unlisted host is reporting.
-  This is "Agent-supplied input can refuse, never grant", applied to the label. There is one
-  exception, and it predates tiers. A primary text or official analysis on a non-authority host
-  keeps its tier as a declared copy: `check-claim` wants a `secondary_host_ack`, and the review
-  page badges it. Build counts it whether or not it has the ack (#186).
+  This is "Agent-supplied input can refuse, never grant", applied to the label. A primary text or
+  official analysis on a host that does not issue it is the case to watch: relabeling an
+  unlisted advocacy page `primary_document` would carry a bare fact past the argued-tier gate.
+  So such a citation counts only as a declared copy, with a `secondary_host_ack` saying what
+  could not be reached and why this copy is the same document, and the review page badges it.
+  Without the ack, `check-claim` fails it and `check_corroboration()` fails the claim, so build
+  sends it to review too. Build used to count it with or without the ack (#186).
 
 **Opinion, advocacy and an unlisted outlet support only "X argues Y"** (`sources.ARGUED`). Campaign
 material is limited to "the campaign says X" in the same way. The mechanical half is that the
@@ -1604,8 +1608,9 @@ answer names X: the source's author or publisher, as whole words (`sources.attri
 Whitespace, quote and dash styles fold as a question's do, but case does not. A name is told
 from a word by its capitals: compared case-blind, a publisher called "The Record" was named by
 "the record shows", and "The Times" by "three times". Only whole names count, because a surname
-alone also names everyone else who has it, and a byline that names nobody ("Staff") never
-counts. The refusal lists the names it will take. Whether the answer then states the argument
+alone also names everyone else who has it. A byline that names nobody ("Staff", `NOT_A_NAME`)
+never counts. That list is recognized case-blind, as a question is compared, since "STAFF" names
+nobody either: case decides whether a name is named, not whether something is a name. The refusal lists the names it will take. Whether the answer then states the argument
 as the arguer's or as fact is judgment, so `verifier.md` asks the verifier to judge that, and a
 claim that states it as fact gets `topic_only`.
 - **`provenance check-claim` fails an unattributed one,** naming its tier and the names that
@@ -1642,7 +1647,9 @@ What is unchanged, and why:
 - **The other checks' `rules` still default to `us`** (#171). `check_corroboration()` is new to
   taking them, and the tier made `render()`'s default wrong, so those two require them.
 - **An official analysis from an issuing body's own unlisted host reads as a copy**, as a primary
-  document does there (#179).
+  document does there (#179). Since build now holds an unacked copy as `check-claim` does, a
+  project whose lists name no issuing authorities meets that in build too, and until #179 the
+  way through is the ack.
 - **A verdict does not carry the tier it was judged under.** A relabel keeps the verdict, as it
   keeps the sid, and every direction of relabel fails safe:
   - relabeled to opinion or advocacy with the answer unchanged, the attribution check sends the
