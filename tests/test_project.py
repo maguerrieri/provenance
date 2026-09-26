@@ -149,15 +149,26 @@ def test_the_race_key_is_refused_with_where_its_content_goes(tmp_path):
     assert "unknown key" not in msg, "named once, by what to do"
 
 
-@pytest.mark.parametrize("heading", ["# Completeness check", "## completeness check",
-                                     "#Completeness Check:", "# Completeness checks",
-                                     "**Completeness check**", "Completeness check\n---"])
+@pytest.mark.parametrize("heading", [
+    "# Completeness check", "## completeness check", "#Completeness Check:",
+    "# Completeness checks", "**Completeness check**", "Completeness check\n---",
+    "# **Completeness check**", "## 3. Completeness check", "# The completeness check",
+    "Completeness-check:", "3. Completeness check", "_Completeness check_",
+    "  ### Completeness_check"])
 def test_a_context_holding_the_completeness_check_is_refused(tmp_path, heading):
     """A race file's body pasted whole into `context` would carry its completeness check, the
-    answers already known, into every researcher's prompt."""
+    answers already known, into every researcher's prompt. A heading naming it, of any kind,
+    and a line starting with it are refused."""
     write_project(tmp_path, context=f"Where records are.\n\n{heading}\n\n- A known claim.\n")
     with pytest.raises(project.ProjectError, match="`context` holds a completeness check heading"):
         project.load(tmp_path)
+
+
+def test_prose_mentioning_a_completeness_check_is_context():
+    """Mentioned mid-line, it is prose about the method, not the section."""
+    assert not project._CHECK_HEADING.search(
+        "The board runs its own completeness check on filings.\nSee the clerk's completeness "
+        "check notes.\n* A list item on the completeness check the clerk runs.\n")
 
 
 def test_subjects_must_be_plain_distinct_directories(tmp_path):
