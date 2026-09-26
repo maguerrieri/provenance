@@ -23,7 +23,7 @@ from provenance import cli, project, sources
 from provenance.fetch import cache_path
 from provenance.models import EXTRACTOR_VERSION, Claim, PageCache, Source
 from provenance.report import render, store_id
-from provenance.sources import classify, load_rules, tier
+from provenance.sources import bare_host, classify, load_rules, tier
 from provenance.verify import check_corroboration, secondary_host, unacked_copy
 
 AUTHORITY = "records.example.gov"
@@ -280,6 +280,20 @@ def test_another_failure_beside_the_copy_is_the_researchers_to_fix(tmp_path, mon
     assert "do not hand this on" in out and HAND_ON not in out, out
 
 
+def test_a_copy_on_a_host_the_lists_class_is_the_researchers_to_fix(tmp_path, monkeypatch,
+                                                                     synthetic_lists):
+    """A news outlet can't be named in `primary_hosts` (project.load() refuses it), so its copy
+    of a record is never handed on: the close stays red, and the message doesn't offer it."""
+    root = write_project(tmp_path / "p", sources=("xx",))
+    path = _claim_citing(root, "https://news.example.com/decision-2030-14")
+    code, out = _provenance(monkeypatch, "check-claim", path, "--data", root)
+    assert code == 1, out
+    assert ("secondary host news.example.com is classed as bylined_journalism by the project's "
+            "source lists, so it is not the body that issues this record") in out, out
+    assert "primary_hosts" not in out and HAND_ON not in out, out
+    assert "do not hand this on" in out, out
+
+
 def _scan(root: Path, url: str) -> None:
     """A PDF at `url`, cached under `root`, with no text layer at all."""
     cache_path(root, url).write_text(PageCache(
@@ -424,6 +438,26 @@ def test_hosts_compare_as_uts46_resolves_them(tmp_path):
     assert p.primary_hosts == ("xn--strae-oqa.example",)
     assert classify(f"https://{sharp}/x", p.rules()) == "primary_document"
     assert classify("https://strasse.example/x", p.rules()) == "unknown"
+
+
+def test_two_spellings_of_one_host_are_one_outlet_to_corroboration(tmp_path):
+    """"Different outlets" asks the same host key `classify()` does: a Unicode host and its
+    `xn--` spelling, under two publisher names, are one outlet, not two."""
+    host = "bücher.example"
+    rules = _load(tmp_path, f'["{host}"]').rules()
+
+    def record(url: str, publisher: str) -> Source:
+        src = Source(url=url, publisher=publisher, author=publisher, date="2030-03-02",
+                     source_type="official_record", snippet=SNIPPET)
+        src.verification.status, src.verification.support = "verified", "supports"
+        return src
+
+    claim = Claim(question_id="q1", question="Q?", answer="A.", claim_type="adversarial",
+                  sources=[record(f"https://{host}/a", "Example Library"),
+                           record(f"https://{bare_host(host)}/b", "Example Library Board")])
+    checked = check_corroboration(claim, rules=rules)
+    assert checked.corroboration_ok is False, checked.corroboration_note
+    assert "not independent" in checked.corroboration_note
 
 
 def test_the_brief_names_a_host_as_a_reader_spells_it(tmp_path):

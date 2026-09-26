@@ -39,6 +39,7 @@ from .sources import (
     check_source_class,
     classify,
     domain,
+    host_key,
     publishes_legal_text,
     tier,
 )
@@ -1174,7 +1175,7 @@ def check_corroboration(claim: Claim, *, rules: dict[str, tuple[str, ...]]) -> C
             f"{n_docs} document(s) ({len(usable)} snippet(s))" + as_one
             + (f", {rejected} rejected by the verifier" if rejected else ""))
     elif need >= 2:
-        pubs = {domain(s.url) for s in usable}
+        pubs = {host_key(s.url) for s in usable}   # one key per host, however spelled
         names = {s.publisher.strip().lower() for s in usable}
         if len(pubs) < 2 or len(names) < 2:
             problems.append(
