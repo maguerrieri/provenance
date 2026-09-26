@@ -10,6 +10,12 @@ packs, #22 and #23.
 
 # California: elections, the legislature and campaign finance
 
+## Adversarial here
+
+Besides allegations and settlements, mark `claim_type: "adversarial"` for donor influence and
+for opposition to a popular measure: both are contested claims about a subject, and need two
+independent sources.
+
 ## Sources
 
 - **Bylined journalism:** besides the national outlets, the `ca` list names CalMatters, the LA
@@ -28,7 +34,7 @@ verifier returns `superseded` for an older one when a newer one exists.
 
 - **Form 700s** (statements of economic interests).
 - **Campaign finance forms:** Form 460s, and the Form 497 and Form 496 late reports.
-- **Candidate statements:** one for the primary and another for the general.
+- **Candidate statements:** one for the primary and another for the general (below).
 
 ## Portals that answer only through a bulk export or the pipeline's own query
 
@@ -51,9 +57,6 @@ no URL the pipeline or the human can fetch. That makes a Form 700 question `not_
 it that way, and give the human a precise retrieval instruction (portal URL, name, filing year,
 agency, filing type) plus what to look for. Do not fill the gap with a copy hosted somewhere
 else: it verifies perfectly and is the wrong document, which is worse than an honest gap.
-
-A form filed in 2025 may cover 2024: put the period in the `answer` ("per the 2025 Form 700,
-covering calendar 2024").
 
 ### Campaign finance: CAL-ACCESS through its nightly bulk export
 
@@ -143,7 +146,7 @@ lifts only its own check.
 
 A `human_review` on a CAL-ACCESS query citation whose reason says it counts or leaves out
 "rows a later amendment may have withdrawn", says it "leaves out rows that a filing's own
-amendment attributed to this candidate", says "it leaves out late-reported contributions", or
+amendment attributed to this candidate", says it "leaves out late-reported contributions", or
 says it "is for names exactly as filed" (from `provenance verify` or `provenance build`), is a
 correct citation of an unsettled record. Either the export cannot say whether a later amendment
 withdrew or moved those rows, or a late gift is on file that no Form 460 has restated yet, or

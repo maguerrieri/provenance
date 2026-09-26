@@ -46,14 +46,14 @@ def load_rules(names: tuple[str, ...] = ("us",), sources_dir: str | None = None)
     return {c: tuple(dict.fromkeys(v)) for c, v in merged.items()}
 
 
-def notes(names: tuple[str, ...], sources_dir: Path | None = None) -> list[tuple[str, str]]:
+def notes(names: tuple[str, ...], sources_dir: str | Path | None = None) -> list[tuple[str, str]]:
     """Each named list's notes, as `(name, text)` in the order the project names them:
     `<name>-notes.md` beside `<name>-sources.yaml`, on how that list's records behave (which
     filings come in series, which portals answer only through a bulk export). A list with no
     notes file has none. `provenance brief` hands them to every researcher and verifier, so the
     core agents and skill carry no domain content. A leading `<!-- ... -->` is a note to the
     tool's maintainers and is left out."""
-    d = sources_dir or SOURCES_DIR
+    d = Path(sources_dir) if sources_dir else SOURCES_DIR
     found = []
     for name in dict.fromkeys(names):
         p = d / f"{name}-notes.md"

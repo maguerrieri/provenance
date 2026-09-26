@@ -43,7 +43,8 @@ names which apply, and `provenance check-claim` checks your sources against them
 
 **Citable as source-of-record:**
 - Bylined journalism — national (AP, Politico) plus the outlets the project's regional list
-  names (the notes in your brief name them).
+  names. The notes in your brief may name them; `provenance check-claim` checks every source
+  against the lists either way.
 - An organization's own statement on its own site — an endorsement on the endorser's site, a
   union's own announcement: `source_type: "own_statement"`. It is a primary source for the
   fact that the entity said it, which is what an endorsement claim asserts. Do not label these
@@ -54,7 +55,8 @@ names which apply, and `provenance check-claim` checks your sources against them
   minutes. Your brief names the specific hosts for your project.
 
 **Lead-generators only — never the citation of record:** Wikipedia, and the others the source
-lists name. Use them to find the underlying document, then cite *that*.
+lists name (`provenance check-claim` tells you). Use them to find the underlying document,
+then cite *that*.
 
 **Excluded outright:** AI aggregators and content farms (the tool's `us` source list;
 `provenance check-claim` enforces it). Campaign sites and press releases are excluded *except* for the

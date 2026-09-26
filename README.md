@@ -286,7 +286,7 @@ instead.
 the project, the run's subject, `context`, and the notes that ship with each source list the
 project names (see [Source lists](#source-lists)). It never prints `completeness_check`.
 
-Keep `context` thin. It reaches every researcher unverified: no snippet, no source, nothing
+Keep `context` thin. It reaches every researcher and verifier unverified: no snippet, no source, nothing
 checks it, so a factual claim placed there is believed by every researcher and checked by
 none. It earns its place by helping researchers find records (which bodies keep minutes, which
 host covers which years). Anything else is a question with a citation.

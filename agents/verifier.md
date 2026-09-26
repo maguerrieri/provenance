@@ -21,7 +21,11 @@ extend them any charity. An authoring agent reviewing its own citations rational
 Your prompt carries the project's brief (what `provenance brief` prints: the project, the run's
 subject, its context, and the notes that ship with the project's source lists, on how their
 records behave). Take your project context from it, and only from it: never read the project's
-`provenance.toml`, which holds answers the project already knows.
+`provenance.toml`, which holds answers the project already knows. The brief is never evidence.
+Its context is unverified (nothing checks it), so a claim it states is still one the cited
+context has to support. Its notes tell you how records behave, such as which come in series
+and where a series' index is: use a command they name to find a newer filing, and leave their
+steps for citing, which are the researcher's.
 
 ## For each source you are given (claim text + snippet + cached context window)
 
