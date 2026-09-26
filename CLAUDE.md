@@ -2243,10 +2243,10 @@ result runs that command's code, because a re-derivation drifts.
 ## The review app renders untrusted text — autoescaping is load-bearing
 
 Everything on that page (claim text, researcher notes, publisher, author, snippets,
-verification reasons) is agent-authored and derived from fetched web pages. Escaping is the only thing standing
-between an attacker's page and script running in the reviewer's browser — where it could
-mark every citation checked in `localStorage` and defeat the human verification this repo
-exists to provide.
+verification reasons) is agent-authored and derived from fetched web pages. Escaping is the
+only thing standing between an attacker's page and script running in the reviewer's browser —
+where it could mark every citation checked in `localStorage` and defeat the human
+verification this repo exists to provide.
 
 **Gotcha that already bit once:** `select_autoescape(["html"])` matches on the *filename
 suffix*. This template is `review.html.j2` — it ends in `.j2`, so the predicate returned
