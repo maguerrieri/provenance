@@ -202,12 +202,14 @@ def _provenance(*args) -> tuple[int, str]:
 
     from provenance import cli
 
-    width = cli.con.width
-    cli.con.width = 10_000   # rich folds a long tmp path mid-word at 80 columns
+    # rich folds a long tmp path mid-word at 80 columns. Put back `_width` itself, not the
+    # width rich computed, which would pin it (CLAUDE.md, "Rich reads brackets as markup").
+    width = cli.con._width
+    cli.con._width = 10_000
     try:
         res = CliRunner().invoke(cli.app, [str(a) for a in args])
     finally:
-        cli.con.width = width
+        cli.con._width = width
     return res.exit_code, re.sub(r"\x1b\[[0-9;]*m", "", " ".join(res.output.split()))
 
 
