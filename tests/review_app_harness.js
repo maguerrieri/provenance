@@ -3,7 +3,9 @@
 // what it stored. tests/test_review_app.py parses the rendered page and pipes it in as JSON:
 //
 //   {"tree": <body element tree>, "script": "<the page's script>",
-//    "storage": {"<key>": "<value>"}, "actions": [...]}
+//    "storage": {"<key>": "<value>"}, "actions": [...], "full": ["<key prefix>"]}
+//
+// A write to a key starting with one of "full" throws, as a full localStorage does.
 //
 // and gets back {"storage": ..., "rows": [...], "claims": [...], "notice": ..., "alerts": [...]}.
 //
@@ -102,7 +104,10 @@ async function main() {
     document: doc,
     localStorage: {
       getItem: k => (store.has(k) ? store.get(k) : null),
-      setItem: (k, v) => store.set(k, String(v)),
+      setItem: (k, v) => {
+        if ((input.full || []).some(p => k.startsWith(p))) throw new Error("QuotaExceededError");
+        store.set(k, String(v));
+      },
     },
     navigator: {clipboard: {writeText() {}}},
     alert: msg => alerts.push(String(msg)),

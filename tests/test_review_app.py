@@ -57,9 +57,10 @@ def _tree(node) -> dict:
 
 def run(tmp_path: Path, claims: list[Claim], *, storage: dict | None = None,
         actions: list | None = None, store: str = store_id("example", None),
-        title: str = "T") -> dict:
+        title: str = "T", full: list | None = None) -> dict:
     """Render `claims`, load the page with `storage` as its localStorage, perform `actions`,
-    and return what the page shows and stores."""
+    and return what the page shows and stores. A write to a key starting with one of `full`
+    fails, as it does in a full localStorage."""
     # Only the tests that run the page need node, so the fingerprint tests run anywhere. And CI
     # must run these: a skip there would read as a pass.
     if not NODE and os.environ.get("CI"):
@@ -68,7 +69,7 @@ def run(tmp_path: Path, claims: list[Claim], *, storage: dict | None = None,
         pytest.skip("the review app tests run its script under node")
     page = HTMLParser(render(claims, tmp_path, title=title, store=store)[0].read_text())
     payload = {"tree": _tree(page.body), "script": page.css_first("script").text(),
-               "storage": storage or {}, "actions": actions or []}
+               "storage": storage or {}, "actions": actions or [], "full": full or []}
     out = subprocess.run([NODE, str(HARNESS)], input=json.dumps(payload),
                          capture_output=True, text=True, timeout=60)
     assert out.returncode == 0, out.stderr
@@ -381,6 +382,13 @@ def test_progress_saved_by_title_is_read_once_under_the_subjects_key(tmp_path):
     cleared = dict(adopted["storage"], **{V3: json.dumps({"v": 3, "checked": {}})})
     assert rows(run(tmp_path, [c], store=store, storage=cleared))[key]["checked"], \
         "once it has its own, the title-keyed progress is never read again"
+
+    # Marked moved only once it is saved: in a full localStorage, where its own store can't be
+    # written, it is still this run's to read on the next load, not claimed and lost.
+    full = run(tmp_path, [c], store=store, storage={V3: titled}, full=[own])
+    assert rows(full)[key]["checked"] and own not in full["storage"]
+    assert LEGACY + ":moved" not in full["storage"], "nothing claimed that wasn't saved"
+    assert rows(run(tmp_path, [c], store=store, storage=full["storage"]))[key]["checked"]
 
     # Nor by any other run: a subject whose page had the same title, or this one after the
     # project is renamed. Read again, it would bring back what was unticked since. It starts
