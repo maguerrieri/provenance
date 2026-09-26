@@ -792,6 +792,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
+    { name = "idna" },
     { name = "jinja2" },
     { name = "pdfplumber" },
     { name = "pydantic" },
@@ -812,6 +813,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
+    { name = "idna", specifier = ">=3.7" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "pdfplumber", specifier = ">=0.11" },
     { name = "pydantic", specifier = ">=2.9" },

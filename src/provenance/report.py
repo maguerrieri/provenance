@@ -205,6 +205,7 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "citation review"
             seen[s.sid] += 1
             row_key = f"{c.question_id}/{s.sid}" + (f"/{seen[s.sid]}" if seen[s.sid] > 1 else "")
             t = tier(s, rules)
+            secondary = secondary_host(s, rules)
             command = (queries.human_command(
                 s.query.name, dict(s.query.params),
                 s.verification.query_run.cache_root if s.verification.query_run
@@ -213,10 +214,10 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "citation review"
                 **s.model_dump(), sid=s.sid, row_key=row_key,
                 fingerprint=review_fingerprint(c, s), context_html=context_html(s),
                 badge_class=BADGE.get(s.verification.status, "bad"),
-                secondary=secondary_host(s, rules), query_command=command,
-                acked=secondary_host(s, rules) and not unacked_copy(s, rules),
-                # The host as primary_hosts names it (no port, no `www.`), since the page
-                # tells the reviewer to add it there.
+                secondary=secondary, query_command=command,
+                acked=secondary and not unacked_copy(s, rules),
+                # The host as primary_hosts names it (no port, no `www.`, no login), since the
+                # page tells the reviewer to add it there.
                 host=domain(s.url),
                 tier=TIER_LABEL[t], argued=t in ARGUED, unlisted=t == "unlisted_outlet",
                 query_provenance=query_provenance(s)))

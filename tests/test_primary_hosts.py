@@ -235,6 +235,10 @@ def _claim_citing(root: Path, url: str, snippet: str = SNIPPET) -> Path:
     return path
 
 
+HAND_ON = ("What is left is handed on, not fixed: an issuing authority the project doesn't name, "
+           "or a scan kept with its `page`. Hand this on with `notes` naming the host or the page.")
+
+
 def test_check_claim_takes_a_named_authoritys_record_as_its_own(tmp_path, monkeypatch):
     root = write_project(tmp_path / "p", sources=("us",))
     path = _claim_citing(root, URL)
@@ -249,8 +253,7 @@ def test_check_claim_takes_a_named_authoritys_record_as_its_own(tmp_path, monkey
         in out, out
     # The copy is the only failure: the close gives the hand-on path, never "do not hand this
     # on", and the claim's corroboration failing on that copy alone isn't a second thing to fix.
-    assert ("Only the issuing-authority check failed. If the host is the body that issues the "
-            "record, hand this on with `notes` naming it") in out, out
+    assert HAND_ON in out, out
     assert "do not hand this on" not in out and "corroboration" not in out, out
 
     write_project(root, sources=("us",), extra=f'primary_hosts = ["{AUTHORITY}"]\n')
@@ -274,7 +277,41 @@ def test_another_failure_beside_the_copy_is_the_researchers_to_fix(tmp_path, mon
     code, out = _provenance(monkeypatch, "check-claim", path, "--data", root)
     assert code == 1 and "snippet_not_found" in out, out
     assert "secondary host mirror.example.com is not one of" in out, out
-    assert "do not hand this on" in out and "Only the issuing-authority" not in out, out
+    assert "do not hand this on" in out and HAND_ON not in out, out
+
+
+def _scan(root: Path, url: str) -> None:
+    """A PDF at `url`, cached under `root`, with no text layer at all."""
+    cache_path(root, url).write_text(PageCache(
+        url=url, final_url=url, status=200, content_type="application/pdf", is_pdf=True,
+        title="Decision 2030-14", text="\n\n[[page 1]]\n\n[[page 2]]\n",
+        fetched_at=datetime.now(UTC) - timedelta(hours=6),
+        extractor_version=EXTRACTOR_VERSION).model_dump_json())
+
+
+@pytest.mark.parametrize("page", [2, None])
+def test_a_kept_scan_is_handed_on_beside_an_unnamed_authority(tmp_path, monkeypatch, page):
+    """researcher.md hands on two failures: an unnamed authority, and a scan kept with the page
+    to read. check-claim told both "do not hand this on". A scan with no `page` is still the
+    researcher's to finish. The scan is the named authority's own; the copy is not."""
+    root = write_project(tmp_path / "p", sources=("us",),
+                         extra=f'primary_hosts = ["{AUTHORITY}"]\n')
+    scan = f"https://{AUTHORITY}/decisions/2030-14.pdf"
+    _scan(root, scan)
+    _page(root, MIRROR)
+    source = _official(scan, page=page)
+    path = root / "claims" / "q1.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(Claim(question_id="q1", question="What fee schedule did the board adopt?",
+                          answer="The revised one.",
+                          sources=[source, _official(MIRROR)]).model_dump_json())
+    code, out = _provenance(monkeypatch, "check-claim", path, "--data", root)
+    assert code == 1 and "PDF has no text layer" in out, out
+    assert "secondary host mirror.example.com is not one of" in out, out
+    if page is None:
+        assert "do not hand this on" in out and HAND_ON not in out, out
+    else:
+        assert HAND_ON in out and "do not hand this on" not in out, out
 
 
 def test_a_trailing_dot_names_the_same_host(tmp_path):
@@ -376,6 +413,40 @@ def test_an_internationalized_host_can_be_named(tmp_path):
     assert p.primary_hosts == ("xn--behrde-yxa.example.gov",)
     for url in (f"https://{host}.gov/x", "https://xn--behrde-yxa.example.gov/x"):
         assert classify(url, p.rules()) == "primary_document", url
+
+
+def test_hosts_compare_as_uts46_resolves_them(tmp_path):
+    """Python's `idna` codec is IDNA 2003, which folds `ß` into `ss`: a project naming
+    `straße.example` would have taken `strasse.example`, a different registrant's host, as its
+    authority. Browsers and httpx resolve by UTS 46, where the two differ."""
+    sharp = "straße.example"
+    p = _load(tmp_path, f'["{sharp}"]')
+    assert p.primary_hosts == ("xn--strae-oqa.example",)
+    assert classify(f"https://{sharp}/x", p.rules()) == "primary_document"
+    assert classify("https://strasse.example/x", p.rules()) == "unknown"
+
+
+def test_the_brief_names_a_host_as_a_reader_spells_it(tmp_path):
+    """Stored in its ASCII form, an internationalized host would print as `xn--...`, and a
+    researcher on its page would read it as a host the project doesn't name."""
+    p = _load(tmp_path, '["bücher.example"]')
+    assert "bücher.example" in cli.researcher_brief(p, None)
+    assert "xn--" not in cli.researcher_brief(p, None)
+
+
+@pytest.mark.parametrize("entry", ["0.1", "10.0.0.1", "example.123"])
+def test_an_entry_ending_in_digits_is_refused(tmp_path, entry):
+    """No top-level domain is all digits. `0.1` would have matched every address ending in it,
+    the fail-open the single-label refusal exists to prevent."""
+    assert repr(entry) in _refusal(tmp_path, f'["{entry}"]')
+
+
+def test_the_rules_read_a_host_however_it_was_given():
+    """Normalized where the hosts join the rules, not only in project.load(): a host given any
+    other way, in code or a later command, is compared as `classify()` compares, or dropped."""
+    rules = load_rules(("us",), primary_hosts=(" Records.Example.GOV. ", "gov", "0.1"))
+    assert classify(URL, rules) == "primary_document"
+    assert "gov" not in rules["primary_document"] and "0.1" not in rules["primary_document"]
 
 
 def test_a_misnamed_list_does_not_hide_what_the_others_say(tmp_path, synthetic_lists):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 import shlex
@@ -27,11 +28,12 @@ from .models import (
     QID_PATTERN,
     Claim,
     DroppedContradiction,
+    Source,
     check_archive_url,
     strip_machine_fields,
 )
 from .report import clear_render, render, store_id
-from .sources import TIER_LABEL, domain, notes, speakers, tier
+from .sources import TIER_LABEL, bare_host, display_host, domain, notes, speakers, tier
 from .terminal import printable as _printable
 from .verify import (
     GOOD,
@@ -534,7 +536,7 @@ def researcher_brief(p: proj.Project, subject: str | None) -> str:
     # `primary_hosts`, and what to do about any other. Without them a researcher citing an
     # unlisted authority's own record had to guess, and relabelled it `own_statement` to get
     # past the secondary-host check. Here, beside the lists' notes, and nowhere else.
-    hosts = ", ".join(sorted(p.rules()["primary_document"])) or "none named"
+    hosts = ", ".join(sorted(map(display_host, p.rules()["primary_document"]))) or "none named"
     lines += ["", f"Issuing authorities, each with its subdomains: {hosts}", ISSUING_AUTHORITIES]
     for name, text in notes(p.sources):
         lines += ["", f"Notes that ship with the `{name}` source list (the tool's, not this "
@@ -2252,6 +2254,14 @@ def form700(first: str, last: str):
               f"that one, and set the source `date` to its filed date.")
 
 
+def _kept_scan(src: Source) -> bool:
+    """A scan kept as researcher.md says to keep one: `page` set, and a scan's reason (both open
+    with "PDF has no text layer", `verify.no_text_layer_reason()`). Nothing mechanical can
+    check it, so check-claim fails it, and the researcher hands it on."""
+    return (src.verification.status == "human_review" and src.page is not None
+            and (src.verification.reason or "").startswith("PDF has no text layer"))
+
+
 @app.command(name="check-claim")
 def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path = None):
     """Validate one claim file before handing it on. Exits non-zero if anything fails.
@@ -2280,10 +2290,13 @@ def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path
         con.print(f"[red]cannot read {escape(_printable(f'{path}: {e}', lines=True))}[/]")
         raise typer.Exit(1) from None
 
-    ok, fixable = True, False
+    # What failed, by kind. "copy" and "scan" are the failures a researcher hands on rather
+    # than fixes; every other kind keeps the red close below, so a check added without a kind
+    # of its own fails toward "do not hand this on".
+    failed: set[str] = set()
     asked_in, asked = questions.find(run), None
     if why := _no_own_set(p, run):
-        ok, fixable = False, True
+        failed.add("fix")
         con.print(Text(_printable(why), style="red"), soft_wrap=True)
     elif asked_in is None:
         con.print(f"[dim]no {questions.FILE} for {escape(_printable(str(run)))}, so the "
@@ -2292,7 +2305,7 @@ def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path
         try:
             asked = questions.load(asked_in)
         except questions.UnreadableQuestions as e:
-            ok, fixable = False, True
+            failed.add("fix")
             con.print(f"[red]cannot check the question:[/] "
                       f"{escape(_printable(str(e), lines=True))}")
     for item in (raw if isinstance(raw, list) else [raw]):
@@ -2307,17 +2320,17 @@ def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path
         qid = escape(claim.question_id)
         where = escape(_printable(str(asked_in)))
         if listed := found.case_of.get(claim.question_id):
-            ok, fixable = False, True
+            failed.add("fix")
             con.print(f"  [red]question id[/] {qid} is not in {where}, which "
                       f"has {escape(_printable(listed))}: they differ only in case\n"
                       f"      Use the question_id you were given, exactly.")
         elif found.unlisted:
-            ok, fixable = False, True
+            failed.add("fix")
             con.print(f"  [red]question id[/] {qid} is not in {where}\n"
                       f"      Use the question_id you were given, exactly. If you did, the "
                       f"question set changed under you: report that, and do not edit it.")
         for _qid, answered, text in found.reworded:
-            ok, fixable = False, True
+            failed.add("fix")
             con.print(f"  [red]question[/] is not the one {where} asks at {qid}\n"
                       f"      Copy it exactly as you were given it, into `question`:")
             con.print(Text(f"      yours: {answered!r}\n      asked: {text!r}"), soft_wrap=True)
@@ -2330,18 +2343,19 @@ def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path
             elif st in ("normalized_match", "pdf_normalized_match"):
                 con.print(f"  [yellow]{st}[/] {escape(cited)}")
             else:
-                ok, fixable = False, True
+                failed.add("scan" if _kept_scan(src_) else "fix")
                 # One run with the reason, which can quote the snippet or the page.
                 con.print(f"  [red]{st}[/] " + escape(
                     f"{cited}\n      {_printable(src_.verification.reason or '')}"))
+        copies = [src_ for src_ in claim.sources if unacked_copy(src_, rules)]
         for src_ in claim.sources:
-            if unacked_copy(src_, rules):
-                # Not fixable by the researcher when the host is the authority itself, so it
-                # doesn't set `fixable`. "Not named" is all the pipeline knows, so the message
-                # says that and gives both ways on: told only "not the authority", a researcher
-                # citing the authority itself acknowledged a copy it wasn't or relabelled the
-                # source. One escaped run, since the host is printed twice.
-                ok = False
+            if src_ in copies:
+                # Not the researcher's to fix when the host is the authority itself. "Not
+                # named" is all the pipeline knows, so the message says that and gives both
+                # ways on: told only "not the authority", a researcher citing the authority
+                # itself acknowledged a copy it wasn't or relabelled the source. One escaped
+                # run, since the host is printed twice.
+                failed.add("copy")
                 host = domain(src_.url)
                 con.print("  [red]secondary host[/] " + escape(_printable(
                     f"{host} is not one of the project's issuing authorities (`provenance "
@@ -2354,12 +2368,12 @@ def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path
                     f"host, for a person to add it to the project's `primary_hosts`.",
                     lines=True)))
             if missing_filing_date(src_):
-                ok, fixable = False, True
+                failed.add("fix")
                 con.print(f"  [red]no filing date[/] {escape(_printable(src_.url))}\n"
                           f"      periodic filings are a series — set `date` to the filing's "
                           f"own date, and make sure it is the most recent one")
             if missing_legal_version(src_, rules):
-                ok, fixable = False, True
+                failed.add("fix")
                 con.print(f"  [red]no effective date or version[/] "
                           f"{escape(_printable(src_.url))}\n"
                           f"      this host publishes legal text, which is a series — set "
@@ -2368,7 +2382,7 @@ def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path
                           f"its version, or the date of the action you cite), and make sure "
                           f"it is the version the claim is about")
         for src_ in unattributed(claim, rules):
-            ok, fixable = False, True
+            failed.add("fix")
             t = tier(src_, rules)
             con.print(f"  [red]not attributed[/] {TIER_LABEL[t]} " + escape(_printable(
                 f"{src_.publisher}: {src_.snippet!r}")))
@@ -2391,26 +2405,26 @@ def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path
                       "text, an official analysis, or reporting.")
         check_corroboration(claim, rules=rules)
         if claim.corroboration_ok is False:
-            ok = False
             # A claim that fails corroboration only on its unacknowledged copies is the line
-            # above again, and reads as a second thing to fix. Asked again as it will stand once
-            # a person names the host (the ack here is a stand-in, on a copy of the claim).
-            released = claim.model_copy(deep=True)
-            for src_ in released.sources:
-                if unacked_copy(src_, rules):
-                    src_.secondary_host_ack = "counted as named"
-            if check_corroboration(released, rules=rules).corroboration_ok is not True:
-                fixable = True
+            # above again, and reads as a second thing to fix. Asked again of the claim as it
+            # will stand once a person names those hosts: the project's rules with them added.
+            named = dataclasses.replace(p, primary_hosts=p.primary_hosts + tuple(
+                h for h in (bare_host(domain(c.url)) for c in copies) if h))
+            released = check_corroboration(claim.model_copy(deep=True), rules=named.rules())
+            if not copies or released.corroboration_ok is not True:
+                failed.add("corroboration")
                 con.print(f"  [red]corroboration[/] "
                           f"{escape(_printable(claim.corroboration_note))}")
-    if not ok and not fixable:
-        # Every failure is a host the project doesn't name. The brief says to hand that on when
-        # the host is the issuing authority, and "do not hand this on" would contradict it.
-        con.print("[yellow]Only the issuing-authority check failed. If the host is the body "
-                  "that issues the record, hand this on with `notes` naming it, as the brief "
-                  "says. If it is a copy, fix it and re-run.[/]")
+    if failed and failed <= {"copy", "scan"}:
+        # Every failure is one the brief or researcher.md says to hand on: an issuing authority
+        # the project doesn't name, or a scan kept with the page to read. "Do not hand this on"
+        # contradicted both.
+        con.print("[yellow]What is left is handed on, not fixed: an issuing authority the "
+                  "project doesn't name, or a scan kept with its `page`. Hand this on with "
+                  "`notes` naming the host or the page. If a host above is a copy, not the "
+                  "authority, fix it and re-run.[/]")
         raise typer.Exit(1)
-    if not ok:
+    if failed:
         con.print("[red]Not ready. Fix these and re-run — do not hand this on.[/]")
         raise typer.Exit(1)
     con.print("[green]All sources check out.[/]")

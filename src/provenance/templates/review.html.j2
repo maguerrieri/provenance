@@ -157,7 +157,7 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
       no explanation. If it is the body that issues this record, add it to the project's
       primary_hosts and rebuild. If it is not, this is an unacknowledged copy: check it against
       the official version.</div>{% endif %}
-    {% if s.argued %}<div class="meta" style="color:var(--warn)">{% if s.unlisted %}{{ s.url.split('/')[2] }}
+    {% if s.argued %}<div class="meta" style="color:var(--warn)">{% if s.unlisted %}<bdi>{{ s.host }}</bdi>
       is not on this project's source lists as a news outlet, so this is not counted as
       reporting. {% endif %}This supports only what its author argues: check that the claim says
       whose argument it is, not that it is so.</div>{% endif %}

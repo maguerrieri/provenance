@@ -173,6 +173,7 @@ def load(root: Path) -> Project:
                         "use `name`")
 
     sources = raw.get("sources")
+    lists = available()   # one listing of the lists, for every check below that reads it
     if (not isinstance(sources, list) or not sources
             or not all(isinstance(s, str) and s for s in sources)):
         # Required, and never defaulted: a project checked against lists it didn't choose is
@@ -180,9 +181,9 @@ def load(root: Path) -> Project:
         problems.append("`sources` must list the source lists citations are checked against, "
                         "e.g. [\"us\"]")
         sources = []
-    elif missing := [s for s in sources if s not in available()]:
+    elif missing := [s for s in sources if s not in lists]:
         problems.append(f"`sources` names no such source list: {', '.join(map(repr, missing))} "
-                        f"(there are {', '.join(available()) or 'none'})")
+                        f"(there are {', '.join(lists) or 'none'})")
     else:
         # Read here, so a malformed list is a problem with the project every command names,
         # not a traceback from whichever command loads the rules first.
@@ -191,7 +192,7 @@ def load(root: Path) -> Project:
         except (ValueError, OSError) as e:   # OSError: a list `available()` saw is gone
             problems.append(str(e))
     # The lists that exist, so a misnamed one doesn't hide what the others say about a host.
-    known = [s for s in sources if s in available()]
+    known = [s for s in sources if s in lists]
 
     primary = raw.get("primary_hosts", [])
     hosts: list[str] = []
@@ -204,7 +205,8 @@ def load(root: Path) -> Project:
         # issuing authority, which is the silent substitution secondary_host() exists to catch.
         problems.append(f"`primary_hosts` holds what is not a host name: "
                         f"{', '.join(map(repr, bad))} (write `records.example.gov`: no scheme, "
-                        f"path, port or `www.`, and more than a top-level domain)")
+                        f"path, port or `www.`, more than a top-level domain, and not an IP "
+                        f"address)")
     else:
         hosts = list(dict.fromkeys(bare_host(h) for h in primary))
     listed = None

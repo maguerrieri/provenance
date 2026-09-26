@@ -18,6 +18,7 @@ from importlib.resources import files
 from pathlib import Path
 from urllib.parse import urlparse
 
+import idna
 import yaml
 
 from .models import Source
@@ -109,7 +110,9 @@ def load_rules(names: tuple[str, ...] = ("us",), sources_dir: str | None = None,
                                  f"{', '.join(map(repr, bad))} (write `example.gov`: no "
                                  f"scheme, path, port or `www.`)")
             merged[k].extend(_ascii(h.strip().lower()) for h in hosts)
-    merged["primary_document"].extend(primary_hosts)
+    # Read here, where they join the rules, not only in project.load(): one given any other way
+    # (a Project built in code) would otherwise be compared as written, and match nothing.
+    merged["primary_document"].extend(h for h in map(bare_host, primary_hosts) if h)
     return {k: tuple(dict.fromkeys(v)) for k, v in merged.items()}
 
 
@@ -142,19 +145,35 @@ def notes(names: tuple[str, ...], sources_dir: str | Path | None = None) -> list
 def bare_host(value: str) -> str | None:
     """`value` as a host `classify()` can match, trimmed and lowercased, or None when it is not
     one: a scheme, a path, a port or a leading `www.` (which `domain()` strips from every URL)
-    would match nothing, and a single label would match a whole top-level domain."""
+    would match nothing, and a single label would match a whole top-level domain. So would an
+    IP address's tail (`0.1` matches every address ending in it): no top-level domain is all
+    digits, so a last label that is refuses both."""
     host = _ascii(value.strip().lower().rstrip("."))   # a trailing dot names the same host
-    return host if _HOST.fullmatch(host) else None
+    if not _HOST.fullmatch(host) or host.rsplit(".", 1)[-1].isdigit():
+        return None
+    return host
 
 
 def _ascii(host: str) -> str:
-    """`host` in its ASCII form (IDNA), the one form list entries, a project's hosts and a URL's
-    host are compared in. `domain()` gives a URL's host as the URL spells it, and an entry can be
-    written either way, so compared as spelled a host matched only an entry spelled like it. A
-    host the codec refuses is compared as it is."""
+    """`host` in its ASCII form, the one form list entries, a project's hosts and a URL's host
+    are compared in. `domain()` gives a URL's host as the URL spells it, and an entry can be
+    written either way, so compared as spelled a host matched only an entry spelled like it.
+    UTS 46 without the transitional mappings, as browsers and httpx resolve a host: Python's own
+    `idna` codec is IDNA 2003, which folds `ß` into `ss`, so `straße.example` would have matched
+    `strasse.example`, a different registrant. A host the encoder refuses is compared as is."""
     try:
-        return host.encode("idna").decode("ascii")
-    except UnicodeError:
+        return idna.encode(host, uts46=True, transitional=False).decode("ascii")
+    except (idna.IDNAError, UnicodeError):
+        return host
+
+
+def display_host(host: str) -> str:
+    """`host` as a URL would spell it for a reader: the Unicode form of an internationalized
+    host, which is stored in its ASCII form (`_ascii()`). The brief lists hosts this way, so a
+    researcher on a page whose address bar reads `bücher.example` sees it named."""
+    try:
+        return idna.decode(host)
+    except (idna.IDNAError, UnicodeError):
         return host
 
 
