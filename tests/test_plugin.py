@@ -47,11 +47,12 @@ def test_provenance_version_prints_the_package_version():
 
 def test_the_skill_checks_the_cli_is_at_the_plugins_version_first():
     """The check, what it must print, and the install command it gives name one version, the
-    plugin's. A version left behind by a release would send every operator to install a CLI
-    whose commands the agents' instructions no longer match."""
+    plugin's, and so does the README's install command. A version left behind by a release
+    would send every operator to install a CLI whose commands the agents' instructions no
+    longer match."""
     checks = [p for p in SKILLS if "provenance --version" in p.read_text()]
     assert checks, "no skill checks provenance --version before a run"
-    named = [(p.relative_to(ROOT), v) for p in [*SKILLS, *AGENTS]
+    named = [(p.relative_to(ROOT), v) for p in [*SKILLS, *AGENTS, ROOT / "README.md"]
              for v in re.findall(r"provenance(?: |@v)(\d+(?:\.\d+)+)", p.read_text())]
     assert named, "the check names no version"
     assert {v for _, v in named} == {VERSION}, named

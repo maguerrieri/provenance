@@ -28,10 +28,10 @@ judge whether context supports a claim. Models never set a verification status.
 ### Renamed from `vgpipe`
 
 The package was `vgpipe` and the command `vg`. Both are now `provenance`: `uv run vg verify` is
-`uv run provenance verify`, and so on for every command.
+`provenance verify`, and so on for every command.
 
 A run verified before the rename still holds the reasons `vg verify` wrote into its claim files,
-and some of them tell you or a researcher to run a `vg` command. Run `uv run provenance verify`
+and some of them tell you or a researcher to run a `vg` command. Run `provenance verify`
 on it once to rewrite them.
 
 Two things keep the old name on purpose:
@@ -44,20 +44,57 @@ Two things keep the old name on purpose:
 
 ## Quick start
 
-Install from a clone and run the command, `provenance`, from it with `uv run`. The name
-`provenance` on PyPI belongs to an unrelated project, so don't install it by name.
+Install the command, `provenance`, once, from git at a release tag. The name `provenance` on
+PyPI belongs to an unrelated project, so don't install it by name.
 
 ```bash
-git clone https://github.com/maguerrieri/provenance.git
-cd provenance
-uv sync
-uv run provenance races                                                          # what's defined
-uv run provenance check "https://example.org/article" "a short verbatim snippet" # ad-hoc
-uv run provenance verify        # deterministic checks over data/claims/*.json
-uv run provenance archive       # web.archive.org snapshots
-uv run provenance build         # conflicts + render the review app
-uv run provenance serve         # http://127.0.0.1:8765/review.html
+uv tool install git+https://github.com/maguerrieri/provenance@v0.1.0
 ```
+
+Then run it from your research project's directory:
+
+```bash
+provenance --version                                                    # provenance 0.1.0
+provenance races                                                        # what's defined
+provenance check "https://example.org/article" "a short verbatim snippet" # ad-hoc
+provenance verify        # deterministic checks over data/claims/*.json
+provenance archive       # web.archive.org snapshots
+provenance build         # conflicts + render the review app
+provenance serve         # http://127.0.0.1:8765/review.html
+```
+
+To move to another release, install over it:
+
+```bash
+uv tool install --force git+https://github.com/maguerrieri/provenance@v<version>
+```
+
+Without installing, `uvx --from git+https://github.com/maguerrieri/provenance@v0.1.0 provenance
+<command>` runs one command. It resolves the git source on every call, and floats with the
+default branch unless pinned, so it suits a try-out, not an agent running hundreds of commands.
+
+### The Claude Code plugin
+
+The researcher and verifier agents and the orchestration skill are a Claude Code plugin,
+`provenance`, listed in the `maguerrieri-toolbox` marketplace:
+
+```bash
+claude plugin marketplace add maguerrieri/claude-toolbox
+claude plugin install provenance@maguerrieri-toolbox
+```
+
+The plugin and the command are released together, at one version. Before a run the skill
+checks `provenance --version` against the plugin's, and gives the install command for the
+plugin's version when they differ: the agents run the commands and flags of that version.
+Installed, the agents are `provenance:researcher` and `provenance:verifier`.
+
+### Developing the tool
+
+In a clone, `uv sync`, then `uv run provenance <command>` runs the clone's code and
+`uv run pytest` the tests. `claude --plugin-dir <clone>` loads the clone's agents and skill
+for one session. A release bumps `version` in `pyproject.toml` and
+`.claude-plugin/plugin.json` together (a test holds them equal, and every version the skill
+and this README name to both), then tags the commit `v<version>` and pushes the tag.
 
 ## The review app
 
@@ -90,12 +127,12 @@ whether they support the claim.
 | Phase | Who | What |
 |---|---|---|
 | 0 | main session | Split the template into atomic questions; a human approves the split |
-| 1 | `researcher` agents, parallel | One question each → `data/claims/<qid>.json` |
-| 2 | `provenance verify` + `verifier` agents | Mechanical checks, then the judgment half; ≤2 retries, then `human_review` |
+| 1 | `provenance:researcher` agents, parallel | One question each → `data/claims/<qid>.json` |
+| 2 | `provenance verify` + `provenance:verifier` agents | Mechanical checks, then the judgment half; ≤2 retries, then `human_review` |
 | 3 | `provenance build` / `provenance serve` | Conflicts + review app + `claims.json` |
 
-Orchestration lives in `.claude/skills/voter-guide-research/SKILL.md`; agent definitions in
-`.claude/agents/`.
+Orchestration lives in the plugin's skill, `skills/voter-guide-research/SKILL.md`; agent
+definitions in `agents/`.
 
 Question ids (`q1`, `q2a`) are **stable and never reused**. They name each question's claim and
 verdict files, so a split or reworded question gets a new id and the old id is retired. To
