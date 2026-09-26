@@ -575,7 +575,9 @@ def test_new_candidate_prints_the_candidate_and_its_paths_as_written(tmp_path, m
     code, out = _provenance("new-candidate", "pd", "--data", data)
     assert code == 0, out
     assert f"wrote {data}/pd/questions.json (1 questions retargeted to [b]Pat Doe)" in out
-    assert f"ready {data}/pd" in out and f"provenance build --data {data}/pd --candidate pd" in out
+    assert f"ready {data}/pd" in out, out
+    # quoted for the shell it is pasted into: "[" is a glob to it
+    assert f"provenance build --data '{data}/pd' --candidate pd" in out, out
 
     code, out = _provenance("new-candidate", "pd", "--data", data)
     assert code == 0 and f"{data}/pd/questions.json already exists" in out, out

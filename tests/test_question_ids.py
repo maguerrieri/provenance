@@ -195,20 +195,31 @@ def test_an_unlisted_id_a_pending_maps_from_names_says_so(tmp_path):
 
 def test_a_subject_run_reads_its_own_question_set_and_never_the_projects(tmp_path):
     """`provenance new-candidate` gives a subject's run its own copy, retargeted to the subject.
-    A run without one used to read the project root's, which is worded for another subject; now
-    it says it has none, as a run with no set does."""
+    A run without one used to read the project root's, which is worded for another subject. It
+    doesn't now, and it doesn't check nothing either: with a set in the project and none of its
+    own, no claim in it can be checked, and that fails like a set that can't be read."""
     root = write_project(tmp_path / "data", subjects=["cand"])
     (root / "questions.json").write_text(json.dumps(
         [{"id": "q1", "text": "How did Alex Placeholder vote on the levy?"}]))
     run = _run(root / "cand", [{"id": "q1", "text": "How did Sam Sample vote on the levy?"}],
                [("q1", "How did Sam Sample vote on the levy?")], subject=True)
+    path = run / "claims" / "q1.json"
     code, out = _provenance("build", "--data", run)
     assert code == 0, out
 
     (run / "questions.json").unlink()
+    for args in (["build", "--data", run], ["status", "--data", run], ["check-claim", path]):
+        code, out = _provenance(*args)
+        assert code == 1, (args, out)
+        assert f"{run} is cand's run and has no questions.json of its own" in out, (args, out)
+        assert "`provenance new-candidate cand` copies it" in out, (args, out)
+        assert "another question than" not in out, (args, out)
+    assert not (run / "out" / "review.html").exists()
+
+    # With no set anywhere in the project, a subject is like any run with none: said, and passed.
+    (root / "questions.json").unlink()
     code, out = _provenance("build", "--data", run)
     assert code == 0 and f"no questions.json in {run}, so no claim was checked" in out, out
-    assert "another question than" not in out, out
 
 
 def test_an_unreadable_own_question_set_does_not_fall_back_to_the_roots(tmp_path):

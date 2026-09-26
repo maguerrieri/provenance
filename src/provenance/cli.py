@@ -125,18 +125,32 @@ def _judgments_or_exit():
 
 DATA = Path("data")   # the retired commands' old default run; every other command resolves one
 _warned_strays: set[Path] = set()   # run dirs whose stray cache/ was already reported
+_noted_defaults: set[Path] = set()  # subject dirs the root run was defaulted from, already said
 
 
-def _project(data: Path | None, project: Path | None) -> tuple[proj.Project, Path]:
+def _project(data: Path | None, project: Path | None, *,
+             for_run: bool = True) -> tuple[proj.Project, Path]:
     """The project and the run a command's `--data` and `--project` name, or a refusal.
 
     `project.resolve()` is the one rule: the project `--project` names, else the nearest
     provenance.toml at or above the run (`--data`, else the working directory); and the run is
-    the project root or a subject the project declares."""
+    the project root or a subject the project declares. With no `--data` the run is the root,
+    even from inside a subject's directory, so a command that works on the run (`for_run`)
+    says so there: `cd` into a subject and run a command, and it was the root's run."""
     try:
-        return proj.resolve(data, project)
+        p, run = proj.resolve(data, project)
     except proj.ProjectError as e:
         _refuse(str(e))
+    if for_run and data is None:
+        here = Path.cwd().resolve()
+        for s in p.subjects:
+            d = p.subject_dir(s).resolve()
+            if (here == d or d in here.parents) and d not in _noted_defaults:
+                _noted_defaults.add(d)
+                con.print("[yellow]" + escape(_printable(
+                    f"this is the project root's run, not {s}'s, though the working directory "
+                    f"is inside {d}: pass --data {shlex.quote(str(d))} for {s}'s")) + "[/]")
+    return p, run
 
 
 def _race(p: proj.Project) -> Race:
@@ -177,7 +191,7 @@ def _cache_root(data: Path | None, cache: Path | None, project: Path | None = No
                 f"holds cache/, so this looks like --cache {cache.resolve().parent}.")) + "[/]")
             raise typer.Exit(1)
         return cache
-    p, run = _project(data, project)
+    p, run = _project(data, project, for_run=False)
     # A stray is never used, however it got there: an earlier rule ("the run's own cache wins
     # if it exists") was self-fulfilling, so one fetch with --data data/<candidate> created
     # data/<candidate>/cache, the stray became authoritative, and it hid the CAL-ACCESS
@@ -741,7 +755,27 @@ def _settle(claims: list[Claim], data: Path, cache_root: Path,
     return stale, recorded
 
 
-def _question_ids(data: Path, claims: list[Claim]) -> set[str] | None:
+def _no_own_set(p: proj.Project, run: Path) -> str:
+    """Why a subject's run has no question set to be checked against, or "".
+
+    A subject's run never reads the project's set, which is worded for another subject. So
+    where the project has one and the subject has none, its claims can't be checked, and that
+    fails like a set that can't be read. Checking nothing and saying so would be a prose rule
+    with no gate: a subject moved from the old layout without its copy would render claims on
+    retired or reworded ids that the fallback used to leave out."""
+    from . import questions
+
+    if (run.resolve() == p.root or questions.find(run) is not None
+            or questions.find(p.root) is None):
+        return ""
+    subject = run.resolve().name
+    return (f"{run} is {subject}'s run and has no {questions.FILE} of its own, so no claim in it "
+            f"can be checked against the question its id names. The project's "
+            f"{p.root / questions.FILE} is not read instead: it is worded for another subject. "
+            f"`provenance new-candidate {subject}` copies it, retargeted to {subject}.")
+
+
+def _question_ids(data: Path, claims: list[Claim], p: proj.Project) -> set[str] | None:
     """Check every claim against the question its id names in the run's questions.json, and
     print what breaks the stable-id rule (CLAUDE.md, "Question ids are stable and never
     reused"). Returns the ids of the claims that break it, or None when the question set can't
@@ -753,6 +787,9 @@ def _question_ids(data: Path, claims: list[Claim]) -> set[str] | None:
     """
     from . import questions
 
+    if why := _no_own_set(p, data):
+        con.print(Text(_printable(why), style="red"), soft_wrap=True)
+        return None
     path = questions.find(data)
     if path is None:
         con.print("[yellow]" + escape(_printable(f"no {questions.FILE} in {data}"))
@@ -850,10 +887,10 @@ def build(data: Path = None, cache: Path = None, candidate: str = "", title: str
     # reproduced from the cached page, and replaces every support verdict with the recorded
     # one (or `unreviewed`).
     claims = _load_or_exit(data / "claims", trust_machine_fields=True)
-    failing = _question_ids(data, claims)
+    failing = _question_ids(data, claims, p)
     if failing is None:
         con.print("[red]review app not rendered: no claim can be checked against a question set "
-                  "that can't be read.[/]")
+                  "that can't be read, or that the run does not have.[/]")
         raise typer.Exit(1)
     # Left out before anything reads them: rendered, such a claim reads as an answer to a
     # question the run does not ask, or to one it was never researched for. The rest still
@@ -2139,7 +2176,10 @@ def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path
 
     ok = True
     asked_in, asked = questions.find(run), None
-    if asked_in is None:
+    if why := _no_own_set(p, run):
+        ok = False
+        con.print(Text(_printable(why), style="red"), soft_wrap=True)
+    elif asked_in is None:
         con.print(f"[dim]no {questions.FILE} for {escape(_printable(str(run)))}, so the "
                   f"question was not checked[/]")
     else:
@@ -2293,10 +2333,13 @@ def new_candidate(candidate: str, data: Path = None, questions: Path = None,
     elif dest_q.exists():
         con.print(f"{escape(_printable(str(dest_q)))} already exists — left alone")
 
-    at, cid = _printable(str(root)), _printable(c.id)
+    # Quoted for a shell, as every printed command is: the run is the project's absolute path
+    # now, where a space is far likelier than in the old relative data/<id>.
+    at = _printable(str(root))
+    run, cid = _printable(shlex.quote(str(root))), _printable(shlex.quote(c.id))
     con.print("[green]ready[/] " + escape(f"{at}\n"
-                                          f"  provenance verify --data {at}\n"
-                                          f"  provenance build  --data {at} --candidate {cid}"))
+                                          f"  provenance verify --data {run}\n"
+                                          f"  provenance build  --data {run} --candidate {cid}"))
 
 
 @app.command()
@@ -2306,7 +2349,7 @@ def status(data: Path = None, cache: Path = None, project: Path = None):
     claims = _load_or_exit(data / "claims", trust_machine_fields=True)
     # Even with no claims: a pending maps_from, or a question set nothing can read, is worth
     # settling before anyone researches on those ids.
-    failing = _question_ids(data, claims)
+    failing = _question_ids(data, claims, p)
     if failing is None:
         raise typer.Exit(1)   # as build renders nothing: no claim could be checked
     if not claims:

@@ -61,10 +61,13 @@ class Project:
 def find(start: Path) -> Path | None:
     """The nearest directory at or above `start` that holds a provenance.toml, or None.
 
-    Walks the resolved path, so a symlinked run finds the project its real directory is in.
+    Walks the path as given, made absolute, not the one its symlinks resolve to: a subject that
+    is a symlink to another disk is declared in the project it sits in, and its real directory
+    has no project above it. (A run reached through a symlink from outside its project finds
+    no project, or one that does not declare it, and is refused: never a wrong answer.)
     Anything by that name counts, a dangling symlink or a directory included, and `load()`
     refuses it: skipping it would hand the run to a project further up."""
-    here = start.resolve()
+    here = _absolute(start)
     for d in (here, *here.parents):
         if os.path.lexists(d / FILE):
             return d
@@ -162,6 +165,35 @@ def _path(root: Path, value: str) -> Path:
     return (root / Path(value).expanduser()).resolve()
 
 
+def _absolute(path: Path) -> Path:
+    """`path` made absolute with `..` folded, its symlinks left as they are."""
+    return Path(os.path.abspath(path))
+
+
+def _declared_by_parent(root: Path) -> Path | None:
+    """The directory above `root` if its project file declares `root` as a subject, else None.
+
+    The nearest project file wins, so from inside such a subject the parent's declaration
+    would never be read: a provenance.toml dropped into a subject's directory would take its
+    run over, with a cache and source lists of its own, and the parent project's `load()`
+    refuses it only when something runs at the parent. Only the parent can declare it, since a
+    subject is a direct child. A parent file that can't be parsed declares nothing: its own
+    commands refuse it."""
+    parent = root.parent
+    try:
+        subjects = tomllib.loads((parent / FILE).read_text()).get("subjects", [])
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return None
+    if not isinstance(subjects, list):
+        return None
+    here = root.resolve()
+    for s in subjects:
+        if isinstance(s, str) and re.fullmatch(SUBJECT_PATTERN, s) \
+                and (parent / s).resolve() == here:
+            return parent
+    return None
+
+
 def resolve(run: Path | None, project: Path | None,
             cwd: Path | None = None) -> tuple[Project, Path]:
     """(project, run directory) for a command's `--data` and `--project`.
@@ -172,7 +204,7 @@ def resolve(run: Path | None, project: Path | None,
     where it used to become a run of its own with a cache of its own.
     """
     if project is not None:
-        root = project.resolve()
+        root = _absolute(project)
         if not os.path.lexists(root / FILE):
             raise ProjectError(f"--project {project} holds no {FILE}")
     else:
@@ -180,12 +212,17 @@ def resolve(run: Path | None, project: Path | None,
         root = find(start)
         if root is None:
             raise ProjectError(
-                f"no {FILE} at or above {start.resolve()}. Every command reads its project from "
+                f"no {FILE} at or above {_absolute(start)}. Every command reads its project from "
                 f"one: write one at the project's root, or pass --project. It names the project, "
                 f"its source lists, where the cache lives, its subjects and its race (README, "
                 f"\"Projects\"). A directory laid out the old way, with the question set, claims "
                 f"and cache in data/ and a run per candidate in data/<candidate>/, gets one in "
                 f"data/ with cache = \".\" and each candidate's directory under subjects.")
+    if (parent := _declared_by_parent(root)) is not None:
+        raise ProjectError(f"{root} is a subject of the project in {parent}, and holds a {FILE} "
+                           f"of its own: which project it belongs to is not on disk. Remove "
+                           f"one: its own {FILE}, or its entry under `subjects` in "
+                           f"{parent / FILE}.")
     p = load(root)
     if run is None:
         return p, p.root

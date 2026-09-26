@@ -295,6 +295,58 @@ def test_a_self_contained_root_nested_under_another_is_its_own_project(tmp_path,
         project.load(outer)
 
 
+def test_a_project_file_dropped_into_a_declared_subject_is_refused_from_inside_too(tmp_path):
+    """The nearest project file wins, so from inside the subject the parent's declaration was
+    never read: a provenance.toml placed in a subject's directory took its run over, with a
+    cache and source lists of its own. Either side of the conflict now refuses."""
+    outer = write_project(tmp_path / "data", subjects=["lind"])
+    lind = write_project(outer / "lind", sources=("us",), cache=str(tmp_path / "elsewhere"))
+    (lind / "claims").mkdir()
+    for args in (["build", "--data", lind], ["status", "--data", lind], ["build", "--data", outer],
+                 ["fetch", URL, "--data", lind]):
+        code, out = _provenance(*args)
+        assert code == 1, (args, out)
+        assert "provenance.toml of its own" in out, (args, out)
+    code, out = _provenance("status", cwd=lind / "claims")
+    assert code == 1 and f"{lind} is a subject of the project in {outer}" in out, out
+    assert not (tmp_path / "elsewhere").exists()
+
+
+def test_a_subject_that_is_a_symlink_finds_the_project_it_is_declared_in(tmp_path, quiet):
+    """The walk follows the path as given: the subject's real directory, on another disk, has
+    no project above it."""
+    root = write_project(tmp_path / "data", subjects=["ng"])
+    real = tmp_path / "other-disk" / "ng"
+    (real / "claims").mkdir(parents=True)
+    (root / "ng").symlink_to(real)
+    assert project.find(root / "ng") == root
+    p, run = project.resolve(root / "ng", None)
+    assert p.root == root.resolve() and run == root / "ng"
+    assert cli._cache_root(root / "ng", None) == root.resolve()
+    # Named by its real directory, it is outside its project: refused, never mistaken. (Here the
+    # project it is found in is tmp_path's, which does not declare it.)
+    with pytest.raises(project.ProjectError, match="is neither the root of the project"):
+        project.resolve(real, None)
+
+
+def test_the_root_run_is_named_when_defaulted_from_inside_a_subject(tmp_path, monkeypatch):
+    """With no --data the run is the project root, wherever the working directory is. From
+    inside a subject that is easy to mistake for the subject's, so a command working on the
+    run says which it is, once, and how to name the subject's."""
+    monkeypatch.setattr(cli, "_noted_defaults", set())
+    root = write_project(tmp_path / "data", subjects=["lind"])
+    (root / "claims").mkdir()
+    (root / "lind" / "claims").mkdir(parents=True)
+    code, out = _provenance("status", cwd=root / "lind" / "claims")
+    assert code == 0, out
+    assert (f"this is the project root's run, not lind's, though the working directory is "
+            f"inside {(root / 'lind').resolve()}: pass --data") in out, out
+    code, out = _provenance("status", cwd=root)
+    assert "project root's run, not" not in out, out
+    code, out = _provenance("status", "--data", "lind", cwd=root)
+    assert "project root's run, not" not in out, out
+
+
 def test_a_subject_scaffolded_before_its_template_shares_the_projects_cache(tmp_path):
     """With no question set in the parent, inference read a candidate's directory as a root of
     its own, with its own cache. The cache is the project's whatever question sets exist, and
