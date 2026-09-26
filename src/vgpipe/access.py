@@ -300,7 +300,7 @@ class SourceAccess:
 def _norm_host(host_or_url: str) -> str:
     h = host_or_url.strip()
     if "://" in h:
-        h = urlsplit(h).hostname or h
+        h = _split(h, "the host").hostname or h
     h = h.lower()
     return h[4:] if h.startswith("www.") else h
 
@@ -331,6 +331,9 @@ def find(host_or_url: str, registry: Path | None = None) -> SourceAccess | None:
     return None
 
 
+_MANUAL_RECIPE = "record it as access: manual instead"
+
+
 def run(recipe: Recipe, params: dict[str, str], *, timeout: float = 45.0) -> httpx.Response:
     """Execute a recipe. Credential headers and parameters are refused, not stripped: a
     recipe that needs one is describing a manual retrieval and should be recorded as such."""
@@ -339,16 +342,16 @@ def run(recipe: Recipe, params: dict[str, str], *, timeout: float = 45.0) -> htt
         try:
             return check(*args)
         except ValueError as e:
-            raise ValueError(f"recipe {recipe.id!r}: {e}") from None
+            raise ValueError(f"recipe {recipe.id!r}: {e}; {_MANUAL_RECIPE}") from None
 
     bad = sorted(k for k in recipe.headers if credential_header(k))
     if bad:
         raise ValueError(f"recipe {recipe.id!r} carries credential headers ({', '.join(bad)}); "
-                         "record it as access: manual instead")
+                         f"{_MANUAL_RECIPE}")
     if any(checked(_has_login, v, f"its {k.lower()} header's URL")
            for k, v in recipe.headers.items() if k.lower() in _URL_HEADERS):
         raise ValueError(f"recipe {recipe.id!r} puts a username or password in a header's URL; "
-                         "record it as access: manual instead")
+                         f"{_MANUAL_RECIPE}")
     missing = [p for p in recipe.params if p not in params]
     if missing:
         raise ValueError(f"recipe {recipe.id!r} needs {', '.join(missing)}")
@@ -363,17 +366,23 @@ def run(recipe: Recipe, params: dict[str, str], *, timeout: float = 45.0) -> htt
     # Checked after filling: a param can land in the host part too.
     if checked(_has_login, url, "its URL"):
         raise ValueError(f"recipe {recipe.id!r} puts a username or password in its URL; "
-                         "record it as access: manual instead")
+                         f"{_MANUAL_RECIPE}")
     body = fill(recipe.body) if recipe.body else None
     # Also checked after filling, since a param can hold a whole `name=value` pair.
     found = checked(_credential_params, url, recipe.headers, body)
     if found:
         raise ValueError(f"recipe {recipe.id!r} carries what look like credentials in "
-                         f"{'; '.join(found)}; record it as access: manual instead")
+                         f"{'; '.join(found)}; {_MANUAL_RECIPE}")
     headers = {"user-agent": "Mozilla/5.0", **recipe.headers}
-    return httpx.request(recipe.method.upper(), url, timeout=timeout, follow_redirects=True,
-                         headers=headers,
-                         content=body.encode() if body else None)
+    try:
+        return httpx.request(recipe.method.upper(), url, timeout=timeout, follow_redirects=True,
+                             headers=headers,
+                             content=body.encode() if body else None)
+    except httpx.InvalidURL:
+        # httpx reads the URL again, and its error quotes the part it can't read: a password
+        # written with `%40` for its `@` is a port to it, and `Invalid port: '...'` printed it.
+        raise ValueError(f"recipe {recipe.id!r}: its URL can't be sent as it is; "
+                         f"{_MANUAL_RECIPE}") from None
 
 
 # curl's options, by what an import does with them. Every option's arity has to be known: one
