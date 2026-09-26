@@ -2687,15 +2687,19 @@ def _install(path: Path, body: str) -> None:
     A filesystem with no hard links (some removable and network disks) has no primitive that is
     both exclusive and whole, so there `path` is created exclusively and written in place, and
     removed again if the write fails. Only a run killed mid-write can leave it partial there, and
-    a partial project file is refused, as unreadable, by every command that reads it."""
+    a partial project file is refused, as unreadable, by every command that reads it.
+
+    Written as bytes, UTF-8, with no newline translation: a template is copied as it was given,
+    so a retry compares it equal, and a CRLF template stays one."""
     import errno
     import os
     import tempfile
 
+    data = body.encode("utf-8")
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(body)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
             f.flush()
             os.fsync(f.fileno())
         try:
@@ -2703,13 +2707,17 @@ def _install(path: Path, body: str) -> None:
         except OSError as e:
             if e.errno not in (errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EXDEV):
                 raise
-            with open(path, "x", encoding="utf-8") as f:
+            with open(path, "xb") as f:
                 try:
-                    f.write(body)
+                    f.write(data)
                     f.flush()
                     os.fsync(f.fileno())
                 except BaseException:
-                    os.unlink(path)
+                    # A failed cleanup must not replace the error that caused it.
+                    try:
+                        os.unlink(path)
+                    except OSError:
+                        pass
                     raise
     finally:
         try:
@@ -2857,7 +2865,9 @@ def new(directory: Annotated[Path, typer.Argument(
         _refuse(f"{root} has no name to give the project: pass --name")
     setting = _cache_setting(cache, ".", root)
     try:
-        template = from_.read_text(encoding="utf-8")
+        # Decoded from its bytes, not read as text, which folds CRLF into LF: the copy would
+        # then differ from --from, and a retry would refuse it as not the template given.
+        template = from_.read_bytes().decode("utf-8")
     except (OSError, UnicodeDecodeError) as e:
         _refuse(f"--from {from_} can't be read as a template: {e}")
     if not template.strip():
