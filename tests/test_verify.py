@@ -17,7 +17,7 @@ from provenance.normalize import normalize
 from provenance.sources import load_rules
 from provenance.verify import check_corroboration, revalidate_from_cache, verify_source
 
-# Pin the source lists so these tests don't depend on which races/ files exist.
+# Pin the source lists so these tests don't depend on which project names them.
 RULES = load_rules(("us", "ca"))
 
 PAGE_TEXT = (
@@ -113,7 +113,7 @@ def test_ballotpedia_is_lead_generator_only(tmp_path):
 
 
 def test_campaign_site_only_for_campaign_says_claims(tmp_path):
-    # campaign domains belong to a race, so the shipped lists name none: this test lists its own
+    # campaign domains belong to a project, so the shipped lists name none: this test lists its own
     rules = {**RULES, "campaign_statement_only": ("votedanako.example",)}
     bad = verify_source(src(url="https://votedanako.example/issues", publisher="Ko campaign"), tmp_path, rules=rules)
     assert bad.verification.status == "bad_source_class"
@@ -293,10 +293,10 @@ def test_context_window_keeps_left_context():
     assert not excerpt.startswith(" ")
 
 
-# --- races and source lists --------------------------------------------------------
+# --- projects and source lists -----------------------------------------------------
 
 
-def test_source_lists_merge_per_race():
+def test_source_lists_merge_per_project():
     from provenance.sources import classify
 
     us = load_rules(("us",))
@@ -308,22 +308,12 @@ def test_source_lists_merge_per_race():
     assert classify("https://ballotpedia.org/x", both) == "lead_generator_only"
 
 
-def test_race_file_declares_title_and_leaves_sources_to_the_project(tmp_path):
-    from conftest import FIXTURE_RACE
+def test_the_project_file_declares_title_and_context(tmp_path):
+    from provenance import project
 
-    from provenance.races import load
-
-    r = load(FIXTURE_RACE)
-    assert r.title and "County Assessor" in r.title
-    assert "Avery Lind" in r.context, "race context feeds researcher prompts verbatim"
-
-    # Its source lists are the project's now. One the race still names is refused, never
-    # ignored: a project listing `us` alone beside a race listing `us, ca` would drop the
-    # California lists without a word.
-    stale = tmp_path / "stale.md"
-    stale.write_text("---\nname: stale\nsources: [us, ca]\n---\n")
-    with pytest.raises(ValueError, match="list them under `sources` in its provenance.toml"):
-        load(stale)
+    p = project.load(tmp_path)
+    assert p.title and "County Assessor" in p.title
+    assert "Avery Lind" in p.context, "the context feeds researcher prompts verbatim"
 
 
 def test_question_id_cannot_escape_the_claims_directory(tmp_path):
@@ -403,21 +393,27 @@ def test_paywalled_source_is_verified_against_its_snapshot(stub, tmp_path):
 
 
 def test_review_progress_key_survives_question_set_changes(tmp_path):
-    """Checkbox state is keyed by the race, not by the question set. Questions get added,
-    split, and dropped constantly during a run; re-keying would silently wipe a review
-    already in progress — the one moment losing it is most expensive."""
+    """Checkbox state is keyed by the project and subject, not by the question set. Questions
+    get added, split, and dropped constantly during a run; re-keying would silently wipe a
+    review already in progress — the one moment losing it is most expensive."""
     import re as _re
 
-    from provenance.report import render
+    from provenance.report import render, store_id
 
-    def key_for(claims):
-        html, _ = render(claims, tmp_path, title="2030 Example County Assessor")
-        return _re.search(r'const KEY = "([^"]+)"', html.read_text()).group(1)
+    def keys_for(claims, subject="lind"):
+        html, _ = render(claims, tmp_path, title="2030 Example County Assessor",
+                         store=store_id("example", subject))
+        text = html.read_text()
+        return (_re.search(r'const STORE = "([^"]+)"', text).group(1),
+                _re.search(r'const KEY = "([^"]+)"', text).group(1))
 
     one = [Claim(question_id="q1", question="?", answer="a")]
     two = one + [Claim(question_id="q2", question="?", answer="b")]
-    assert key_for(one) == key_for(two)
-    assert key_for(one) == "vgpipe:2030-example-county-assessor"
+    assert keys_for(one) == keys_for(two)
+    assert keys_for(one)[0] == f"provenance:{store_id('example', 'lind')}:v3"
+    assert keys_for(one)[0] != keys_for(one, "ng")[0], "two subjects, two stores"
+    # Progress saved before it was kept per subject sits under the title, as it always did.
+    assert keys_for(one)[1] == "vgpipe:2030-example-county-assessor"
 
 
 def test_source_ids_are_stable_and_snippet_specific():
@@ -936,32 +932,29 @@ def test_saved_snapshot_url_satisfies_the_model():
            author="A", source_type="bylined_journalism", snippet="a snippet here")
 
 
-def test_completeness_check_never_reaches_a_researcher_prompt():
-    """race.context is pasted verbatim into researcher prompts. A researcher told what it
-    is looking for confirms that item instead of searching, and anything not on the list
-    never surfaces — so known claims live in a section the loader keeps out of context."""
-    from conftest import FIXTURE_RACE
+def test_completeness_check_never_reaches_a_researcher_prompt(tmp_path):
+    """The project's context is pasted verbatim into researcher prompts. A researcher told what
+    it is looking for confirms that item instead of searching, and anything not on the list
+    never surfaces — so known claims live in a key the brief never reads."""
+    from provenance import cli, project
 
-    from provenance.races import load
-
-    r = load(FIXTURE_RACE)
-    assert "Doe settlement" in r.completeness_check
-    assert "Doe settlement" not in r.context
-    assert "parcel tax" not in r.context
+    p = project.load(tmp_path)
+    brief = cli.researcher_brief(p, None)
+    assert "Doe settlement" in p.completeness_check
+    assert "Doe settlement" not in brief and "Doe settlement" not in p.context
+    assert "parcel tax" not in brief
     # the context keeps what helps find records, not what suggests conclusions
-    assert "Avery Lind" in r.context and "appeals board" in r.context and "registrar" in r.context
+    assert "Avery Lind" in brief and "appeals board" in brief and "registrar" in brief
 
 
-def test_prompt_context_carries_no_uncited_factual_claims():
+def test_prompt_context_carries_no_uncited_factual_claims(tmp_path):
     """Context is unverified by construction — no snippet, no source, no `provenance verify` — so a
     factual claim placed there is believed by every researcher and checked by none."""
-    from conftest import FIXTURE_RACE
+    from provenance import cli, project
 
-    from provenance.races import load
-
-    ctx = load(FIXTURE_RACE).context
+    brief = cli.researcher_brief(project.load(tmp_path), None)
     for smuggled in ("58.3", "41.7", "Pike", "Marlowe", "re-registered"):
-        assert smuggled not in ctx, f"unverified fact in researcher-facing context: {smuggled}"
+        assert smuggled not in brief, f"unverified fact in researcher-facing context: {smuggled}"
 
 
 def test_check_claim_gate_rejects_a_one_word_snippet(tmp_path, monkeypatch):
@@ -986,28 +979,28 @@ def test_check_claim_gate_rejects_a_one_word_snippet(tmp_path, monkeypatch):
     assert exc.value.exit_code == 1
 
 
-def test_new_candidate_retargets_the_question_set(tmp_path):
-    """Separate run per candidate: each gets its own claims, retries and review progress.
-    The question set is retargeted rather than leaving the researcher to infer who
-    'the candidate' is."""
+def test_new_subject_retargets_the_question_set(tmp_path):
+    """Separate run per subject: each gets its own claims, retries and review progress.
+    The question set is retargeted rather than leaving the researcher to infer which subject
+    it is about."""
     import json
 
     from provenance import cli
 
-    write_project(tmp_path, subjects=["ng"])
+    write_project(tmp_path, subjects=["lind", "ng"])   # retargeted from the others' names
     (tmp_path / "questions.json").write_text(json.dumps([
         {"id": "q1", "text": "What did Avery Lind say about housing?", "claim_type": "mechanical"}]))
-    cli.new_candidate("ng", data=tmp_path)
+    cli.new_subject("ng", data=tmp_path)
 
     out = json.loads((tmp_path / "ng" / "questions.json").read_text())
     assert out[0]["text"] == "What did Jordan Ng say about housing?"
     assert out[0]["subject"] == "ng"
     assert (tmp_path / "ng" / "claims").is_dir()
-    # the page cache is shared, not per candidate: the project's, where it names it
+    # the page cache is shared, not per subject: the project's, where it names it
     assert not (tmp_path / "ng" / "cache").exists()
 
 
-def test_new_candidate_starts_a_run_with_no_migration_pending(tmp_path):
+def test_new_subject_starts_a_run_with_no_migration_pending(tmp_path):
     """A template can still carry maps_from and mapped_from, left by the retired `vg remap`.
     They are another run's history, and a new run has no earlier id space, so it copies
     neither."""
@@ -1021,7 +1014,7 @@ def test_new_candidate_starts_a_run_with_no_migration_pending(tmp_path):
         {"id": "q2", "text": "donations", "claim_type": "mechanical", "mapped_from": "q1"},
         {"id": "q3", "text": "donors", "claim_type": "mechanical", "maps_from": "q1",
          "mapped_from": "q3"}]))
-    cli.new_candidate("ng", data=tmp_path)
+    cli.new_subject("ng", data=tmp_path)
     run = tmp_path / "ng"
     out = json.loads((run / "questions.json").read_text())
     assert [q["id"] for q in out] == ["q1", "q2", "q3"]
@@ -3504,20 +3497,19 @@ def test_an_archive_row_says_how_its_snapshot_matched(tmp_path, monkeypatch):
     assert "matched only after normalizing" in v.reason
 
 
-def test_status_does_not_need_a_race_to_summarize(tmp_path, capsys):
+def test_status_reads_the_projects_source_lists(tmp_path, capsys):
     """`provenance status` is a read-only summary, and its source lists are the project's, as
-    build's are. It used to read them from the race, and fall back to `us` alone where the race
+    build's are. It used to read them from a race file, and fall back to `us` alone where that
     could not be loaded, which could pass rows build rejects."""
     from provenance import cli
 
-    write_project(tmp_path, race=tmp_path / "no-such-race.md")
     claims_dir = tmp_path / "claims"
     claims_dir.mkdir()
     (claims_dir / "q1.json").write_text(Claim(
         question_id="q1", question="?", answer="a", sources=[src()]).model_dump_json())
     cli.status(data=tmp_path)
     out = capsys.readouterr().out
-    assert "q1" in out and "race" not in out, out
+    assert "q1" in out, out
 
 
 def test_a_reproduced_query_does_not_carry_the_claim_files_evidence(tmp_path, monkeypatch):
@@ -3983,8 +3975,8 @@ def test_a_broken_absence_claim_is_not_listed_as_deliberate(tmp_path):
 
 
 def _candidate_run(tmp_path):
-    """A per-candidate run as `provenance new-candidate` lays it out: claims and verdicts under
-    data/<candidate>, the page cache shared at data/cache. One cited page, cached and verified
+    """A per-subject run as `provenance new-subject` lays it out: claims and verdicts under
+    data/<subject>, the page cache shared at data/cache. One cited page, cached and verified
     before judging — `provenance judgments` only gates on sources with confirmed context."""
     from datetime import timedelta
 
@@ -4000,7 +3992,7 @@ def _candidate_run(tmp_path):
         _page(fetched_at=datetime.now(UTC) - timedelta(hours=6),
               extractor_version=EXTRACTOR_VERSION).model_dump_json())
     (cand / "claims").mkdir(parents=True)
-    # The question the claim answers, in the template and in the candidate's own copy: `provenance
+    # The question the claim answers, in the template and in the subject's own copy: `provenance
     # build` and `provenance status` check claims against the run's.
     for run in (data, cand):
         (run / "questions.json").write_text(json.dumps([{"id": "q1", "text": "?"}]))
@@ -4039,8 +4031,8 @@ def _refetch_shared(data, s):
 
 def test_a_candidate_run_checks_staleness_in_the_shared_cache(tmp_path):
     """`provenance judge` stamps a verdict from the shared page cache, but the check looked the page up
-    under the candidate dir (data/<candidate>/cache), where it normally isn't — and a missing page
-    reads as "not stale". So in every per-candidate run a re-fetch into the shared cache left
+    under the subject's dir (data/<subject>/cache), where it normally isn't — and a missing page
+    reads as "not stale". So in every per-subject run a re-fetch into the shared cache left
     every verdict applied: a `supports` could outlive the text it judged, and nothing said so."""
     import json
 
@@ -4080,11 +4072,11 @@ def test_a_candidate_run_checks_staleness_in_the_shared_cache(tmp_path):
 def test_every_command_reads_verdict_pages_from_the_shared_cache_and_creates_none(
         tmp_path, monkeypatch):
     """Every command that stamps or checks a verdict must look in the shared cache — a
-    candidate's own dir is where the page isn't, and a missing page reads as fresh.
+    subject's own dir is where the page isn't, and a missing page reads as fresh.
 
     And the lookup must not create what it looks for. It went through cache_dir(), which
     mkdirs, so the first check created data/<cand>/cache/pages; `_cache_root()` then preferred
-    it, and the check itself forked the candidate off the shared cache it was meant to read."""
+    it, and the check itself forked the subject off the shared cache it was meant to read."""
     from typer.testing import CliRunner
 
     from provenance import cli, judgments

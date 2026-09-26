@@ -17,13 +17,14 @@ import pytest
 from selectolax.parser import HTMLParser
 
 from provenance.models import Claim, QueryCitation, QueryRun, Source
-from provenance.report import render, review_fingerprint
+from provenance.report import render, review_fingerprint, store_id
 
 HARNESS = Path(__file__).parent / "review_app_harness.js"
 NODE = shutil.which("node")
-LEGACY = "vgpipe:t"          # what earlier versions of the page saved, per source
-V2 = "vgpipe:t:v2"          # what the page saved before a claim's notes were hashed
-STORE = "vgpipe:t:v3"
+LEGACY = "vgpipe:t"          # what earlier versions of the page saved, per source, by title
+V2 = "vgpipe:t:v2"          # what the page saved before a claim's notes were hashed, by title
+V3 = "vgpipe:t:v3"          # this version's progress, as saved by title before subjects
+STORE = f"provenance:{store_id('', None)}:v3"   # render()'s own when no store is given
 
 CONTEXT = "At its March meeting the council approved the levy by a vote of four to one."
 SNIPPET = "the council approved the levy"
@@ -55,7 +56,7 @@ def _tree(node) -> dict:
 
 
 def run(tmp_path: Path, claims: list[Claim], *, storage: dict | None = None,
-        actions: list | None = None) -> dict:
+        actions: list | None = None, store: str | None = None, title: str = "T") -> dict:
     """Render `claims`, load the page with `storage` as its localStorage, perform `actions`,
     and return what the page shows and stores."""
     # Only the tests that run the page need node, so the fingerprint tests run anywhere. And CI
@@ -64,7 +65,7 @@ def run(tmp_path: Path, claims: list[Claim], *, storage: dict | None = None,
         pytest.fail("node is not installed, and CI must run the review app tests")
     if not NODE:
         pytest.skip("the review app tests run its script under node")
-    page = HTMLParser(render(claims, tmp_path, title="T")[0].read_text())
+    page = HTMLParser(render(claims, tmp_path, title=title, store=store)[0].read_text())
     payload = {"tree": _tree(page.body), "script": page.css_first("script").text(),
                "storage": storage or {}, "actions": actions or []}
     out = subprocess.run([NODE, str(HARNESS)], input=json.dumps(payload),
@@ -340,6 +341,50 @@ def test_per_source_progress_is_not_spread_to_every_question(tmp_path):
     imported = run(tmp_path, claims, actions=[{"do": "import", "text": legacy}])
     assert not any(r["checked"] for r in imported["rows"])
     assert "cleared: 1 on sources cited here" in imported["notice"]
+
+
+def test_two_subjects_never_share_review_progress(tmp_path):
+    """Progress is kept per project and subject. Keyed by the page's title, two subjects whose
+    pages read alike (or were built with one --title) showed each other's checks, and so would
+    two versions of an amended proposal, which are two subjects. Nor does a --title move it."""
+    c = claim("q1", "The council approved the levy.")
+    key = f"q1/{c.sources[0].sid}"
+    first = store_id("levy study", "measure-a")
+    ticked = run(tmp_path, [c], store=first, actions=[{"do": "tick", "row": key, "checked": True}])
+    assert rows(ticked)[key]["checked"]
+    for other in (store_id("levy study", "measure-a-2"), store_id("levy study", None),
+                  store_id("another study", "measure-a")):
+        assert not rows(run(tmp_path, [c], store=other, storage=ticked["storage"]))[key]["checked"]
+    retitled = run(tmp_path, [c], store=first, storage=ticked["storage"], title="Renamed")
+    assert rows(retitled)[key]["checked"], "the title is display, not the key"
+    # The parts are hashed as a list, so no separator in a name can make two keys one.
+    assert store_id("a b", "c") != store_id("a", "b c") and len(first) == 16
+
+
+def test_progress_saved_by_title_is_read_once_under_the_subjects_key(tmp_path):
+    """Before progress was kept per subject it was kept by the page's title. The page reads that
+    once, where the run has no progress of its own yet, and saves it under its own key at once,
+    so a later title-keyed save (another subject's page of the same title) never reaches it."""
+    c = claim("q1", "The council approved the levy.")
+    key = f"q1/{c.sources[0].sid}"
+    ticked = run(tmp_path, [c], actions=[{"do": "tick", "row": key, "checked": True}])
+    titled = ticked["storage"][STORE]
+    store = store_id("levy study", "measure-a")
+    own = f"provenance:{store}:v3"
+
+    adopted = run(tmp_path, [c], store=store, storage={V3: titled})
+    assert rows(adopted)[key]["checked"] and adopted["notice"] == ""
+    assert adopted["storage"][own] == titled, "saved under its own key on the first load"
+    assert adopted["storage"][V3] == titled, "the old progress is read, never rewritten"
+
+    cleared = dict(adopted["storage"], **{V3: json.dumps({"v": 3, "checked": {}})})
+    assert rows(run(tmp_path, [c], store=store, storage=cleared))[key]["checked"], \
+        "once it has its own, the title-keyed progress is never read again"
+
+    # Unreadable, it is kept aside as unreadable progress of its own is, never read as empty.
+    broken = run(tmp_path, [c], store=store, storage={V3: '{"v": 3, "checked": {'})
+    assert "could not be read" in broken["notice"]
+    assert broken["storage"][own + ":unreadable"] == '{"v": 3, "checked": {'
 
 
 def test_unreadable_progress_is_kept_and_not_replaced_by_older(tmp_path):

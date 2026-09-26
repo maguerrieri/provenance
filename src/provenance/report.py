@@ -29,6 +29,18 @@ TEMPLATES = Path(files(__package__) / "templates")
 REVIEW_HTML, CLAIMS_JSON = "review.html", "claims.json"
 
 
+def store_id(project: str, subject: str | None) -> str:
+    """Which saved progress a run's review page reads: one per project and subject.
+
+    By the project's name and the subject's id, never by the page's title. The title is display:
+    a --title, or two subjects whose names read alike, would split one review's progress or share
+    it between two. Two versions of an amended proposal are two subjects, so they never share,
+    and nor do two projects' subjects of one id. Two projects of one name do, served from one
+    origin, which the README says. Hashed, as JSON so no separator can occur in the parts: the
+    name is free text, and the id goes into the page's script as a constant of our own shape."""
+    return hashlib.sha256(json.dumps([project, subject or ""]).encode()).hexdigest()[:16]
+
+
 def _temp_for(p: Path, pid: int | str) -> Path:
     return p.with_name(f".{p.name}.{pid}.tmp")
 
@@ -38,7 +50,8 @@ def clear_render(out_dir: Path) -> None:
 
     A build that exits early writes nothing, so the last render stayed in out/ and `provenance serve`
     served it: a reviewer ticked a page the pipeline had just refused to produce. It is
-    regenerable, and the checkboxes live in the browser, keyed by title, so nothing is lost.
+    regenerable, and the checkboxes live in the browser, keyed by the project and subject
+    (`store_id()`), so nothing is lost.
     A temp file a killed build left goes too: serve lists out/, dotfiles included, and one
     can hold a whole page no build finished.
     """
@@ -159,13 +172,14 @@ def query_provenance(claim_source) -> str:
     return " · ".join(parts)
 
 
-def render(claims: list[Claim], out_dir: Path, *, title: str = "voter guide",
+def render(claims: list[Claim], out_dir: Path, *, title: str = "citation review",
            cache_root: Path | None = None,
-           rules: dict[str, tuple[str, ...]] | None = None) -> tuple[Path, Path]:
+           rules: dict[str, tuple[str, ...]] | None = None,
+           store: str | None = None) -> tuple[Path, Path]:
     """`cache_root` is the root this build resolved: the `--cache` for a query row that carries
     no stamp of its own (one build did not re-run, whose file stamp revalidation dropped).
     `rules` are the project's source lists, which the "copy, not the issuing authority" badge
-    is decided by, as `provenance check-claim` decides it."""
+    is decided by, as `provenance check-claim` decides it. `store` is the run's `store_id()`."""
     from .cli import qid_sort_key
 
     claims = sorted(claims, key=lambda c: qid_sort_key(c.question_id))
@@ -215,17 +229,21 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "voter guide",
         for c in claims
     ]
 
-    # Keyed by the race, NOT by a hash of the question set. Checks carry stable fingerprints
-    # (review_fingerprint) and flags stable source ids, so keying storage by the question set
-    # would silently discard every checkbox the moment a question is added, split, or dropped
-    # — which happens constantly during a research run, and mid-review is exactly when losing
-    # it hurts. A row whose claim or evidence changed loses only its own check.
-    store_key = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "voter-guide"
+    # Keyed by the project and subject (store_id), NOT by a hash of the question set. Checks
+    # carry stable fingerprints (review_fingerprint) and flags stable source ids, so keying
+    # storage by the question set would silently discard every checkbox the moment a question
+    # is added, split, or dropped — which happens constantly during a research run, and
+    # mid-review is exactly when losing it hurts. A row whose claim or evidence changed loses
+    # only its own check. Progress saved before that was keyed by the title, as `titled` is
+    # worked out here, exactly as it was (the fallback included): the page reads it once,
+    # where the run has none of its own yet.
+    titled = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "voter-guide"
 
     html = tpl.render(
         claims=view,
         title=title,
-        run_id=store_key,
+        run_id=titled,
+        store_id=store if store is not None else store_id("", None),
         row_key_re=ROW_KEY_RE,
         generated=datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC"),
         n_sources=sum(len(c.sources) for c in claims),

@@ -1,6 +1,6 @@
 """The CLI prints through rich, which reads "[...]" in a printed string as markup. Much of what
 it prints is text the pipeline does not control: agent-written claims and verdict notes, pages
-and responses it fetched, filer names from the CAL-ACCESS export, race and registry files, the
+and responses it fetched, filer names from the CAL-ACCESS export, project and registry files, the
 arguments an agent passed, and exception text quoting any of those.
 
 Unescaped, a "[/]" in any of it raised rich.errors.MarkupError, so the command died with a
@@ -59,7 +59,7 @@ def _source(**kw) -> Source:
 
 
 def _run(tmp_path, s: Source):
-    """A candidate run as `provenance new-candidate` lays it out, with one cited page cached and
+    """A subject's run as `provenance new-subject` lays it out, with one cited page cached and
     verified, so `provenance judge` accepts a verdict on it and `provenance judgments` lists it."""
     from provenance.fetch import cache_path
     from provenance.models import EXTRACTOR_VERSION
@@ -433,13 +433,13 @@ def test_a_tag_split_across_two_values_prints_as_written(tmp_path, monkeypatch):
     assert code == 0 and "committee page: no capture [/ live URL: " in out, out
     assert calaccess.committee_url("x]") in out
 
-    # A race that still names source lists is refused, quoting its path and the lists.
-    race = tmp_path / "[b" / "split.md"
-    race.parent.mkdir()
-    race.write_text('---\nname: split\ntitle: "[b"\nsources: ["x]"]\n---\n')
-    write_project(tmp_path, race=race)
-    code, out = _provenance("build", "--data", tmp_path)
-    assert code == 1 and f"{race} names source lists (sources: ['x]'])" in out, out
+    # A project file refused for a subject with no name quotes its path and the subject.
+    split = write_project(tmp_path / "[b")
+    toml = split / "provenance.toml"
+    toml.write_text(toml.read_text().replace("subjects = []", 'subjects = ["x]"]'))
+    code, out = _provenance("build", "--data", split)
+    assert code == 1, out
+    assert f"{toml} can't be read as a project: subject 'x]' needs a name" in out, out
 
 
 def test_a_path_beside_another_value_prints_as_written(tmp_path, monkeypatch):
@@ -509,7 +509,7 @@ def test_a_lone_surrogate_in_cache_is_named_as_an_escape(tmp_path, monkeypatch):
     assert code == 1 and "--cache x\\udcff is a cache directory itself" in out, out
 
 
-# --- paths, race files and exception text elsewhere ------------------------------------------
+# --- paths, project files and exception text elsewhere ---------------------------------------
 
 
 def test_check_claim_names_an_unreadable_file_as_given(tmp_path):
@@ -555,29 +555,19 @@ def test_status_prints_a_project_error_as_written(tmp_path):
     assert code == 1 and f"unknown key(s) {MARK!r}" in out, out
 
 
-@pytest.fixture
-def marked_race(tmp_path):
-    race = tmp_path / "races" / "marked.md"
-    race.parent.mkdir()
-    race.write_text(
-        "---\n"
-        "name: marked\n"
-        f'title: "{MARK} Assessor"\n'
-        "candidates:\n"
-        '  - {id: pd, name: "[b]Pat Doe"}\n'
-        "---\n\nA fictional race.\n")
-    return race
-
-
-def test_new_candidate_prints_the_candidate_and_its_paths_as_written(tmp_path, marked_race):
-    data = write_project(tmp_path / "[b]data", subjects=["pd"], race=marked_race)
+def test_new_subject_prints_the_subject_and_its_paths_as_written(tmp_path):
+    data = write_project(tmp_path / "[b]data", title=f"{MARK} Assessor",
+                         subjects=[{"id": "pd", "name": "[b]Pat Doe"}])
     (data / "questions.json").write_text(json.dumps([{"id": "q1", "text": "What has he said?"}]))
-    code, out = _provenance("new-candidate", "pd", "--data", data)
+    code, out = _provenance("new-subject", "pd", "--data", data)
     assert code == 0, out
     assert f"wrote {data}/pd/questions.json (1 questions retargeted to [b]Pat Doe)" in out
     assert f"ready {data}/pd" in out, out
     # quoted for the shell it is pasted into: "[" is a glob to it
-    assert f"provenance build --data '{data}/pd' --candidate pd" in out, out
+    assert f"provenance build --subject pd --project '{data.resolve()}'" in out, out
 
-    code, out = _provenance("new-candidate", "pd", "--data", data)
+    code, out = _provenance("new-subject", "pd", "--data", data)
     assert code == 0 and f"{data}/pd/questions.json already exists" in out, out
+
+    code, out = _provenance("brief", "--subject", "pd", "--project", data)
+    assert code == 0 and f"Project: {MARK} Assessor Subject: [b]Pat Doe" in out, out

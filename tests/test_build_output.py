@@ -74,17 +74,12 @@ def _unreadable_archives(run):
     (run / "archives.json").write_text("[]")
 
 
-def _missing_race(run):
-    write_project(run, race=run / "no-such-race.md")
-
-
 REFUSALS = {
     "question set unreadable": ((), _unreadable_questions),
     "claim file unreadable": ((), _unreadable_claim),
     "verdict shard unreadable": ((), _unreadable_verdicts),
     "archive records unreadable": ((), _unreadable_archives),
     "cache root with no cache": (("--cache", "{tmp}"), None),
-    "race file missing": ((), _missing_race),
 }
 
 

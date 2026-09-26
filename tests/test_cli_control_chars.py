@@ -404,7 +404,7 @@ def test_source_import_curl_and_source_note_print_through_printable(tmp_path, re
 
 
 def _run(tmp_path, s: Source):
-    """A candidate run, as `provenance new-candidate` lays it out, with its one page cached and
+    """A subject's run, as `provenance new-subject` lays it out, with its one page cached and
     verified, so `provenance judge` accepts a verdict on it."""
     data, cand = write_project(tmp_path / "data", subjects=["cand"]), tmp_path / "data" / "cand"
     _cache_page(data, s.url)
@@ -467,21 +467,23 @@ def test_a_claim_that_does_not_parse_is_skipped_with_its_error_through_printable
     assert code == 0 and "skipping q1 in q1.json" in out, out
 
 
-def test_race_and_candidate_names_print_through_printable(tmp_path):
-    race = tmp_path / "races" / "ctrl.md"
-    race.parent.mkdir()
-    race.write_text(
-        '---\nname: ctrl\ntitle: "Assessor\\e[2K"\n'
-        'candidates:\n  - {id: pd, name: "Pat Doe\\u202e"}\n---\n\nA fictional race.\n')
-    data = write_project(tmp_path / "data", subjects=["pd"], race=race)
+def test_project_and_subject_names_print_through_printable(tmp_path):
+    data = write_project(tmp_path / "data", title="Assessor\x1b[2K",
+                         subjects=[{"id": "pd", "name": "Pat Doe\u202e"}],
+                         context="Where records are\x1b[2K kept.\n")
     (data / "questions.json").write_text(json.dumps([{"id": "q1", "text": "What?"}]))
-    code, out = _provenance("new-candidate", "pd", "--data", data)
+    code, out = _provenance("new-subject", "pd", "--data", data)
     assert code == 0 and "retargeted to Pat Doe\\u202e)" in out, out
+    code, out = _provenance("brief", "--data", data / "pd")
+    assert code == 0 and "Project: Assessor\\x1b[2K" in out and "Pat Doe\\u202e" in out, out
+    assert "records are\\x1b[2K kept" in out, out
 
-    # A race that still names source lists is refused, quoting what it names.
-    race.write_text('---\nname: ctrl\nsources: ["us\\e[2K"]\n---\n')
+    # A project file refused for a subject with no name quotes the subject it names.
+    toml = data / "provenance.toml"
+    toml.write_text(re.sub(r"(?m)^subjects = .*$", lambda _: 'subjects = ["us\\u001b[2K"]',
+                           toml.read_text()))
     code, out = _provenance("build", "--data", data)
-    assert code == 1 and "(sources: ['us\\x1b[2K'])" in out, out
+    assert code == 1 and "subject 'us\\x1b[2K' needs a name" in out, out
 
 
 def test_a_run_directory_named_with_control_characters_prints_as_an_escape(tmp_path):

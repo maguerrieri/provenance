@@ -67,9 +67,9 @@ def cache_path(root: Path, url: str) -> Path:
 
 def load_cached(root: Path, url: str) -> PageCache | None:
     # Read-only: a lookup must not create the directory it looks in. Going through
-    # cache_path() here mkdir'd data/<candidate>/cache/pages on every staleness check, and
+    # cache_path() here mkdir'd data/<subject>/cache/pages on every staleness check, and
     # `_cache_root()` preferred a data dir's own cache/ once one existed — so merely reading
-    # forked the candidate off the shared cache.
+    # forked the subject off the shared cache.
     p = _page_file(root, url)
     if not p.exists():
         return None

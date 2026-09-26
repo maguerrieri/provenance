@@ -194,7 +194,7 @@ def test_an_unlisted_id_a_pending_maps_from_names_says_so(tmp_path):
 
 
 def test_a_subject_run_reads_its_own_question_set_and_never_the_projects(tmp_path):
-    """`provenance new-candidate` gives a subject's run its own copy, retargeted to the subject.
+    """`provenance new-subject` gives a subject's run its own copy, retargeted to the subject.
     A run without one used to read the project root's, which is worded for another subject. It
     doesn't now, and it doesn't check nothing either: with a set in the project and none of its
     own, no claim in it can be checked, and that fails like a set that can't be read."""
@@ -212,12 +212,12 @@ def test_a_subject_run_reads_its_own_question_set_and_never_the_projects(tmp_pat
         code, out = _provenance(*args)
         assert code == 1, (args, out)
         assert f"{run} is cand's run and has no questions.json of its own" in out, (args, out)
-        assert "`provenance new-candidate cand` copies the project's, retargeted to it" in out
+        assert "`provenance new-subject cand` copies the project's, retargeted to it" in out
         assert "another question than" not in out, (args, out)
     assert not (run / "out" / "review.html").exists()
 
     # With no template, another subject's set still says the project has questions, and so
-    # that this one lost its own: restore it, since new-candidate has nothing to copy.
+    # that this one lost its own: restore it, since new-subject has nothing to copy.
     (root / "questions.json").unlink()
     write_project(root, subjects=["cand", "other"])
     (root / "other").mkdir()
@@ -232,7 +232,7 @@ def test_a_subject_run_reads_its_own_question_set_and_never_the_projects(tmp_pat
 
 
 def test_an_unreadable_own_question_set_does_not_fall_back_to_the_roots(tmp_path):
-    """Falling back would check a candidate's claims against a template not retargeted to it,
+    """Falling back would check a subject's claims against a template not retargeted to it,
     or pass them against the wrong set. A dangling symlink is unreadable too, though `exists()`
     reads it as absent."""
     root = write_project(tmp_path / "data", subjects=["cand"])
@@ -376,8 +376,8 @@ def test_check_claim_finds_the_run_from_inside_claims(tmp_path, monkeypatch):
 
 
 def test_check_claim_reads_the_question_set_of_the_run_the_claim_is_in(tmp_path):
-    """A candidate run's claim is checked with --data naming the project root, whose template
-    is not retargeted to the candidate. The run is the directory holding the claim's claims/."""
+    """A subject's claim is checked with --data naming the project root, whose template
+    is not retargeted to the subject. The run is the directory holding the claim's claims/."""
     root = write_project(tmp_path / "data", subjects=["cand"])
     (root / "questions.json").write_text(json.dumps(
         [{"id": "q1", "text": "How did Alex Placeholder vote on the levy?"}]))

@@ -2,9 +2,9 @@
 
 The cache root used to be inferred from the filesystem: whether a parent directory held a
 question set, whether a cache/ existed here or there. That produced the bugs these tests pin:
-a stray cache in one candidate's directory forked the shared cache; a staleness check read the
+a stray cache in one subject's directory forked the shared cache; a staleness check read the
 wrong cache and created that stray as a side effect; and some layouts could not be told apart,
-a self-contained data root nested under another, and a candidate scaffolded before its parent
+a self-contained data root nested under another, and a subject scaffolded before its parent
 had a question set. Now every command reads the nearest provenance.toml (`project.py`), and no
 directory that happens to exist changes where anything resolves."""
 
@@ -18,7 +18,7 @@ import re
 from pathlib import Path
 
 import pytest
-from conftest import FIXTURE_RACE, write_project
+from conftest import EXAMPLE_CHECK, EXAMPLE_CONTEXT, EXAMPLE_TITLE, write_project
 from rich.console import Console
 from typer.testing import CliRunner
 
@@ -77,21 +77,31 @@ def _no_project_above(tmp_path):
 
 
 def test_a_project_file_says_everything_resolution_needs(tmp_path):
-    root = write_project(tmp_path / "p", subjects=["lind", "ng"], cache="~/research-cache",
-                         race="race.md")
+    root = write_project(tmp_path / "p", subjects=["lind", "ng"], cache="~/research-cache")
     p = project.load(root)
     assert p.root == root.resolve() and p.name == "example"
     assert p.sources == ("us", "ca")
     assert p.cache == (Path.home() / "research-cache").resolve(), "~ is the user's home"
-    assert p.subjects == ("lind", "ng")
-    assert p.race == (root / "race.md").resolve(), "relative to the file, not the cwd"
+    assert p.subjects == (project.Subject("lind", "Avery Lind"),
+                          project.Subject("ng", "Jordan Ng"))
+    assert p.subject_ids == ("lind", "ng") and p.subject("ng").name == "Jordan Ng"
+    assert p.title == EXAMPLE_TITLE
+    assert p.context == EXAMPLE_CONTEXT and p.completeness_check == EXAMPLE_CHECK
+
+    # All three are optional: a title defaults to the name, and the rest to nothing.
+    (root / "provenance.toml").write_text('name = "bare"\nsources = ["us"]\ncache = "."\n')
+    p = project.load(root)
+    assert (p.title, p.subjects, p.context, p.completeness_check) == ("bare", (), "", "")
 
 
 def test_every_problem_in_a_project_file_is_named_at_once(tmp_path):
     (tmp_path / "provenance.toml").write_text(
         'subject = ["lind"]\n'          # a typo'd key would read as no subjects
         'sources = ["us", "atlantis"]\n'
-        'subjects = ["../up", "claims", "Ng", "ng", 3]\n')
+        'subjects = "lind"\n'
+        'title = ""\n'
+        'context = 3\n'
+        'completeness_check = ["known"]\n')
     with pytest.raises(project.ProjectError) as e:
         project.load(tmp_path)
     msg = str(e.value)
@@ -99,7 +109,54 @@ def test_every_problem_in_a_project_file_is_named_at_once(tmp_path):
     assert "`name` must name the project" in msg
     assert "no such source list: 'atlantis'" in msg
     assert "`cache` must name the directory that holds the shared cache/" in msg
-    assert "`subjects` must be a list of subdirectory names" in msg
+    assert "`subjects` must be a list of {id = " in msg
+    assert "`title` must be what the review page is titled" in msg
+    assert "`context` must be text" in msg and "`completeness_check` must be text" in msg
+
+
+def test_a_subject_is_an_id_and_a_name(tmp_path):
+    """A subject's name is what the questions call it and what its review page is titled by.
+    A bare id, the form before subjects had names, is refused with the form to write: read as
+    its own name, a short id would retarget questions by a word inside other words."""
+    write_project(tmp_path)
+    toml = (tmp_path / "provenance.toml").read_text().replace(
+        "subjects = []",
+        'subjects = ["lind", 3, {id = "ng"}, {id = "a", name = "Measure A"}, '
+        '{id = "b", name = " measure a "}, {name = "No id"}, '
+        '{id = "c", name = "Measure C", version = 2}]')
+    (tmp_path / "provenance.toml").write_text(toml)
+    with pytest.raises(project.ProjectError) as e:
+        project.load(tmp_path)
+    msg = str(e.value)
+    assert ("subject 'lind' needs a name: write it as {id = \"lind\", name = \"<what the "
+            "questions call it>\"}") in msg
+    assert "subject 3 is not {id = ..., name = ...}" in msg
+    assert "subject 'ng' needs a `name`: what the questions call it" in msg
+    assert "subject 'b' has the name of subject 'a'" in msg
+    assert "needs an `id`: the name of its directory" in msg
+    assert "subject 'c' has unknown key(s) 'version' (a subject has id, name)" in msg
+
+
+def test_the_race_key_is_refused_with_where_its_content_goes(tmp_path):
+    """`race` named a race file, a bridge until its content moved into the project file.
+    Ignored, the context and completeness check would drop out without a word."""
+    write_project(tmp_path, extra='race = "race.md"\n')
+    with pytest.raises(project.ProjectError) as e:
+        project.load(tmp_path)
+    msg = str(e.value)
+    assert "`race` is retired: the race file's title, context and completeness check are keys " \
+        "of this file now (`title`, `context`, `completeness_check`)" in msg
+    assert "unknown key" not in msg, "named once, by what to do"
+
+
+@pytest.mark.parametrize("heading", ["# Completeness check", "## completeness check",
+                                     "#Completeness Check:"])
+def test_a_context_holding_the_completeness_check_is_refused(tmp_path, heading):
+    """A race file's body pasted whole into `context` would carry its completeness check, the
+    answers already known, into every researcher's prompt."""
+    write_project(tmp_path, context=f"Where records are.\n\n{heading}\n\n- A known claim.\n")
+    with pytest.raises(project.ProjectError, match="`context` holds a completeness check heading"):
+        project.load(tmp_path)
 
 
 def test_subjects_must_be_plain_distinct_directories(tmp_path):
@@ -132,7 +189,7 @@ def test_two_subjects_are_never_one_directory(tmp_path):
     (tmp_path / "alias").symlink_to(tmp_path / "lind")
     (tmp_path / "self").symlink_to(tmp_path)
     # nor a file, or a link to nothing: neither can hold a run. An absent one can, once
-    # new-candidate creates it.
+    # new-subject creates it.
     (tmp_path / "notes").write_text("")
     (tmp_path / "gone").symlink_to(tmp_path / "unmounted")
     write_project(tmp_path, subjects=["lind", "alias", "self", "notes", "gone", "ng"])
@@ -143,7 +200,7 @@ def test_two_subjects_are_never_one_directory(tmp_path):
     assert "subject 'self' is the project root itself" in msg
     assert "subject 'notes' is not a directory" in msg
     assert "subject 'gone' is not a directory" in msg
-    assert "'ng'" not in msg, "an absent directory is a subject new-candidate has yet to create"
+    assert "'ng'" not in msg, "an absent directory is a subject new-subject has yet to create"
 
 
 def test_a_cache_naming_a_cache_directory_itself_is_refused(tmp_path):
@@ -156,17 +213,16 @@ def test_a_cache_naming_a_cache_directory_itself_is_refused(tmp_path):
 
 
 def test_a_symlink_loop_is_refused_by_name_never_a_traceback(tmp_path):
-    """`Path.resolve()` raises on a symlink loop, and a project file with one in a subject, the
-    cache or the race escaped load() as a traceback. So does a --data in one."""
+    """`Path.resolve()` raises on a symlink loop, and a project file with one in a subject or
+    the cache escaped load() as a traceback. So does a --data in one."""
     (tmp_path / "a").symlink_to(tmp_path / "b")
     (tmp_path / "b").symlink_to(tmp_path / "a")
-    write_project(tmp_path, subjects=["a"], cache="b/x", race="a/race.md")
+    write_project(tmp_path, subjects=["a"], cache="b/x")
     with pytest.raises(project.ProjectError) as e:
         project.load(tmp_path)
     msg = str(e.value)
     assert "subject 'a' can't be resolved (a symlink loop)" in msg
     assert "`cache` is 'b/x', which can't be resolved (a symlink loop)" in msg
-    assert "`race` is 'a/race.md', which can't be resolved (a symlink loop)" in msg
 
     write_project(tmp_path)
     with pytest.raises(project.ProjectError, match="can't be resolved"):
@@ -177,11 +233,10 @@ def test_a_symlink_loop_is_refused_by_name_never_a_traceback(tmp_path):
 def test_a_tilde_naming_no_user_is_refused_by_key(tmp_path):
     """`expanduser()` raises for an unknown ~user, and the traceback named neither the project
     file nor the key."""
-    write_project(tmp_path, cache="~no-such-user-here/cache", race="~no-such-user-here/race.md")
+    write_project(tmp_path, cache="~no-such-user-here/cache")
     with pytest.raises(project.ProjectError) as e:
         project.load(tmp_path)
     assert "`cache` is '~no-such-user-here/cache', whose ~ names no user" in str(e.value)
-    assert "`race` is '~no-such-user-here/race.md', whose ~ names no user" in str(e.value)
 
 
 @pytest.mark.parametrize("where", ["the directory named", "its cache/", "a directory above it"])
@@ -276,7 +331,7 @@ def test_a_command_given_its_cache_needs_no_project(tmp_path):
 
 
 def test_a_stray_cache_in_a_subject_does_not_fork_the_shared_one(tmp_path, quiet):
-    """One fetch with --data data/<candidate> created data/<candidate>/cache, and under the rule
+    """One fetch with --data data/<subject> created data/<subject>/cache, and under the rule
     "the run's own cache wins if it exists" that stray WAS the cache from then on: the pages
     forked and the CAL-ACCESS database was hidden, so every query citation failed at once."""
     root = write_project(tmp_path / "data", subjects=["cand"])
@@ -472,8 +527,8 @@ def test_a_subject_that_is_a_symlink_finds_the_project_it_is_declared_in(tmp_pat
     code, _ = _provenance("status", "--data", root / "ng")
     out = " ".join(quiet.getvalue().split())   # the console is `quiet`'s here
     assert code == 1 and f"{root / 'ng'} is ng's run and has no questions.json" in out, out
-    assert "`provenance new-candidate ng` copies the project's, retargeted to it." in out, out
-    assert "ng-2030's" not in out and "new-candidate ng-2030" not in out, out
+    assert "`provenance new-subject ng` copies the project's, retargeted to it." in out, out
+    assert "ng-2030's" not in out and "new-subject ng-2030" not in out, out
 
 
 def _symlinked_subject(tmp_path) -> tuple[Path, Path]:
@@ -531,19 +586,21 @@ def test_the_root_run_is_named_when_defaulted_from_inside_a_subject(tmp_path, mo
     code, out = _provenance("status", cwd=root / "lind" / "claims")
     assert code == 0, out
     assert (f"this is the project root's run, not lind's, though the working directory is "
-            f"inside {(root / 'lind').resolve()}: pass --data") in out, out
+            f"inside {(root / 'lind').resolve()}: pass --subject lind for lind's") in out, out
     code, out = _provenance("status", cwd=root)
     assert "project root's run, not" not in out, out
     code, out = _provenance("status", "--data", "lind", cwd=root)
     assert "project root's run, not" not in out, out
+    code, out = _provenance("status", "--subject", "lind", cwd=root / "lind" / "claims")
+    assert code == 0 and "project root's run, not" not in out, out
 
 
 def test_a_subject_scaffolded_before_its_template_shares_the_projects_cache(tmp_path):
-    """With no question set in the parent, inference read a candidate's directory as a root of
+    """With no question set in the parent, inference read a subject's directory as a root of
     its own, with its own cache. The cache is the project's whatever question sets exist, and
-    new-candidate refuses to scaffold a subject with no set to give it."""
+    new-subject refuses to scaffold a subject with no set to give it."""
     root = write_project(tmp_path / "data", subjects=["ng"])
-    code, out = _provenance("new-candidate", "ng", "--data", root)
+    code, out = _provenance("new-subject", "ng", "--data", root)
     assert code == 1 and f"no question set to copy to {root.resolve() / 'ng' / 'questions.json'}" \
         in out, out
     assert not (root / "ng").exists(), "a refused scaffold writes nothing"
@@ -552,13 +609,43 @@ def test_a_subject_scaffolded_before_its_template_shares_the_projects_cache(tmp_
     assert cli._cache_root(root / "ng", None) == root.resolve()
 
 
-def test_new_candidate_refuses_a_subject_the_project_does_not_declare(tmp_path):
+def test_new_subject_refuses_a_subject_the_project_does_not_declare(tmp_path):
     """The project file says what the project is, and no command edits it."""
     root = write_project(tmp_path / "data")
     (root / "questions.json").write_text(json.dumps([{"id": "q1", "text": "?"}]))
-    code, out = _provenance("new-candidate", "ng", "--data", root)
+    code, out = _provenance("new-subject", "ng", "--data", root)
     assert code == 1 and "ng is not one of the project's subjects: add it to `subjects`" in out
+    assert '{id = "ng", name = "<what the questions call it>"}' in out, out
     assert not (root / "ng").exists()
+
+
+def test_new_candidate_is_retired_for_new_subject(tmp_path):
+    code, out = _provenance("new-candidate", "ng")
+    assert code == 1 and "`provenance new-candidate` is retired" in out, out
+    assert "`provenance new-subject <id>`" in out, out
+    _, out = _provenance("--help")
+    assert "new-subject" in out and "new-candidate" not in out, out
+
+
+def test_a_subject_need_not_be_a_person(tmp_path):
+    """Two versions of an amended proposal are two subjects: each its own run, its questions
+    retargeted to its own name, the printed commands naming it by id."""
+    root = write_project(tmp_path / "data", subjects=[
+        {"id": "measure-a", "name": "Measure A as introduced"},
+        {"id": "measure-a-2", "name": "Measure A as amended"}])
+    (root / "questions.json").write_text(json.dumps(
+        [{"id": "q1", "text": "What would Measure A as introduced fund?"}]))
+    code, out = _provenance("new-subject", "measure-a-2", cwd=root)
+    assert code == 0, out
+    q = json.loads((root / "measure-a-2" / "questions.json").read_text())
+    assert q == [{"id": "q1", "text": "What would Measure A as amended fund?",
+                  "subject": "measure-a-2"}]
+    assert "provenance verify --subject measure-a-2" in out and "--project" not in out, out
+
+    # From outside the project, the printed commands name it too.
+    code, out = _provenance("new-subject", "measure-a", "--project", root, cwd=tmp_path.parent)
+    assert code == 0, out
+    assert f"provenance build --subject measure-a --project {root.resolve()}" in out, out
 
 
 PRESENT = ("cache", "cand/cache", "out", "cand/out", "questions.json", "cand/questions.json")
@@ -581,28 +668,100 @@ def test_no_cache_output_or_question_set_that_exists_moves_the_cache(tmp_path, q
     assert cli._cache_root(root / "cand", None) == root.resolve()
 
 
-# --- races are the project's --------------------------------------------------------------
+# --- --subject ---------------------------------------------------------------------------
 
 
-def test_the_race_is_the_file_the_project_names(tmp_path):
-    root = write_project(tmp_path / "data", race=None)
+def test_subject_names_a_run_by_its_id(tmp_path):
+    """--subject names a declared subject's run from anywhere in the project, as --data names it
+    by its directory. The two together are refused: they could disagree."""
+    root = write_project(tmp_path / "data", subjects=["lind", "ng"])
     (root / "claims").mkdir()
-    code, out = _provenance("build", "--data", root)
-    assert code == 1 and "names no race file: add race = \"<path>\"" in out, out
+    assert project.resolve(None, None, cwd=root / "claims", subject="ng") \
+        == (project.load(root), root.resolve() / "ng")
+    assert project.resolve(None, root, cwd=tmp_path, subject="ng")[1] == root.resolve() / "ng"
 
-    write_project(root, race="elsewhere/race.md")
-    code, out = _provenance("build", "--data", root)
-    assert code == 1 and f"no race file at {(root / 'elsewhere/race.md').resolve()}" in out, out
+    code, out = _provenance("status", "--subject", "lnid", cwd=root)
+    assert code == 1 and "--subject lnid is not one of the subjects of the project" in out, out
+    assert "(lind, ng)" in out, out
+    code, out = _provenance("status", "--subject", "ng", "--data", root / "lind", cwd=root)
+    assert code == 1 and "both name the run: pass one" in out, out
 
-    (root / "elsewhere").mkdir()
-    (root / "elsewhere" / "race.md").write_text(FIXTURE_RACE.read_text())
-    code, out = _provenance("build", "--data", root)
-    assert code == 0, out
+
+@pytest.mark.parametrize("command", ["verify", "archive", "build", "serve", "handoff q1",
+                                     "judge q1 x supports", "judgments",
+                                     "clear-contradiction q1 x", "status", "brief"])
+def test_every_run_command_takes_subject(tmp_path, command):
+    """Every command that works on a run names it by --subject too, refused for a subject the
+    project doesn't declare, before it touches anything."""
+    write_project(tmp_path, subjects=["lind"])
+    code, out = _provenance(*command.split(), "--subject", "nope", cwd=tmp_path)
+    assert code == 1 and "--subject nope is not one of the subjects" in out, (command, out)
+
+
+# --- titles --------------------------------------------------------------------------------
+
+
+def test_the_review_page_is_titled_by_the_runs_subject(tmp_path):
+    """#8 left every subject's page titled by the project alone, so two subjects' pages read
+    alike. A subject's run is titled by its subject, the root's by the project."""
+    root = write_project(tmp_path / "data", subjects=["lind"])
+    for run in (root, root / "lind"):
+        (run / "claims").mkdir(parents=True)
+    assert _provenance("build", cwd=root)[0] == 0
+    assert "<h1>Citation review — Example County Assessor</h1>" \
+        in (root / "out" / "review.html").read_text()
+    assert _provenance("build", "--subject", "lind", cwd=root)[0] == 0
+    assert "<h1>Citation review — Avery Lind — Example County Assessor</h1>" \
+        in (root / "lind" / "out" / "review.html").read_text()
+
+
+# --- what researchers are told ----------------------------------------------------------------
 
 
 def test_the_races_listing_is_retired(tmp_path):
     code, out = _provenance("races")
     assert code == 1 and "`provenance races` is retired" in out, out
-    assert "race = " in out, out
+    assert "`provenance brief`" in out, out
     _, out = _provenance("--help")
     assert "races" not in out, out
+
+
+def test_the_brief_is_the_subject_and_the_context(tmp_path):
+    root = write_project(tmp_path / "data", subjects=["lind"])
+    code, out = _provenance("brief", "--subject", "lind", cwd=root)
+    assert code == 0, out
+    assert out.startswith("Project: Example County Assessor Subject: Avery Lind "), out
+    assert " ".join(EXAMPLE_CONTEXT.split()) in out, out
+    code, out = _provenance("brief", cwd=root)
+    assert code == 0 and "Subject:" not in out, out
+
+
+def test_the_completeness_check_never_reaches_a_researcher(tmp_path):
+    """The completeness check is the answers already known. A researcher told what it is looking
+    for confirms that item instead of searching, so nothing off the list surfaces, and the
+    corroboration that comes back is the pipeline agreeing with itself. `provenance brief` is
+    where a researcher's context is put together: it must never hold any of it, for any run,
+    however the check is worded."""
+    sentinel = "SENTINEL-KNOWN-ANSWER"
+    root = write_project(tmp_path / "data", subjects=["lind", "ng"],
+                         completeness_check=f"{EXAMPLE_CHECK}\n- {sentinel}\n")
+    p = project.load(root)
+    for run in (None, "lind", "ng"):
+        args = ["brief"] + (["--subject", run] if run else [])
+        code, out = _provenance(*args, cwd=root)
+        assert code == 0, out
+        assert sentinel not in out, (run, out)
+        for line in EXAMPLE_CHECK.splitlines():
+            if line.strip():
+                assert " ".join(line.split()) not in out, (run, line)
+        assert sentinel not in cli.researcher_brief(p, run)
+
+    # Built from the fields a researcher may read, by name: a field of the project that isn't
+    # one of them never reaches a brief, whatever it holds.
+    import dataclasses
+    readable = {"title", "context", "subjects"}
+    for f in dataclasses.fields(project.Project):
+        if f.name in readable or f.type not in ("str",):
+            continue
+        marked = dataclasses.replace(p, **{f.name: sentinel})
+        assert sentinel not in cli.researcher_brief(marked, "lind"), f.name

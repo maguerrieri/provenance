@@ -1,7 +1,7 @@
 """Source-class enforcement.
 
-Rules live in `source_lists/<name>-sources.yaml` and are selected per race, so a California
-race loads `us` + `ca`, and a future city guide could add a city list. The lists merge; a
+Rules live in `source_lists/<name>-sources.yaml` and are selected per project, so a California
+project loads `us` + `ca`, and a future city project could add a city list. The lists merge; a
 domain in any loaded list counts.
 """
 
@@ -49,8 +49,8 @@ def default_rules() -> dict[str, tuple[str, ...]]:
     """`us` alone: the lists for a caller that has no project. Every command passes the lists
     its project names (`sources = ["us", "ca"]` in provenance.toml), so a California project
     sees CalMatters and LegInfo while a project elsewhere doesn't inherit them. This used to
-    read the one race in the tool's races/, which a command checking another project's
-    citations could silently disagree with."""
+    read a file kept in the tool itself, which a command checking another project's citations
+    could silently disagree with."""
     return load_rules(("us",))
 
 
