@@ -1022,7 +1022,9 @@ changes any of it, and `tests/test_project.py` checks every combination of them.
 - **The walk follows the path as given, not its symlinks' targets** (`project.find()`). A
   subject symlinked to another disk is declared in the project it sits in; its real directory
   has none above it. A run reached through a symlink from outside its project is refused, never
-  mistaken, since the run check compares resolved paths.
+  mistaken, since the run check compares resolved paths. And since a subject may be a symlink,
+  names alone don't keep runs apart: one that resolves to the root, or to another subject's
+  directory, is refused, since it would be one run under two names.
 - **A provenance.toml inside a declared subject is refused from both sides.** The nearest file
   wins, so from inside the subject the parent's declaration was never read, and a project file
   dropped there took the run over with a cache and source lists of its own. The parent's

@@ -29,7 +29,8 @@ version can lack one or refuse what they write. Don't fall back to running it th
 that works only inside a clone of the tool's own repo.
 
 Run every `provenance` command from the project root, the directory holding its
-`provenance.toml` (or pass `--project <root>`); anywhere outside a project, each is refused.
+`provenance.toml` (or pass `--project <root>`). Outside a project, a command that works on a
+run, or on the cache without `--cache`, is refused.
 Name a subject's run with `--data <subject>`: with no `--data`, a command works on the root's
 run, wherever in the project it runs from.
 

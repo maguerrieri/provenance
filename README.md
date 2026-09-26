@@ -62,8 +62,10 @@ provenance build         # conflicts + render the review app
 provenance serve         # http://127.0.0.1:8765/review.html
 ```
 
-Every command runs in a project: from inside one, or with `--project <dir>` (see
-[Projects](#projects)). `check` and `fetch` given `--cache` need none.
+A command that works on a run, or on the cache, runs in a project: from inside one, or with
+`--project <dir>` (see [Projects](#projects)). Given `--cache`, the ones that only read the
+cache (`check`, `fetch`, `query` and the `calaccess` commands) need none, and `form700` and the
+`source-*` commands never read a project at all.
 
 To move to another release, install over it:
 

@@ -43,8 +43,10 @@ def _cache_page(root: Path) -> None:
 
 
 def _provenance(*args, cwd: Path | None = None):
-    width = cli.con.width
-    cli.con.width = 10_000   # rich folds a long tmp path mid-word at 80 columns
+    # rich folds a long tmp path mid-word at 80 columns. Put back `_width` itself, not the width
+    # it computed: assigning that would pin it, and COLUMNS would stop reaching the console.
+    width = cli.con._width
+    cli.con._width = 10_000
     here = Path.cwd()
     try:
         if cwd is not None:
@@ -52,7 +54,7 @@ def _provenance(*args, cwd: Path | None = None):
         res = CliRunner().invoke(cli.app, [str(a) for a in args])
     finally:
         os.chdir(here)
-        cli.con.width = width
+        cli.con._width = width
     return res.exit_code, re.sub(r"\x1b\[[0-9;]*m", "", " ".join(res.output.split()))
 
 
@@ -109,6 +111,20 @@ def test_subjects_must_be_plain_distinct_directories(tmp_path):
     assert "subject '../up' is not a plain directory name" in msg
     assert "subject 'claims' is a name a run keeps its own files under" in msg
     assert "subject 'ng' repeats 'Ng'" in msg, "one directory on a case-insensitive disk"
+
+
+def test_two_subjects_are_never_one_directory(tmp_path):
+    """A subject may be a symlink (to another disk, say), so names alone don't keep runs apart:
+    one linked to another subject, or to the root, would share its claims, verdicts and
+    review output under a second name."""
+    (tmp_path / "lind").mkdir()
+    (tmp_path / "alias").symlink_to(tmp_path / "lind")
+    (tmp_path / "self").symlink_to(tmp_path)
+    write_project(tmp_path, subjects=["lind", "alias", "self"])
+    with pytest.raises(project.ProjectError) as e:
+        project.load(tmp_path)
+    assert "subject 'alias' is the same directory as subject 'lind'" in str(e.value)
+    assert "subject 'self' is the project root itself" in str(e.value)
 
 
 def test_a_cache_naming_a_cache_directory_itself_is_refused(tmp_path):

@@ -129,6 +129,7 @@ def load(root: Path) -> Project:
         problems.append("`subjects` must be a list of subdirectory names")
         subjects = []
     folded: dict[str, str] = {}
+    dirs: dict[Path, str] = {}   # resolved directory -> the subject first found there
     for s in subjects:
         if not re.fullmatch(SUBJECT_PATTERN, s):
             problems.append(f"subject {s!r} is not a plain directory name "
@@ -138,13 +139,21 @@ def load(root: Path) -> Project:
         elif (first := folded.get(s.casefold())) is not None:
             # One directory on a case-insensitive disk (macOS's default), so one run.
             problems.append(f"subject {s!r} repeats {first!r}")
+        elif (d := (root / s).resolve()) == root:
+            # A symlink to the root: its run would be the root's, claims and verdicts shared.
+            problems.append(f"subject {s!r} is the project root itself")
         elif os.path.lexists(root / s / FILE):
             # The nearest project file wins, so its commands would never read this one's
             # declaration: two projects claiming one directory, and which is meant is not on disk.
             problems.append(f"subject {s!r} holds a {FILE} of its own, so it is a project, not "
                             f"a subject of this one")
+        elif (other := dirs.get(d)) is not None:
+            # Two names for one directory (a symlink to another subject) would be one run under
+            # two names: shared claims, verdicts and review output.
+            problems.append(f"subject {s!r} is the same directory as subject {other!r}")
         else:
             folded[s.casefold()] = s
+            dirs[d] = s
 
     race = raw.get("race")
     race_path = None

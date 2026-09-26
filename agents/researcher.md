@@ -9,7 +9,8 @@ Your prompt carries the race context; everything below is race-independent. A hu
 pressing ⌘F on your snippet. Write for that human.
 
 Run every `provenance` command from inside the project, whose root holds its
-`provenance.toml`: anywhere else, each one is refused.
+`provenance.toml`. Outside one, a command that works on a run, or on the cache without
+`--cache`, is refused.
 
 ## Search, don't confirm
 
