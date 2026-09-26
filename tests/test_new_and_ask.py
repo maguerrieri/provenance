@@ -109,17 +109,72 @@ def test_new_refuses_a_project_and_writes_over_nothing(tmp_path):
     assert not (root / "template.md").exists()
 
 
-@pytest.mark.parametrize("held", ["questions.json", "claims", "cache"])
-def test_new_refuses_a_directory_holding_a_runs_files(tmp_path, held):
+@pytest.mark.parametrize(("made", "held"), [
+    ("questions.json", "questions.json"), ("claims", "claims"), ("judgments", "judgments"),
+    ("cache/pages", "cache"), ("cache/calaccess", "cache"),
+])
+def test_new_refuses_a_directory_holding_a_runs_files(tmp_path, made, held):
     """A project from before project files: writing a project file beside them would adopt it,
     which is a reviewed change, not a command's."""
     root = tmp_path / "old"
-    (root / held).mkdir(parents=True) if "." not in held else (
-        root.mkdir(), (root / held).write_text("[]"))
+    (root / made).mkdir(parents=True) if "." not in made else (
+        root.mkdir(), (root / made).write_text("[]"))
     code, out = _provenance("new", root, "--from", _template(tmp_path), "--source", "us")
     assert code == 1 and f"holds a run's files already ({held})" in out, out
     assert "Moving a project laid out the old way" in out, out
     assert not (root / "provenance.toml").exists()
+
+
+def test_new_starts_a_project_beside_an_ordinary_out_and_cache(tmp_path):
+    """Not every name a run keeps is a run's: an ordinary repository has an out/ or a cache/ of
+    its own, and refusing it as an old layout was wrong."""
+    root = tmp_path / "repo"
+    for d in ("out", "cache", "pages"):
+        (root / d).mkdir(parents=True)
+    code, out = _provenance("new", root, "--from", _template(tmp_path), "--source", "us",
+                            "--cache", tmp_path / "shared")
+    assert code == 0, out
+
+
+def test_scaffold_files_get_the_mode_the_umask_gives(tmp_path):
+    """mkstemp makes its file 0600, which linked into place left a project only its creator
+    could read."""
+    import os
+
+    old = os.umask(0o022)
+    try:
+        code, out = _provenance("new", tmp_path / "p", "--from", _template(tmp_path),
+                                "--source", "us")
+    finally:
+        os.umask(old)
+    assert code == 0, out
+    for f in ("provenance.toml", "template.md"):
+        assert (tmp_path / "p" / f).stat().st_mode & 0o777 == 0o644, f
+
+
+def test_a_format_character_in_a_name_is_written_as_it_is(tmp_path, home):
+    """A zero-width non-joiner belongs in many names: TOML and JSON hold it, and only a control
+    character or a lone surrogate is refused."""
+    name = "Mehr\u200cabad"
+    code, out = _provenance("new", tmp_path / "p", "--from", _template(tmp_path),
+                            "--source", "us", "--name", name)
+    assert code == 0, out
+    assert project.load(tmp_path / "p").name == name
+    question = "What does the record show about Mehr\u200cabad's levy?"
+    code, out = _provenance("ask", question, "--source", "us", "--dir", tmp_path / "q")
+    assert code == 0, out
+    assert json.loads((tmp_path / "q" / "questions.json").read_text())[0]["text"] == question
+
+
+def test_asking_the_same_question_as_adversarial_is_another_project(tmp_path, home,
+                                                                    monkeypatch):
+    """The skill hands back the same question with --adversarial when it should have been
+    asked so. Hashed from the question alone, that landed on the first project's directory."""
+    for extra in ((), ("--adversarial",)):
+        code, out = _provenance("ask", QUESTION, "--source", "us", *extra, cwd=tmp_path,
+                                monkeypatch=monkeypatch)
+        assert code == 0, out
+    assert len(list(tmp_path.glob("ask-county-road-repair-bond-*"))) == 2
 
 
 def test_new_keeps_a_template_already_in_place_and_refuses_another(tmp_path):
@@ -583,6 +638,21 @@ def test_new_through_a_symlinked_parent_is_asked_of_the_directory_it_names(tmp_p
                             "--source", "us")
     assert code == 1 and "is a subject of the project in" in out, out
     assert not (parent / "lind").exists()
+
+
+def test_a_relative_cache_climbs_from_where_a_symlinked_working_directory_is(tmp_path,
+                                                                           monkeypatch):
+    """`..` is resolved as the OS resolves it for every other command's --cache, from the real
+    working directory, not folded as text against $PWD, which climbs out of the link."""
+    real = tmp_path / "data" / "work"
+    real.mkdir(parents=True)
+    (tmp_path / "home").mkdir()
+    (tmp_path / "home" / "work").symlink_to(real)
+    code, out = _provenance("new", "p", "--from", _template(tmp_path), "--source", "us",
+                            "--cache", "../shared", cwd=tmp_path / "home" / "work",
+                            monkeypatch=monkeypatch)
+    assert code == 0, out
+    assert project.load(real / "p").cache == (tmp_path / "data" / "shared").resolve()
 
 
 def test_a_cache_in_a_symlink_loop_is_refused_not_a_traceback(tmp_path, home, monkeypatch):
