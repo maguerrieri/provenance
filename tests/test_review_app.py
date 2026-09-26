@@ -355,3 +355,31 @@ def test_stored_progress_is_sanitized(tmp_path):
     bad = run(tmp_path, [c], actions=[{"do": "import", "text": "{not json"}])
     assert bad["alerts"] == ["Bad progress file"]
     assert bad["fileInput"] == "", "the file input resets, so importing the same file works"
+
+
+def test_a_claims_researcher_notes_render_escaped_and_only_when_present(tmp_path):
+    """The researcher's notes carry what only a person can act on (a scan to read by eye, a
+    filing that may not be the newest, a figure a query would not settle), so the page shows
+    them on the claim. They are agent-authored, so they render escaped, and a claim with
+    nothing to say shows nothing extra."""
+    note = ("Page 3 is a scan: read it by eye.\n"
+            "<script>alert(1)</script><img src=x onerror=\"alert(2)\">")
+    noted, blank = claim("q1", "Approved."), claim("q3", "Approved.")
+    noted.notes, blank.notes = note, " \n "
+    html = render([noted, claim("q2", "Approved."), blank], tmp_path, title="T")[0].read_text()
+
+    assert "<script>alert(1)</script>" not in html and "<img src=x" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html, "the note renders, escaped"
+    by_qid = {c.attributes["data-qid"]: c for c in HTMLParser(html).css(".claim")}
+    assert {q: [n.text() for n in c.css(".rnote")] for q, c in by_qid.items()} == {
+        "q1": ["Researcher's note: " + note], "q2": [], "q3": []}
+    assert {q: c.attributes["data-notes"] for q, c in by_qid.items()} == {
+        "q1": "1", "q2": "0", "q3": "0"}
+
+
+def test_the_notes_filter_shows_the_claims_with_researcher_notes(tmp_path):
+    noted = claim("q1", "Approved.")
+    noted.notes = "The filing cited may not be the newest."
+    result = run(tmp_path, [noted, claim("q2", "Approved.")],
+                 actions=[{"do": "filter", "value": "notes"}])
+    assert {c["qid"]: c["shown"] for c in result["claims"]} == {"q1": True, "q2": False}

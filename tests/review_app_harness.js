@@ -122,6 +122,10 @@ async function main() {
       doc.dispatch("keydown", doc.body, {key: a.key});
     } else if (a.do === "flag") {
       doc.dispatch("click", row(doc, a.row).querySelector(".flag"));
+    } else if (a.do === "filter") {
+      const f = doc.getElementById("filter");
+      f.value = a.value;
+      doc.dispatch("change", f);
     } else if (a.do === "dismiss") {
       doc.getElementById("dismiss").click();
     } else if (a.do === "import") {
@@ -147,7 +151,7 @@ async function main() {
       note: el.querySelector(".note").value,
     })),
     claims: doc.querySelectorAll(".claim").map(c => ({
-      qid: c.dataset.qid, done: c.classList.contains("done"),
+      qid: c.dataset.qid, done: c.classList.contains("done"), shown: c.style.display !== "none",
     })),
     progress: doc.getElementById("pct").textContent,
     notice: notice.classList.contains("hidden") ? ""
