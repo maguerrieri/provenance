@@ -639,6 +639,8 @@ _URL_IN_TEXT = re.compile(rf"(?:[A-Za-z][A-Za-z0-9+.-]*:)?//[^\s\"'<>`]+"
 # What YAML gives that the check reads: text, and values that hold none. Anything else (bytes
 # from `!!binary`, a `!!set`) can't be read for a credential, so it is refused.
 _PLAIN = (bool, int, float, datetime.date, type(None))
+# What a request's URL, body or header value may be: text, or a value whose text is all of it.
+_SENT_AS_TEXT = (str, bool, int, float)
 
 
 def _check_fields(value, path: str = "") -> None:
@@ -714,9 +716,20 @@ def _check_recipe(r: dict, where: str) -> None:
         params = [str(p) for p in params]
         if bad := [p for p in params if credential_param(p)]:
             raise Refused(f"it asks for what look like credentials ({_names_shown(bad)})")
-        body = r.get("body")
-        _check_request(_template(str(r.get("url") or ""), params),
-                       {str(k): str(v) for k, v in headers.items()},
+        # Read as the text it will be sent as, so each must be text (or a number or a boolean,
+        # whose text is all there is to it) before anything `str()`s it: bytes from `!!binary`
+        # or a mapping read as their repr, and the check read neither's contents.
+        url, body = _unless_null(r.get("url"), ""), r.get("body")
+        if not all(isinstance(k, str) for k in headers):
+            raise Refused("its headers are not all named with text")
+        sent = [("URL", url), *([("body", body)] if body is not None else []),
+                *((f"{_names_shown([k])} header", v) for k, v in headers.items())]
+        for what, value in sent:
+            if not isinstance(value, _SENT_AS_TEXT):
+                raise Refused(f"its {what} holds a {type(value).__name__}, not text, so it can't "
+                              "be read for a credential")
+        _check_request(_template(str(url), params),
+                       {k: str(v) for k, v in headers.items()},
                        None if body is None else _template(str(body), params))
         # The request's own fields are `_check_request()`'s, read as a request (search syntax
         # allowed); the rest of a recipe is prose.
@@ -908,11 +921,14 @@ def run(recipe: Recipe, params: dict[str, str], *, timeout: float = 45.0) -> htt
         raise Refused(f"{where} needs {', '.join(missing)}")
     url = _fill(recipe.url, {p: params[p] for p in recipe.params})
     body = _fill(recipe.body, {p: params[p] for p in recipe.params}) if recipe.body else None
+    # As text, once, and checked and sent as that same text: `_check_recipe()` refused any
+    # value whose text is not all of it.
+    sent_headers = {k: str(v) for k, v in recipe.headers.items()}
     try:
-        _check_request(url, recipe.headers, body)
+        _check_request(url, sent_headers, body)
     except Refused as e:
         raise Refused(f"in {where}, {e}; {_MANUAL_RECIPE}") from None
-    headers = {"user-agent": "Mozilla/5.0", **recipe.headers}
+    headers = {"user-agent": "Mozilla/5.0", **sent_headers}
     try:
         return httpx.request(recipe.method.upper(), url, timeout=timeout, follow_redirects=True,
                              headers=headers,
