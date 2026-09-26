@@ -288,7 +288,7 @@ find was X; the index may lag" is useful; silently citing a stale form is not.
 Write your claim file, then run:
 
 ```
-provenance check-claim data/claims/<question_id>.json
+provenance check-claim <run dir>/claims/<question_id>.json
 ```
 
 **You are not finished until this exits clean.** It runs the same checks the verifier
@@ -317,7 +317,7 @@ Pick the span a person would highlight to prove the point, then check it.
 
 ## Output
 
-Write `data/claims/<question_id>.json`. Keep the `question_id` exactly as you were given
+Write `claims/<question_id>.json` in the run you were given. Keep the `question_id` exactly as you were given
 it — it must match `[A-Za-z0-9][A-Za-z0-9._-]{0,63}` (it becomes a filename, and the
 schema rejects anything else). Copy `question` exactly too: `provenance check-claim` fails any
 difference from the run's question set but whitespace, quote and dash style, and case, and
