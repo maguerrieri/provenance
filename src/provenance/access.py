@@ -175,11 +175,13 @@ _MAX_DECODINGS = 8
 
 
 # Where a URL's authority starts, and what it runs to as written: an `@` in it follows a login.
-_AUTHORITY = re.compile(r"//([^/?#\s\"'<>`\\]*)")
+# A `//` starts one only where a URL's can: after a scheme's `:`, or where a value starts (a
+# protocol-relative link). Inside a word or a path (`and/or//x`, `a//b`) it is not a URL's.
+_AUTHORITY = re.compile(r"(?<![\w/])//([^/?#\s\"'<>`\\]*)")
 # ... and the same with its `//` percent-encoded, in a value holding a URL encoded whole. It runs
 # to the first delimiter as written (a query's `&` included): decoded, a `%2F` in it would end it
 # before its `@`.
-_ENCODED_AUTHORITY = re.compile(r"%2[fF]%2[fF]([^/?#&\s\"'<>`\\]*)")
+_ENCODED_AUTHORITY = re.compile(r"(?:(?<=%3[aA])|(?<![\w/%]))%2[fF]%2[fF]([^/?#&\s\"'<>`\\]*)")
 # An authority whose port is not a number (or a recipe's `{port}`): what a login's first half
 # looks like once a `/` has ended the authority before its `@` (`https://user:x/y@host`).
 _NOT_A_PORT = re.compile(r"^[^\[\]]*:(?!(?:\d*|\{\w+\})$)")
@@ -495,8 +497,10 @@ def redact(text: str) -> str:
     while m := _COLON_NAME.search(text, pos):
         out.append(text[pos:m.end()])
         pos = m.end()
-        value = _COLON_VALUE.match(text, pos)
-        if value and not value.group().startswith(_REDACTED) and _named_credential(m["name"]):
+        # The name first: a value runs to the end of its line, and matched for every name on a
+        # line of `a:a:a:…`, the time grew with the square of its length.
+        if (_named_credential(m["name"]) and (value := _COLON_VALUE.match(text, pos))
+                and not value.group().startswith(_REDACTED)):
             out.append(_REDACTED)
             pos = value.end()
     text = "".join(out) + text[pos:]
@@ -680,7 +684,10 @@ def _check_recipe(r: dict, where: str) -> None:
         if not isinstance(headers, dict):
             raise Refused("its headers are not a mapping")
         params = _unless_null(r.get("params"), [])
-        params = [str(p) for p in (params if isinstance(params, list) else [params])]
+        if not isinstance(params, list):
+            # A string loads as a Recipe whose params are its characters.
+            raise Refused("its params are not a list")
+        params = [str(p) for p in params]
         if bad := [p for p in params if credential_param(p)]:
             raise Refused(f"it asks for what look like credentials ({_names_shown(bad)})")
         body = r.get("body")

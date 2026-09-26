@@ -278,6 +278,8 @@ def _recipe(**fields) -> dict:
     (_entry(recipes=False), "not a list"),
     (_entry(recipes=""), "not a list"),
     (_entry(**_recipe(headers=False)), "headers are not a mapping"),
+    # A string loaded as a recipe whose params were its characters.
+    (_entry(**_recipe(params="year")), "its params are not a list"),
     # A URL encoded whole, in a header that isn't a URL header, is read decoded too.
     (_entry(**_recipe(headers={"x-endpoint": "https%3A%2F%2Fportal.example%2F%3Fapi_key%3D"
                                               + CANARY})),
@@ -301,6 +303,9 @@ def test_check_entry_refuses_each_shape_naming_where_not_what(entry, match):
                      params=["year"])),
     # Part of a request, a bare `name:x@host` is search syntax.
     _entry(**_recipe(url="https://portal.example/api?q=from:alice@agency.example")),
+    # A `//` inside a word or a path starts no authority: only one after a scheme or where a
+    # value starts does.
+    _entry(**_recipe(url="https://portal.example/api?path=docs//notes@2030")),
     # A port is a number, or a recipe's placeholder for one.
     _entry(ui_url="https://portal.example:8443/", **_recipe(url="https://{host}:{port}/api",
                                                             params=["host", "port"])),
