@@ -313,17 +313,68 @@ def test_ask_takes_back_the_whole_project_when_it_is_refused(tmp_path, home):
                             "--cache", tmp_path / "f")
     assert code == 1 and "Nothing was written" in out, out
     assert not (tmp_path / "a").exists()
-    assert not list(tmp_path.glob(".*")), "the staging directory is taken back too"
+    assert not list(tmp_path.glob(".*")), "nothing is left beside it either"
 
 
-def test_ask_builds_its_project_beside_its_name_and_renames_it_into_place(tmp_path, home):
-    """So an interrupted ask leaves the project whole or absent, never a directory a retry is
-    refused over. What is left once it's done is the project and nothing beside it."""
+def test_what_ask_leaves_is_the_project_and_nothing_beside_it(tmp_path, home):
     code, out = _provenance("ask", QUESTION, "--source", "us", "--dir", tmp_path / "q")
     assert code == 0, out
     assert sorted(p.name for p in (tmp_path / "q").iterdir()) == ["provenance.toml",
                                                                    "questions.json"]
     assert not list(tmp_path.glob(".*"))
+
+
+def test_a_directory_made_meanwhile_is_refused_and_left_alone(tmp_path, home, monkeypatch):
+    """ask's directory is created exclusively, so one another process makes between the check
+    and the write is refused, never written into, and what it holds is kept."""
+    real = cli._missing_dirs
+
+    def racing(path):
+        missing = real(path)
+        path.mkdir()
+        (path / "theirs.txt").write_text("another writer's file")
+        return missing
+
+    monkeypatch.setattr(cli, "_missing_dirs", racing)
+    code, out = _provenance("ask", QUESTION, "--source", "us", "--dir", tmp_path / "q")
+    assert code == 1 and "could not create" in out, out
+    assert sorted(p.name for p in (tmp_path / "q").iterdir()) == ["theirs.txt"]
+
+
+def _interrupted_at_the_project_file(monkeypatch, *args) -> None:
+    """Run a command killed as it writes provenance.toml, the last file it writes."""
+    import builtins
+
+    def fake_open(path, *a, **kw):
+        if Path(path).name == "provenance.toml":
+            raise KeyboardInterrupt
+        return builtins.open(path, *a, **kw)
+
+    with monkeypatch.context() as m:
+        m.setattr(cli, "open", fake_open, raising=False)
+        CliRunner().invoke(cli.app, [str(a) for a in args])
+
+
+def test_an_interrupted_new_leaves_no_project_and_runs_again(tmp_path, monkeypatch):
+    """The project file is written last, so an interrupted run leaves none, and the retry finds
+    the same template and finishes."""
+    root = tmp_path / "p"
+    args = ("new", root, "--from", _template(tmp_path), "--source", "us")
+    _interrupted_at_the_project_file(monkeypatch, *args)
+    assert not (root / "provenance.toml").exists()
+    code, out = _provenance(*args)
+    assert code == 0 and "already there" in out, out
+    assert project.load(root).name == "p"
+
+
+def test_an_interrupted_ask_leaves_no_project_and_says_so(tmp_path, home, monkeypatch):
+    root = tmp_path / "q"
+    args = ("ask", QUESTION, "--source", "us", "--dir", root)
+    _interrupted_at_the_project_file(monkeypatch, *args)
+    assert not (root / "provenance.toml").exists()
+    assert project.find(root) == tmp_path, "what it left is no project of its own"
+    code, out = _provenance(*args)
+    assert code == 1 and "if an interrupted `provenance ask` left it, remove it" in out, out
 
 
 def test_new_refuses_a_symlink_to_another_projects_subject(tmp_path):
@@ -337,6 +388,19 @@ def test_new_refuses_a_symlink_to_another_projects_subject(tmp_path):
                             "--source", "us")
     assert code == 1 and "is a symlink" in out, out
     assert list((parent / "lind").iterdir()) == []
+
+
+def test_new_through_a_symlinked_parent_is_asked_of_the_directory_it_names(tmp_path):
+    """A subject is declared by the directory above it, and the path as given reads that
+    directory through the link: so a project written through a link to another project's
+    root, at one of its subjects, is refused. Below a subject, it is a project nested in that
+    directory, as `new` there without the link would make."""
+    parent = write_project(tmp_path / "parent", subjects=["lind"])
+    (tmp_path / "alias").symlink_to(parent)
+    code, out = _provenance("new", tmp_path / "alias" / "lind", "--from", _template(tmp_path),
+                            "--source", "us")
+    assert code == 1 and "is a subject of the project in" in out, out
+    assert not (parent / "lind").exists()
 
 
 def test_a_cache_in_a_symlink_loop_is_refused_not_a_traceback(tmp_path, home, monkeypatch):

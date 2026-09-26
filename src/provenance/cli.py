@@ -2683,75 +2683,63 @@ def _scaffold(root: Path, name: str, sources: list[str], cache: str,
     command reads it, or refuse and leave nothing behind: what was written removed, and every
     directory created for it that is still empty. Read back through `project.resolve()`, so it
     is refused for anything any command would refuse it for, a subject of another project's
-    included. Each file is created exclusively: `new` and `ask` only create a project, and never
-    write over a file, however one got there.
+    included.
 
-    A directory that does not exist yet is built beside its name and renamed into place, so an
-    interrupted run leaves the project whole or absent, never half of one a retry is refused
-    over. Into one that exists (`new`, beside its template), the project file is written last,
-    so an interrupted run leaves no project file, and the retry finds the same template."""
+    Everything is created exclusively, `root` too when it does not exist yet: `new` and `ask`
+    only create a project, so a directory or file made meanwhile is refused, never written into
+    or over. The project file is written last. An interrupted run leaves no project file, so
+    nothing reads what it left as a project: `new` run again finds the same template, and `ask`
+    refuses the directory, saying what may have left it."""
     import os
 
-    fresh = not os.path.lexists(root)
-    created = _missing_dirs(root.parent) if fresh else []
-    stage = root.parent / f".{root.name}.provenance-{os.getpid()}" if fresh else root
+    created: list[Path] = []   # directories made for the project, deepest first
     written: list[Path] = []
     text = _PROJECT_FILE.format(name=_toml_string(name), sources=json.dumps(sources),
                                 cache=_toml_string(cache))
 
-    def undo(at: Path) -> None:
+    def undo() -> None:
         for f in reversed(written):
             try:
-                (at / f.name).unlink()
-            except OSError:
-                pass
-        if fresh:
-            try:
-                at.rmdir()
+                f.unlink()
             except OSError:
                 pass
         for d in created:
             try:
                 d.rmdir()
+            except FileNotFoundError:
+                continue
             except OSError:
                 break
 
-    try:
-        if fresh:
+    if not os.path.lexists(root):
+        missing = _missing_dirs(root)
+        try:
+            created = missing[1:]
             root.parent.mkdir(parents=True, exist_ok=True)
-            stage.mkdir()
-    except OSError as e:
-        # FileExistsError too: a part of the path that exists and is not a directory.
-        undo(stage)
-        _refuse(f"could not create {root}: {e}")
+            os.mkdir(root)   # exclusive: never a directory another process made meanwhile
+            created = missing
+        except OSError as e:
+            # FileExistsError too: `root` made meanwhile, or a part of the path that is a file.
+            undo()
+            _refuse(f"could not create {root}: {e}")
     for rel, body in {**files, proj.FILE: text}.items():
-        path = stage / rel
+        path = root / rel
         try:
             with open(path, "x", encoding="utf-8") as f:
                 written.append(path)
                 f.write(body)
         except FileExistsError:
-            undo(stage)
+            undo()
             if rel == proj.FILE:
                 _already_a_project(root)
-            _refuse(f"{root / rel} exists: `provenance new` and `provenance ask` write over no "
-                    f"file")
+            _refuse(f"{path} exists: `provenance new` and `provenance ask` write over no file")
         except OSError as e:
-            undo(stage)
-            _refuse(f"could not write {root / rel}: {e}. Nothing was written.")
-    if fresh:
-        try:
-            if os.path.lexists(root):
-                # rename() would put the project over an empty directory made meanwhile.
-                raise FileExistsError(f"{root} was created meanwhile")
-            os.rename(stage, root)
-        except OSError as e:
-            undo(stage)
-            _refuse(f"could not create {root}: {e}. Nothing was written.")
+            undo()
+            _refuse(f"could not write {path}: {e}. Nothing was written.")
     try:
         p, _ = proj.resolve(None, root)
     except proj.ProjectError as e:
-        undo(root)
+        undo()
         _refuse(f"{e}. Nothing was written.")
     return p
 
@@ -2905,8 +2893,11 @@ def ask(question: Annotated[str, typer.Argument(
     root = proj.absolute(where)
     if os.path.lexists(root):
         # The filesystem root included, the one directory with no name to give a project.
+        left = ("" if os.path.lexists(root / proj.FILE) else
+                f" It holds no {proj.FILE}, so it is no project: if an interrupted "
+                f"`provenance ask` left it, remove it.")
         _refuse(f"{root} exists: `provenance ask` starts a new project in a directory of its "
-                f"own. Pass another --dir.")
+                f"own. Pass another --dir.{left}")
     name = name.strip() or root.name
     if problem := _unwritable("the project's name", name):
         _refuse(problem)
