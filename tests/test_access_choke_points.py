@@ -111,6 +111,9 @@ def test_a_value_encoded_past_reading_is_refused_not_read_no_further(registry):
            body=json.dumps({"q": [{"next": f"//{LOGIN}@y.example/"}]})),
     Recipe(id="r", method="POST", url="https://x.example/api", body="next={next}&q=1",
            params=["next"]),
+    # Any header, not only origin and referer: the send path holds what the registry does.
+    Recipe(id="r", method="GET", url="https://x.example/api",
+           headers={"X-Endpoint": f"https://{LOGIN}@y.example/"}),
 ])
 def test_run_refuses_a_login_in_a_nested_url(recipe, registry):
     with pytest.raises(Refused, match="carries a username or password") as e:
@@ -230,7 +233,7 @@ def _recipe(**fields) -> dict:
     (_entry(**_recipe(headers={"Origin": f"https://{LOGIN}@portal.example"})),
      "origin header's URL carries"),
     (_entry(**_recipe(headers={"user-agent": f"probe https://{LOGIN}@portal.example/"})),
-     "holds a username"),
+     "a URL in its user-agent header carries a username"),
     (_entry(**_recipe(body=json.dumps({"q": {"next": f"https://{LOGIN}@y.example/"}}))),
      "carries a username"),
     (_entry(**_recipe(body=f"q=1&csrf_token={CANARY}")), r"its body \(csrf_token\)"),
@@ -454,6 +457,9 @@ def test_every_command_that_writes_the_registry_is_held_to_the_check(registry, t
     # A pair whose name is not a credential's gives up its name, not the rest of the line.
     f"ValueError: bad; api_key: {CANARY}",
     f"note: see token: {CANARY}",
+    # A bare login's password may hold `=` or `:`, as base64 does.
+    f"failed for canary-user:{CANARY}==@portal.example",
+    f"failed for canary-user:{CANARY}:x=y@portal.example",
 ])
 def test_redact_removes_every_credential_shape(message):
     out = redact(message)
