@@ -126,7 +126,7 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
     {% if c.conflicts %}<span class="b bad">conflict</span>{% endif %}
   </div>
   {% for x in c.conflicts %}<div class="conf">{{ x }}</div>{% endfor %}
-  {% if c.notes %}<div class="rnote"><b>Researcher's note:</b> {{ c.notes }}</div>{% endif %}
+  {% if c.notes %}<div class="rnote"><b>Researcher's note (unverified):</b> {{ c.notes }}</div>{% endif %}
 
   {% for s in c.sources %}
   <div class="src" data-key="{{ s.row_key }}" data-sid="{{ s.sid }}" data-fp="{{ s.fingerprint }}">

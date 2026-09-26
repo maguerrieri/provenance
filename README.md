@@ -115,7 +115,8 @@ researcher notes.
 
 A claim whose researcher left notes shows them above its sources: the caveats written for the
 person checking it, such as a scan to read by eye, a filing that may not be the newest, or a
-figure a query would not settle.
+figure a query would not settle. The pipeline doesn't check them, so they are marked
+unverified.
 
 A check belongs to one claim: a source cited by two questions is checked under each
 separately. It also clears itself when what you checked changes, and the row says so: the
