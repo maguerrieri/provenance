@@ -1,0 +1,12 @@
+{
+  "name": "provenance",
+  "version": "0.1.0",
+  "description": "Researcher and verifier agents and the orchestration skill for provenance, a cited-research pipeline whose citations a machine checks and a person reviews.",
+  "author": {
+    "name": "Mari Guerrieri"
+  },
+  "homepage": "https://github.com/maguerrieri/provenance",
+  "repository": "https://github.com/maguerrieri/provenance",
+  "license": "MIT",
+  "keywords": ["research", "citations", "verification"]
+}
