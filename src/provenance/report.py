@@ -184,6 +184,10 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "voter guide",
             claim_type=c.claim_type, confidence=c.confidence, status=c.status,
             corroboration_ok=c.corroboration_ok, corroboration_note=c.corroboration_note,
             conflicts=c.conflicts, sources=source_views(c),
+            # The researcher's caveats for the person checking this claim: a scan to read by
+            # eye, a filing that may not be the newest, a figure a query would not settle.
+            # Agent-authored, so autoescaped like the rest.
+            notes=(c.notes or "").strip(),
         )
         for c in claims
     ]

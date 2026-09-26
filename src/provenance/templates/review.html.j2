@@ -46,6 +46,8 @@ mark{background:var(--hl);color:inherit;padding:0 2px;border-radius:2px;font-wei
 border-radius:6px;background:var(--bg);color:var(--fg)}
 .conf{background:color-mix(in srgb,var(--bad) 12%,transparent);border-left:3px solid var(--bad);
 padding:8px 11px;border-radius:6px;font-size:13px;margin:8px 0}
+.rnote{background:color-mix(in srgb,var(--warn) 12%,transparent);border-left:3px solid var(--warn);
+padding:8px 11px;border-radius:6px;font-size:13.5px;margin:8px 0;white-space:pre-wrap}
 details.section{margin-bottom:14px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
 summary{cursor:pointer;font-weight:600}
 kbd{background:var(--card);border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:12px}
@@ -97,6 +99,7 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
     <option value="adversarial">Adversarial only</option>
     <option value="paywall">Paywalled only</option>
     <option value="conflict">Conflicts only</option>
+    <option value="notes">With researcher notes</option>
     <option value="review">Needs human review</option>
   </select>
   <div class="prog"><i id="pbar"></i></div>
@@ -109,6 +112,7 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
 {% for c in claims %}
 <div class="claim" data-qid="{{ c.question_id }}" data-type="{{ c.claim_type }}"
      data-status="{{ c.status }}" data-conflict="{{ 1 if c.conflicts else 0 }}"
+     data-notes="{{ 1 if c.notes else 0 }}"
      data-paywall="{{ 1 if c.sources|selectattr('paywall')|list else 0 }}">
   <div class="q">{{ c.question_id }} · {{ c.question }}</div>
   <div class="ans">{{ c.answer }}</div>
@@ -122,6 +126,7 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
     {% if c.conflicts %}<span class="b bad">conflict</span>{% endif %}
   </div>
   {% for x in c.conflicts %}<div class="conf">{{ x }}</div>{% endfor %}
+  {% if c.notes %}<div class="rnote"><b>Researcher's note:</b> {{ c.notes }}</div>{% endif %}
 
   {% for s in c.sources %}
   <div class="src" data-key="{{ s.row_key }}" data-sid="{{ s.sid }}" data-fp="{{ s.fingerprint }}">
@@ -383,6 +388,7 @@ document.getElementById('filter').addEventListener('change', e => {
     else if (f === 'adversarial') show = c.dataset.type === 'adversarial';
     else if (f === 'paywall') show = c.dataset.paywall === '1';
     else if (f === 'conflict') show = c.dataset.conflict === '1';
+    else if (f === 'notes') show = c.dataset.notes === '1';
     else if (f === 'review') show = ['human_review','pending'].includes(c.dataset.status);   // not_found is deliberate, and has its own section
     c.style.display = show ? '' : 'none';
   }
