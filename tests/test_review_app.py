@@ -372,7 +372,7 @@ def test_a_claims_researcher_notes_render_escaped_and_only_when_present(tmp_path
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html, "the note renders, escaped"
     by_qid = {c.attributes["data-qid"]: c for c in HTMLParser(html).css(".claim")}
     assert {q: [n.text() for n in c.css(".rnote")] for q, c in by_qid.items()} == {
-        "q1": ["Researcher's note: " + note], "q2": [], "q3": []}
+        "q1": ["Researcher's note (unverified): " + note], "q2": [], "q3": []}
     assert {q: c.attributes["data-notes"] for q, c in by_qid.items()} == {
         "q1": "1", "q2": "0", "q3": "0"}
 
