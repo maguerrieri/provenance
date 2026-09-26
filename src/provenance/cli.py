@@ -55,6 +55,7 @@ app = typer.Typer(add_completion=False, help="Cited-research pipeline")
 # No emoji: escape() leaves ":ok:" alone, so claim text, notes and filer names would print with
 # a shortcode turned into an emoji. Nothing the code itself prints uses one.
 con = Console(emoji=False)
+err = Console(emoji=False, stderr=True)   # notes beside output that is copied whole
 
 
 def _print_version(value: bool) -> None:
@@ -146,7 +147,7 @@ def _project(data: Path | None, project: Path | None, *, for_run: bool = True,
     return p, run
 
 
-def _note_root_run(p: proj.Project) -> None:
+def _note_root_run(p: proj.Project, out: Console | None = None) -> None:
     """Say, once, that a run defaulted from inside a subject's directory is the root's. The
     subject is named by the path the project declares it at, which a symlinked subject's real
     directory is not: `--data` naming that would find no project above it."""
@@ -156,7 +157,7 @@ def _note_root_run(p: proj.Project) -> None:
         real = d.resolve()
         if (here == real or real in here.parents) and real not in _noted_defaults:
             _noted_defaults.add(real)
-            con.print("[yellow]" + escape(_printable(
+            (out or con).print("[yellow]" + escape(_printable(
                 f"this is the project root's run, not {s}'s, though the working directory "
                 f"is inside {d}: pass --subject {s} for {s}'s")) + "[/]")
 
@@ -495,10 +496,12 @@ def brief(data: Path = None, project: Path = None, subject: str = None):
     Paste it into each researcher's prompt verbatim. It never holds the project's completeness
     check: those are the answers already known, and a researcher told what it is looking for
     confirms that instead of searching, so nothing off the list ever surfaces."""
-    p, run = _project(data, project, subject=subject)
-    # Printed whole, as data: it is copied into a prompt, and a wrap or markup would change it.
-    con.print(Text(_printable(researcher_brief(p, p.subject_of(run)), lines=True)),
-              soft_wrap=True)
+    p, run = _project(data, project, subject=subject, for_run=False)
+    # Standard output is the brief and nothing else, since it is pasted whole: the notes about
+    # it (which run it is, what was escaped) go to standard error.
+    if data is None and subject is None:
+        _note_root_run(p, out=err)
+    _print_copied(researcher_brief(p, p.subject_of(run)), notes=err)
 
 
 def researcher_brief(p: proj.Project, subject: str | None) -> str:
@@ -510,7 +513,7 @@ def researcher_brief(p: proj.Project, subject: str | None) -> str:
         lines.append(f"Subject: {s.name}")
     if p.context.strip():
         lines += ["", p.context.strip()]
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines)
 
 
 @app.command()
@@ -911,8 +914,14 @@ def _left_out(failing: set[str], where: str) -> None:
 
 @app.command()
 def build(data: Path = None, cache: Path = None, title: str = "", project: Path = None,
-          subject: str = None):
+          subject: str = None,
+          candidate: Annotated[str, typer.Option(hidden=True)] = ""):
     """Detect conflicts and render the review app."""
+    if candidate:
+        # Retired, hidden and still answering, as `new-candidate` is: the command it printed
+        # named the run and titled its page with this, and --subject does both now.
+        _refuse(f"build --candidate is retired: pass --subject {candidate} for that subject's "
+                f"run, whose page is titled by the subject")
     # The run's last render goes first, so that every way this build can stop short (a refusal
     # below, a crash, a kill) leaves no earlier render for `provenance serve` to show as if it
     # were this one. Only a run's, though: which directories are runs is the project file's to
@@ -924,10 +933,8 @@ def build(data: Path = None, cache: Path = None, title: str = "", project: Path 
         p, data = proj.resolve(data, project, subject=subject)
     except proj.ProjectError as e:
         if isinstance(e, proj.UnreadableProject):
-            run = (given if given is not None
-                   else e.root / subject if subject and re.fullmatch(proj.SUBJECT_PATTERN, subject)
-                   else e.root)
-            if proj.lists_run(e.root, run):
+            run = proj.named_run(e.root, given, subject)
+            if run is not None and proj.lists_run(e.root, run):
                 _clear_render_or_exit(run / "out")
         _refuse(str(e))
     if given is None and subject is None:
@@ -1490,25 +1497,25 @@ def _cut(text: str, n: int) -> str:
     return "".join(out)
 
 
-def _say_if_escaped(text: str, shown: str) -> None:
+def _say_if_escaped(text: str, shown: str, out: Console | None = None) -> None:
     """Under data a reader copies from, say so if `_printable()` showed any of it as an escape.
     An escape is text the pipeline inserted: a snippet or an `expected` copied with one in it
     (`co\\xadoperate` for a soft hyphen, which page text often holds) matches nothing."""
     if shown != text:
-        con.print("[yellow]Characters above that act on a terminal, and format characters such "
-                  "as a soft hyphen, are shown as escapes (\\x.., \\u....). The source holds the "
-                  "character, not the escape, so a copy with one in it matches nothing: quote "
-                  "around it.[/]")
+        (out or con).print("[yellow]Characters above that act on a terminal, and format "
+                           "characters such as a soft hyphen, are shown as escapes (\\x.., "
+                           "\\u....). The source holds the character, not the escape, so a copy "
+                           "with one in it matches nothing: quote around it.[/]")
 
 
-def _print_copied(text: str, limit: int | None = None) -> None:
+def _print_copied(text: str, limit: int | None = None, notes: Console | None = None) -> None:
     """Multi-line data a reader copies from (page text, a response body, a YAML entry): as Text
     and unwrapped, so no line break is the terminal's; line by line through `_printable()`; and
     `_say_if_escaped()` under it. A CRLF is joined before the cut, so the cut cannot leave a CR
     without its LF, to show as `\\x0d` and set off the note over nothing."""
     text = text.replace("\r\n", "\n")[:limit]
     con.print(Text(shown := _printable(text, lines=True)), soft_wrap=True)
-    _say_if_escaped(text, shown)
+    _say_if_escaped(text, shown, notes)
 
 
 @app.command()
@@ -2390,9 +2397,7 @@ def new_subject(subject: str, data: Path = None, questions: Path = None,
             q.pop("mapped_from", None)
             # The question set is written about a subject; retarget it rather than making
             # the researcher infer which subject it is about.
-            for other in p.subjects:
-                if other.id != s.id:
-                    q["text"] = q["text"].replace(other.name, s.name)
+            q["text"] = _retarget(q["text"], p.subjects, s)
             q["subject"] = s.id
         dest_q.write_text(json.dumps(qs, indent=1))
         con.print("[green]wrote[/] "
@@ -2411,6 +2416,16 @@ def new_subject(subject: str, data: Path = None, questions: Path = None,
     con.print("[green]ready[/] " + escape(f"{at}\n"
                                           f"  provenance verify --subject {sid}\n"
                                           f"  provenance build  --subject {sid}"))
+
+
+def _retarget(text: str, subjects, to: proj.Subject) -> str:
+    """`text` with every subject's name made `to`'s. In one pass, longest name first, so a name
+    inside another ("Measure A" in "Measure A (amended)") is never replaced within it, and `to`'s
+    own name is left as it is: replaced one at a time, a question already naming the amended
+    version read "Measure A (amended) (amended)". Whole names only, never inside a word."""
+    names = sorted({s.name for s in subjects} | {to.name}, key=len, reverse=True)
+    alternation = "|".join(re.escape(n) for n in names)
+    return re.sub(rf"(?<!\w)(?:{alternation})(?!\w)", lambda _: to.name, text)
 
 
 @app.command(name="new-candidate", hidden=True,

@@ -150,7 +150,8 @@ def test_the_race_key_is_refused_with_where_its_content_goes(tmp_path):
 
 
 @pytest.mark.parametrize("heading", ["# Completeness check", "## completeness check",
-                                     "#Completeness Check:"])
+                                     "#Completeness Check:", "# Completeness checks",
+                                     "**Completeness check**", "Completeness check\n---"])
 def test_a_context_holding_the_completeness_check_is_refused(tmp_path, heading):
     """A race file's body pasted whole into `context` would carry its completeness check, the
     answers already known, into every researcher's prompt."""
@@ -626,6 +627,12 @@ def test_new_candidate_is_retired_for_new_subject(tmp_path):
     _, out = _provenance("--help")
     assert "new-subject" in out and "new-candidate" not in out, out
 
+    # And the build command it printed, which named the run with --candidate.
+    code, out = _provenance("build", "--data", tmp_path, "--candidate", "ng")
+    assert code == 1 and "build --candidate is retired: pass --subject ng" in out, out
+    _, out = _provenance("build", "--help")
+    assert "--subject" in out and "--candidate" not in out, out
+
 
 def test_a_subject_need_not_be_a_person(tmp_path):
     """Two versions of an amended proposal are two subjects: each its own run, its questions
@@ -646,6 +653,23 @@ def test_a_subject_need_not_be_a_person(tmp_path):
     code, out = _provenance("new-subject", "measure-a", "--project", root, cwd=tmp_path.parent)
     assert code == 0, out
     assert f"provenance build --subject measure-a --project {root.resolve()}" in out, out
+
+
+def test_retargeting_never_replaces_a_name_inside_another():
+    """One version's name can be inside another's. Replaced one at a time, a question already
+    naming the amended version read "Measure A (amended) (amended)"."""
+    a, b = project.Subject("a", "Measure A"), project.Subject("b", "Measure A (amended)")
+    both = (a, b)
+    assert cli._retarget("What would Measure A fund?", both, b) \
+        == "What would Measure A (amended) fund?"
+    assert cli._retarget("What would Measure A (amended) fund?", both, b) \
+        == "What would Measure A (amended) fund?"
+    assert cli._retarget("What would Measure A (amended) fund?", both, a) \
+        == "What would Measure A fund?"
+    ng = project.Subject("ng", "Jordan Ng")
+    assert cli._retarget("Avery Lind's record, not Avery Lindqvist's", (ng,
+                         project.Subject("lind", "Avery Lind")), ng) \
+        == "Jordan Ng's record, not Avery Lindqvist's", "whole names only"
 
 
 PRESENT = ("cache", "cand/cache", "out", "cand/out", "questions.json", "cand/questions.json")
@@ -734,6 +758,26 @@ def test_the_brief_is_the_subject_and_the_context(tmp_path):
     assert " ".join(EXAMPLE_CONTEXT.split()) in out, out
     code, out = _provenance("brief", cwd=root)
     assert code == 0 and "Subject:" not in out, out
+
+
+def test_the_briefs_standard_output_is_the_brief_alone(tmp_path, monkeypatch):
+    """It is pasted into prompts whole, so what the CLI says about it (that this is the root's
+    run though the working directory is a subject's, that a character is shown as an escape)
+    goes to standard error, never into the paste."""
+    monkeypatch.setattr(cli, "_noted_defaults", set())
+    root = write_project(tmp_path / "data", subjects=["lind"], context="Minutes\xadonline.\n")
+    (root / "lind").mkdir()
+    here = Path.cwd()
+    os.chdir(root / "lind")
+    try:
+        res = CliRunner().invoke(cli.app, ["brief"])
+    finally:
+        os.chdir(here)
+    assert res.exit_code == 0, res.output
+    assert res.stdout == "Project: Example County Assessor\n\nMinutes\\xadonline.\n", res.stdout
+    err = " ".join(res.stderr.split())
+    assert "this is the project root's run, not lind's" in err, err
+    assert "are shown as escapes" in err, err
 
 
 def test_the_completeness_check_never_reaches_a_researcher(tmp_path):
