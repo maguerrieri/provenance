@@ -44,8 +44,12 @@ class ProjectError(ValueError):
 
 
 class UnreadableProject(ProjectError):
-    """A project file that exists and can't be read as a project. The run it was asked for is
-    still that project's, which a caller clearing the run's output needs to know."""
+    """A project file that exists and can't be read as a project. `root` is the directory
+    holding it, for a caller that has to act on the project's runs anyway (`lists_run()`)."""
+
+    def __init__(self, message: str, root: Path):
+        super().__init__(message)
+        self.root = root
 
 
 @dataclass(frozen=True)
@@ -97,7 +101,7 @@ def load(root: Path) -> Project:
     try:
         raw = tomllib.loads(path.read_text())
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
-        raise UnreadableProject(f"unreadable project file {path}: {e}") from e
+        raise UnreadableProject(f"unreadable project file {path}: {e}", root) from e
     problems: list[str] = []
     if unknown := sorted(set(raw) - set(KEYS)):
         # A typo'd key would otherwise read as the key left out: `subject = [...]` as a
@@ -186,7 +190,8 @@ def load(root: Path) -> Project:
             race_path = _path(root, race)
 
     if problems:
-        raise UnreadableProject(f"{path} can't be read as a project: " + "; ".join(problems))
+        raise UnreadableProject(f"{path} can't be read as a project: " + "; ".join(problems),
+                                root)
     return Project(root=root, name=name.strip(), sources=tuple(sources), cache=cache_path,
                    subjects=tuple(subjects), race=race_path)
 
@@ -224,6 +229,24 @@ def _subject_at(root: Path, subjects, at: Path) -> str | None:
                  and (root / s).resolve() == at), None)
 
 
+def _raw_subjects(root: Path) -> list:
+    """The `subjects` root's project file lists, parsed but not validated, or [] where it can't
+    be parsed. For what has to be known of a project file `load()` refuses."""
+    try:
+        subjects = tomllib.loads((root / FILE).read_text()).get("subjects", [])
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return []
+    return subjects if isinstance(subjects, list) else []
+
+
+def lists_run(root: Path, run: Path) -> bool:
+    """Whether `run` is `root` or a subject root's project file lists, for a project file
+    `load()` refuses: as far as that file can say, it is one of the project's runs. A file that
+    can't be parsed at all lists only its root."""
+    at = run.resolve()
+    return at == root.resolve() or _subject_at(root, _raw_subjects(root), at) is not None
+
+
 def _declared_by_parent(root: Path) -> Path | None:
     """The directory above `root` if its project file declares `root` as a subject, else None.
 
@@ -235,13 +258,7 @@ def _declared_by_parent(root: Path) -> Path | None:
     commands refuse it. Parsed, not `load()`ed, since `load()` refuses the parent for exactly
     this, and for anything else wrong with it, which is not this run's to fix."""
     parent = root.parent
-    try:
-        subjects = tomllib.loads((parent / FILE).read_text()).get("subjects", [])
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
-        return None
-    if not isinstance(subjects, list):
-        return None
-    return parent if _subject_at(parent, subjects, root.resolve()) is not None else None
+    return parent if _subject_at(parent, _raw_subjects(parent), root.resolve()) else None
 
 
 def resolve(run: Path | None, project: Path | None,
