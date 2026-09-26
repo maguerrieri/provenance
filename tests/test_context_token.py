@@ -24,6 +24,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from conftest import write_project
 from typer.testing import CliRunner
 
 from provenance import cli, judgments, queries
@@ -35,7 +36,9 @@ from provenance.models import (
     QueryCitation,
     Source,
 )
+from provenance.sources import load_rules
 
+RULES = load_rules(("us", "ca"))   # the example project's, which the commands read
 URL = "https://bay-courier.example/tideland-lease"
 SNIPPET = "voted 5-2 to adopt the tideland lease"
 STORY = f"On Tuesday the council {SNIPPET}, over the harbor board's objection [sic].\n"
@@ -106,7 +109,7 @@ def _handoff(run, root=None) -> judgments.Handoff:
     root = run if root is None else root
     claim = _claim(run)
     cli._apply_archive_rows(run, claim.sources, root)
-    return cli._handed(claim, root)
+    return cli._handed(claim, root, rules=RULES)
 
 
 def _token(run) -> str:
@@ -307,7 +310,7 @@ def test_a_refusal_quotes_the_run_and_the_unreadable_ids_as_written(tmp_path, co
     """With a well-formed id the refusal still quotes data: the run's path and the ids of claims
     that could not be read. `[/` in the one and `]` in the other made a tag the same way, so the
     whole message is printed as one Text."""
-    run = tmp_path / "[/run"
+    run = write_project(tmp_path / "[/run")
     (run / "claims").mkdir(parents=True)
     (run / "cache").mkdir()
     (run / "claims" / "bad.json").write_text(json.dumps({"question_id": "x]"}))
@@ -343,7 +346,7 @@ def test_what_judge_prints_cannot_raise_or_start_a_line(tmp_path):
 def test_a_refusal_is_not_wrapped_mid_command(tmp_path):
     """A refusal can name a command to run next; wrapped at the console's width, that command
     pasted into a shell ran truncated."""
-    run = tmp_path / ("a-long-run-directory-name-" * 3)
+    run = write_project(tmp_path / ("a-long-run-directory-name-" * 3))
     width = cli.con.width
     cli.con.width = 40
     try:
@@ -406,7 +409,7 @@ def total(monkeypatch):
 
 def _query_run(tmp_path, source: Source):
     """A run citing one query, verified against a cache root of its own, and that root."""
-    run, root = tmp_path / "run", tmp_path / "root"
+    run, root = write_project(tmp_path / "run"), tmp_path / "root"
     (root / "cache").mkdir(parents=True)
     (run / "claims").mkdir(parents=True)
     (run / "claims" / "q1.json").write_text(Claim(
@@ -508,7 +511,7 @@ def test_a_query_context_nothing_says_was_run_gets_no_token(tmp_path, total):
     s.verification.context = f"{TOTAL}(filer_id=7) = 4321.0  [3 filings]"
     claim = Claim(question_id="q1", question="?", answer="a", sources=[s])
     (tmp_path / "cache").mkdir()
-    handed = cli._handed(claim, tmp_path)
+    handed = cli._handed(claim, tmp_path, rules=RULES)
     assert handed.sources[0].context is None and "no recorded query run" in (
         handed.sources[0].unjudgeable)
     assert judgments.context_token(handed, s.sid) == ""

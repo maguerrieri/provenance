@@ -15,6 +15,8 @@ import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from conftest import write_project
+
 from provenance import judgments
 from provenance.models import EXTRACTOR_VERSION, Claim, PageCache, Source
 
@@ -58,6 +60,7 @@ def _verified_run(run: Path, *claims: Claim) -> Path:
     """A run whose claims `provenance verify` has checked offline against cached pages."""
     from provenance.fetch import cache_path
 
+    write_project(run)
     (run / "claims").mkdir(parents=True)
     (run / "questions.json").write_text(json.dumps(
         [{"id": c.question_id, "text": c.question, "claim_type": "mechanical"} for c in claims]))

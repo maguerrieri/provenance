@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from conftest import write_project
 
 from provenance import judgments
 from provenance.models import EXTRACTOR_VERSION, Claim, PageCache, Source
@@ -77,6 +78,7 @@ def _verified_run(root: Path, *claims: Claim) -> Path:
     from provenance import cli
     from provenance.fetch import cache_path
 
+    write_project(root)
     (root / "claims").mkdir(parents=True)
     (root / "questions.json").write_text(json.dumps(
         [{"id": c.question_id, "text": c.question, "claim_type": "mechanical"} for c in claims]))

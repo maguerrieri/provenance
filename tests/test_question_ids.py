@@ -11,6 +11,7 @@ import re
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from conftest import write_project
 from typer.testing import CliRunner
 
 from provenance import cli
@@ -31,10 +32,13 @@ def _provenance(*args):
     return res.exit_code, re.sub(r"\x1b\[[0-9;]*m", "", " ".join(res.output.split()))
 
 
-def _run(root, questions, claims):
+def _run(root, questions, claims, *, subject=False):
     """A run at `root`: its question set (a list, or raw text for a malformed one; None for
     none) and one claim file per (id, question) pair. No sources: the gate reads only the id
-    and the question, and build renders a claim without them."""
+    and the question, and build renders a claim without them. The root of a project of its
+    own, unless it is a `subject` of the one its parent's project file declares."""
+    if not subject:
+        write_project(root)
     (root / "claims").mkdir(parents=True)
     if questions is not None:
         text = questions if isinstance(questions, str) else json.dumps(questions)
@@ -189,32 +193,31 @@ def test_an_unlisted_id_a_pending_maps_from_names_says_so(tmp_path):
     assert "does not list: q5 (maps_from of q2), q7." in out, out
 
 
-def test_a_candidate_run_reads_its_own_question_set_before_the_data_roots(tmp_path):
-    """`provenance new-candidate` gives a run its own copy, retargeted to the candidate. Until a run
-    declares its question set (#8), that copy wins, and a run without one reads the root's."""
-    root = tmp_path / "data"
-    root.mkdir()
+def test_a_subject_run_reads_its_own_question_set_and_never_the_projects(tmp_path):
+    """`provenance new-candidate` gives a subject's run its own copy, retargeted to the subject.
+    A run without one used to read the project root's, which is worded for another subject; now
+    it says it has none, as a run with no set does."""
+    root = write_project(tmp_path / "data", subjects=["cand"])
     (root / "questions.json").write_text(json.dumps(
         [{"id": "q1", "text": "How did Alex Placeholder vote on the levy?"}]))
     run = _run(root / "cand", [{"id": "q1", "text": "How did Sam Sample vote on the levy?"}],
-               [("q1", "How did Sam Sample vote on the levy?")])
+               [("q1", "How did Sam Sample vote on the levy?")], subject=True)
     code, out = _provenance("build", "--data", run)
     assert code == 0, out
 
     (run / "questions.json").unlink()
     code, out = _provenance("build", "--data", run)
-    assert code == 1, out
-    assert f"another question than {root / 'questions.json'} asks" in out, out
+    assert code == 0 and f"no questions.json in {run}, so no claim was checked" in out, out
+    assert "another question than" not in out, out
 
 
 def test_an_unreadable_own_question_set_does_not_fall_back_to_the_roots(tmp_path):
     """Falling back would check a candidate's claims against a template not retargeted to it,
     or pass them against the wrong set. A dangling symlink is unreadable too, though `exists()`
     reads it as absent."""
-    root = tmp_path / "data"
-    root.mkdir()
+    root = write_project(tmp_path / "data", subjects=["cand"])
     (root / "questions.json").write_text(json.dumps([{"id": "q1", "text": VOTE}]))
-    run = _run(root / "cand", "{", [("q1", VOTE)])
+    run = _run(root / "cand", "{", [("q1", VOTE)], subject=True)
     code, out = _provenance("build", "--data", run)
     assert code == 1, out
     assert f"unreadable question set {run / 'questions.json'}" in out, out
@@ -311,8 +314,7 @@ def _cited(root, run, qid, question):
 def test_check_claim_fails_a_question_build_would_refuse(tmp_path):
     """A researcher's own gate. Checked only at build, one misquoted question stopped the whole
     run's review app, a retry round after the researcher had reported done."""
-    root = tmp_path / "data"
-    root.mkdir()
+    root = write_project(tmp_path / "data")
     (root / "questions.json").write_text(json.dumps([{"id": "q1", "text": VOTE}]))
 
     path = _cited(root, root, "q1", VOTE)
@@ -343,22 +345,20 @@ def test_check_claim_fails_a_question_build_would_refuse(tmp_path):
 def test_check_claim_finds_the_run_from_inside_claims(tmp_path, monkeypatch):
     """`provenance check-claim q1.json` from inside claims/ gave a parent name of "", fell back to
     --data, found no question set there, and passed without checking the question."""
-    root = tmp_path / "data"
-    root.mkdir()
+    root = write_project(tmp_path / "data")
     (root / "questions.json").write_text(json.dumps([{"id": "q1", "text": VOTE}]))
     _cited(root, root, "q1", VOTE.rstrip("?"))
     monkeypatch.chdir(root / "claims")
-    # The default --data, as a researcher runs it: from here it names claims/data, which has
-    # no question set. --cache only points at the cached page.
+    # No --data, as a researcher runs it: from here the run is the claim's, whose question set
+    # is the project's. --cache only points at the cached page.
     code, out = _provenance("check-claim", "q1.json", "--cache", root)
     assert code == 1 and "question is not the one" in out, out
 
 
 def test_check_claim_reads_the_question_set_of_the_run_the_claim_is_in(tmp_path):
-    """A candidate run's claim is checked with the default --data, the data root, whose template
+    """A candidate run's claim is checked with --data naming the project root, whose template
     is not retargeted to the candidate. The run is the directory holding the claim's claims/."""
-    root = tmp_path / "data"
-    root.mkdir()
+    root = write_project(tmp_path / "data", subjects=["cand"])
     (root / "questions.json").write_text(json.dumps(
         [{"id": "q1", "text": "How did Alex Placeholder vote on the levy?"}]))
     run = root / "cand"
@@ -371,8 +371,7 @@ def test_check_claim_reads_the_question_set_of_the_run_the_claim_is_in(tmp_path)
 
 
 def test_check_claim_with_no_question_set_says_so_and_one_it_cannot_read_fails(tmp_path):
-    root = tmp_path / "data"
-    root.mkdir()
+    root = write_project(tmp_path / "data")
     path = _cited(root, root, "q1", VOTE)
     code, out = _provenance("check-claim", path, "--data", root)
     assert code == 0, out
@@ -390,8 +389,7 @@ def test_an_id_retired_as_the_gate_says_leaves_nothing_to_report(tmp_path):
     judgments-archive/, and a run retired that way passes the gate with nothing left over."""
     from provenance import judgments
 
-    root = tmp_path / "data"
-    root.mkdir()
+    root = write_project(tmp_path / "data")
     (root / "questions.json").write_text(json.dumps([{"id": "q2", "text": VOTE}]))
     _cited(root, root, "q2", VOTE)
     old = Claim.model_validate_json(_cited(root, root, "q1", VOTE).read_text())

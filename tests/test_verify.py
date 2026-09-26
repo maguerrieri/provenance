@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from conftest import write_project
 
 from provenance import fetch as fetch_mod
 from provenance.models import Claim, PageCache, Source
@@ -307,14 +308,22 @@ def test_source_lists_merge_per_race():
     assert classify("https://ballotpedia.org/x", both) == "lead_generator_only"
 
 
-def test_race_file_declares_title_and_sources():
-    from provenance.races import available, load
+def test_race_file_declares_title_and_leaves_sources_to_the_project(tmp_path):
+    from conftest import FIXTURE_RACE
 
-    assert "example" in available()
-    r = load("example")
-    assert r.sources == ["us", "ca"]
+    from provenance.races import load
+
+    r = load(FIXTURE_RACE)
     assert r.title and "County Assessor" in r.title
     assert "Avery Lind" in r.context, "race context feeds researcher prompts verbatim"
+
+    # Its source lists are the project's now. One the race still names is refused, never
+    # ignored: a project listing `us` alone beside a race listing `us, ca` would drop the
+    # California lists without a word.
+    stale = tmp_path / "stale.md"
+    stale.write_text("---\nname: stale\nsources: [us, ca]\n---\n")
+    with pytest.raises(ValueError, match="list them under `sources` in its provenance.toml"):
+        load(stale)
 
 
 def test_question_id_cannot_escape_the_claims_directory(tmp_path):
@@ -329,9 +338,11 @@ def test_question_id_cannot_escape_the_claims_directory(tmp_path):
             Claim(question_id=bad, question="?", answer="a")
 
     ok = Claim(question_id="q2a", question="?", answer="a")
-    save_claims([ok], tmp_path)
-    assert (tmp_path / "q2a.json").exists()
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["q2a.json"]
+    claims = tmp_path / "claims"
+    claims.mkdir()
+    save_claims([ok], claims)
+    assert (claims / "q2a.json").exists()
+    assert sorted(p.name for p in claims.iterdir()) == ["q2a.json"]
 
 
 def test_save_claims_refuses_a_path_outside_the_directory(tmp_path):
@@ -812,7 +823,7 @@ def test_archive_queues_every_cited_url(stub, tmp_path, monkeypatch):
         stub[f"https://web.archive.org/web/2026/{u}"] = _page(
             url=u, text="she opposed the measure\nanother snippet here")
 
-    data_dir = tmp_path.parent / "data-root"
+    data_dir = write_project(tmp_path / "data-root")
     (data_dir / "claims").mkdir(parents=True, exist_ok=True)
     (data_dir / "claims" / "q1.json").write_text((tmp_path / "q1.json").read_text())
 
@@ -929,9 +940,11 @@ def test_completeness_check_never_reaches_a_researcher_prompt():
     """race.context is pasted verbatim into researcher prompts. A researcher told what it
     is looking for confirms that item instead of searching, and anything not on the list
     never surfaces — so known claims live in a section the loader keeps out of context."""
+    from conftest import FIXTURE_RACE
+
     from provenance.races import load
 
-    r = load("example")
+    r = load(FIXTURE_RACE)
     assert "Doe settlement" in r.completeness_check
     assert "Doe settlement" not in r.context
     assert "parcel tax" not in r.context
@@ -942,9 +955,11 @@ def test_completeness_check_never_reaches_a_researcher_prompt():
 def test_prompt_context_carries_no_uncited_factual_claims():
     """Context is unverified by construction — no snippet, no source, no `provenance verify` — so a
     factual claim placed there is believed by every researcher and checked by none."""
+    from conftest import FIXTURE_RACE
+
     from provenance.races import load
 
-    ctx = load("example").context
+    ctx = load(FIXTURE_RACE).context
     for smuggled in ("58.3", "41.7", "Pike", "Marlowe", "re-registered"):
         assert smuggled not in ctx, f"unverified fact in researcher-facing context: {smuggled}"
 
@@ -979,6 +994,7 @@ def test_new_candidate_retargets_the_question_set(tmp_path):
 
     from provenance import cli
 
+    write_project(tmp_path, subjects=["ng"])
     (tmp_path / "questions.json").write_text(json.dumps([
         {"id": "q1", "text": "What did Avery Lind say about housing?", "claim_type": "mechanical"}]))
     cli.new_candidate("ng", data=tmp_path)
@@ -987,8 +1003,7 @@ def test_new_candidate_retargets_the_question_set(tmp_path):
     assert out[0]["text"] == "What did Jordan Ng say about housing?"
     assert out[0]["subject"] == "ng"
     assert (tmp_path / "ng" / "claims").is_dir()
-    # the page cache is shared, not per candidate
-    assert (tmp_path / "cache" / "pages").is_dir()
+    # the page cache is shared, not per candidate: the project's, where it names it
     assert not (tmp_path / "ng" / "cache").exists()
 
 
@@ -1000,6 +1015,7 @@ def test_new_candidate_starts_a_run_with_no_migration_pending(tmp_path):
 
     from provenance import cli
 
+    write_project(tmp_path, subjects=["ng"])
     (tmp_path / "questions.json").write_text(json.dumps([
         {"id": "q1", "text": "votes", "claim_type": "mechanical", "maps_from": "q2"},
         {"id": "q2", "text": "donations", "claim_type": "mechanical", "mapped_from": "q1"},
@@ -2891,7 +2907,7 @@ def test_a_question_id_cannot_reach_outside_the_judgments_directory(tmp_path, es
     `provenance judge` never passes through the schema, so `../claims/q7` rewrote a claim file."""
     from provenance import judgments
 
-    run = tmp_path / "run"
+    run = write_project(tmp_path / "run")
     judgments.record(run, "q1", src().sid, "supports", "already here")
     qid = escaping(run)
     before = _tree(tmp_path)
@@ -2919,7 +2935,7 @@ def test_provenance_judge_refuses_an_escaping_question_id_without_a_traceback(tm
 
     from provenance import cli
 
-    run = tmp_path / "run"
+    run = write_project(tmp_path / "run")
     s = src()
     (run / "claims").mkdir(parents=True)
     (run / "claims" / "q1.json").write_text(
@@ -3016,140 +3032,6 @@ def test_an_escaped_copy_of_the_page_does_not_break_uniqueness():
     assert cleaned.count("Share") == 2, "short lines repeat legitimately; don't collapse them"
 
 
-def test_a_stray_cache_directory_does_not_reroute_the_pipeline(tmp_path):
-    """_cache_root inferred the root by asking whether data.parent/cache existed, so an
-    unrelated stray ./cache at the repo root silently redirected everything to a root with no
-    CAL-ACCESS database — and 14 query citations failed with "not found" on a file that
-    existed. A root inferred from a directory's existence fails open."""
-    from provenance.cli import _cache_root
-
-    (tmp_path / "data" / "cache").mkdir(parents=True)
-    (tmp_path / "data" / "questions.json").write_text("[]")
-    (tmp_path / "data" / "cand").mkdir()
-    (tmp_path / "cache").mkdir()          # the stray
-
-    assert _cache_root(tmp_path / "data", None) == tmp_path / "data"
-    # a candidate subdir still shares its parent's cache by design
-    assert _cache_root(tmp_path / "data" / "cand", None) == tmp_path / "data"
-
-    # a data dir with no cache of its own, next to an unrelated ./cache, stays put
-    other = tmp_path / "elsewhere"
-    (other / "data").mkdir(parents=True)
-    (other / "cache").mkdir()
-    assert _cache_root(other / "data", None) == other / "data"
-
-    # an explicit --cache always wins
-    assert _cache_root(tmp_path / "data", tmp_path / "x") == tmp_path / "x"
-
-
-def test_a_stray_candidate_cache_does_not_fork_the_shared_one(tmp_path, monkeypatch):
-    """The rule used to be "the run's own cache/ wins if it exists", which fulfils itself: one
-    fetch with --data data/<candidate> created data/<candidate>/cache, after which that stray
-    WAS the cache — forking the pages and hiding the CAL-ACCESS database, so all 14 query
-    citations failed at once. A candidate run shares its parent's cache by design, stray or not."""
-    import io
-
-    from rich.console import Console
-
-    from provenance import cli
-
-    out = io.StringIO()
-    monkeypatch.setattr(cli, "con", Console(file=out, width=10_000, color_system=None))
-    monkeypatch.setattr(cli, "_warned_strays", set())
-
-    root = tmp_path / "data"
-    cand = root / "cand"
-    cand.mkdir(parents=True)
-    (root / "questions.json").write_text("[]")
-    (cand / "questions.json").write_text("[]")   # a scaffolded candidate has its own
-
-    # a fresh clone: data/cache is gitignored and absent. Requiring it would fork on the very
-    # first run, which then creates data/<candidate>/cache — the same self-fulfilling trap
-    assert cli._cache_root(cand, None) == root
-    assert out.getvalue() == ""
-
-    # no stray: the parent's shared cache, silently
-    (root / "cache").mkdir()
-    assert cli._cache_root(cand, None) == root
-    assert out.getvalue() == ""
-
-    # with a stray: STILL the parent's, and the stray is named so someone cleans it up
-    (cand / "cache" / "pages").mkdir(parents=True)
-    assert cli._cache_root(cand, None) == root
-    warning = out.getvalue()
-    assert str(cand / "cache") in warning and str(root / "cache") in warning
-    assert "--cache" in warning
-    # once: `status` resolves the root per source, and 150 copies would bury the output
-    assert cli._cache_root(cand, None) == root
-    assert out.getvalue() == warning
-
-    # a top-level data root is its own root, whatever sits beside it
-    (tmp_path / "cache").mkdir()
-    out.truncate(0)
-    out.seek(0)
-    assert cli._cache_root(root, None) == root
-    assert out.getvalue() == ""
-
-    # an explicit --cache overrides everything, stray included, and needs no warning
-    assert cli._cache_root(cand, tmp_path / "x") == tmp_path / "x"
-    assert out.getvalue() == ""
-
-    # the warning names the stray verbatim: a bracketed path segment is text, not rich markup
-    odd = tmp_path / "[old]" / "data"
-    (odd / "cand" / "cache").mkdir(parents=True)
-    (odd / "questions.json").write_text("[]")
-    assert cli._cache_root(odd / "cand", None) == odd
-    assert str(odd / "cand" / "cache") in out.getvalue()
-    # ...and says when the shared cache doesn't exist yet, rather than pointing at nothing
-    assert f"{odd / 'cache'} (not created yet)" in out.getvalue()
-
-
-def test_calaccess_commands_share_the_cache_root_with_queries(tmp_path, monkeypatch):
-    """`provenance query` resolves the CAL-ACCESS database through _cache_root, and so must every
-    `provenance calaccess` command. Otherwise `provenance calaccess build --data data/<candidate>` writes 1.5 GB
-    into a stray candidate cache that queries then ignore — the database hidden again."""
-    from provenance import calaccess, cli
-
-    root = tmp_path / "data"
-    cand = root / "cand"
-    cand.mkdir(parents=True)
-    (root / "questions.json").write_text("[]")
-
-    seen = []
-    monkeypatch.setattr(calaccess, "build", lambda r, progress=None: seen.append(r) or r)
-    monkeypatch.setattr(calaccess, "find_filers", lambda r, *a, **k: seen.append(r) or [])
-    monkeypatch.setattr(calaccess, "contributions_to", lambda r, *a, **k: seen.append(r) or [])
-    monkeypatch.setattr(calaccess, "independent_expenditures",
-                        lambda r, *a, **k: seen.append(r) or [])
-
-    monkeypatch.setattr(calaccess, "citable_snapshot",
-                        lambda url, root=None, **k: seen.append(root) or (None, "none"))
-    from types import SimpleNamespace
-
-    from provenance import queries
-    monkeypatch.setattr(queries, "run", lambda name, params, r: seen.append(r)
-                        or SimpleNamespace(found=True, value=1, note="", version=1,
-                                           export_date="", unsettled="", unrestated=[],
-                                           late=[]))
-
-    def every_command(**kw):
-        cli.calaccess_build(data=cand, **kw)
-        cli.calaccess_filer("Ko", data=cand, **kw)
-        cli.calaccess_contributions("123", data=cand, **kw)
-        cli.calaccess_ie("Ko", data=cand, first="Dana", **kw)
-        cli.calaccess_cite("123", data=cand, **kw)
-        cli.run_query("contributor_total", param=["filer_id=123"], data=cand, **kw)
-
-    every_command()
-    assert seen == [root] * 6
-
-    # and every one of them takes --cache: the commands a reviewer re-checks a figure with must
-    # reach the database `provenance verify --cache` checked it against
-    seen.clear()
-    every_command(cache=tmp_path / "shared")
-    assert seen == [tmp_path / "shared"] * 6
-
-
 def test_a_verdict_does_not_outlive_the_text_it_judged(tmp_path, monkeypatch):
     """A judgment is a claim about a source AS CACHED AT JUDGMENT TIME. Six were recorded as
     "roster-only, no bill number"; a later re-fetch put the bill number back, leaving six
@@ -3208,7 +3090,7 @@ def _judgments_fixture(tmp_path):
     from provenance.fetch import cache_path
     from provenance.models import EXTRACTOR_VERSION
 
-    data = tmp_path / "data"
+    data = write_project(tmp_path / "data")
     now = datetime.now(UTC)
     earlier = now - timedelta(hours=6)
 
@@ -3622,24 +3504,20 @@ def test_an_archive_row_says_how_its_snapshot_matched(tmp_path, monkeypatch):
     assert "matched only after normalizing" in v.reason
 
 
-def test_status_does_not_need_a_race_to_summarize(tmp_path, monkeypatch, capsys):
-    """`provenance status` is a read-only summary. Loading the race's source lists must not make it
-    raise where there is more than one race and no --race was given."""
+def test_status_does_not_need_a_race_to_summarize(tmp_path, capsys):
+    """`provenance status` is a read-only summary, and its source lists are the project's, as
+    build's are. It used to read them from the race, and fall back to `us` alone where the race
+    could not be loaded, which could pass rows build rejects."""
     from provenance import cli
 
-    def _ambiguous(name=None, races_dir=None):
-        raise ValueError("multiple races (a, b); pass --race")
-
-    monkeypatch.setattr(cli, "load_race", _ambiguous)
-    monkeypatch.setattr("provenance.races.load", _ambiguous)
+    write_project(tmp_path, race=tmp_path / "no-such-race.md")
     claims_dir = tmp_path / "claims"
     claims_dir.mkdir()
     (claims_dir / "q1.json").write_text(Claim(
         question_id="q1", question="?", answer="a", sources=[src()]).model_dump_json())
     cli.status(data=tmp_path)
     out = capsys.readouterr().out
-    assert "q1" in out
-    assert "us` source list only" in out, "a narrower rule set must not be used silently"
+    assert "q1" in out and "race" not in out, out
 
 
 def test_a_reproduced_query_does_not_carry_the_claim_files_evidence(tmp_path, monkeypatch):
@@ -4116,13 +3994,16 @@ def _candidate_run(tmp_path):
     from provenance.fetch import cache_path
     from provenance.models import EXTRACTOR_VERSION
 
-    data, cand, s = tmp_path / "data", tmp_path / "data" / "cand", src()
+    data, s = write_project(tmp_path / "data", subjects=["cand"]), src()
+    cand = data / "cand"
     cache_path(data, s.url).write_text(
         _page(fetched_at=datetime.now(UTC) - timedelta(hours=6),
               extractor_version=EXTRACTOR_VERSION).model_dump_json())
-    # The question the claim answers: `provenance build` and `provenance status` check claims against it.
-    (data / "questions.json").write_text(json.dumps([{"id": "q1", "text": "?"}]))
     (cand / "claims").mkdir(parents=True)
+    # The question the claim answers, in the template and in the candidate's own copy: `provenance
+    # build` and `provenance status` check claims against the run's.
+    for run in (data, cand):
+        (run / "questions.json").write_text(json.dumps([{"id": "q1", "text": "?"}]))
     (cand / "claims" / "q1.json").write_text(
         Claim(question_id="q1", question="?", answer="a", sources=[s]).model_dump_json())
     res = CliRunner().invoke(cli.app, ["verify", "--data", str(cand)])   # offline: page cached
@@ -4144,7 +4025,7 @@ def _ctx(run, sid, qid="q1", cache=None):
     claim = next(c for c in load_claims(run / "claims", trust_machine_fields=True)
                  if c.question_id == qid)
     _apply_archive_rows(run, claim.sources, root)
-    return ["--context", judgments.context_token(_handed(claim, root), sid)]
+    return ["--context", judgments.context_token(_handed(claim, root, rules=RULES), sid)]
 
 
 def _refetch_shared(data, s):
@@ -5988,7 +5869,7 @@ def test_a_cache_root_holding_only_the_calaccess_database_is_accepted(tmp_path, 
 
     _register_test_total(monkeypatch)
     q = src(query=QueryCitation(name="test.total", params={"filer_id": "1"}, expected="12345"))
-    run, root = tmp_path / "run", tmp_path / "root"
+    run, root = write_project(tmp_path / "run"), tmp_path / "root"
     (run / "claims").mkdir(parents=True)
     (run / "claims" / "q1.json").write_text(
         Claim(question_id="q1", question="?", answer="a", sources=[q]).model_dump_json())
@@ -6254,7 +6135,7 @@ def test_a_query_verified_with_cache_reproduces_as_printed(tmp_path):
     from provenance import cli, queries
 
     shared = _dated_export(tmp_path / "shared")
-    data = tmp_path / "data"
+    data = write_project(tmp_path / "data")
     (data / "claims").mkdir(parents=True)
     (data / "claims" / "q1.json").write_text(Claim(
         question_id="q1", question="?", answer="a", sources=[_ie_citation()]).model_dump_json())
@@ -6306,7 +6187,7 @@ def _query_run_with_verdict(tmp_path, monkeypatch, version=1):
         lambda root, **kw: queries.QueryResult(value=12345.0, detail="2 gift(s)"),
         ("filer_id",), "test", version))
     s = src(query=QueryCitation(name="test.total", params={"filer_id": "1"}, expected="12345"))
-    data = tmp_path / "data"
+    data = write_project(tmp_path / "data")
     (data / "claims").mkdir(parents=True)
     (data / "claims" / "q1.json").write_text(
         Claim(question_id="q1", question="?", answer="a", sources=[s]).model_dump_json())
@@ -6581,7 +6462,7 @@ def test_judge_refuses_a_query_verdict_the_last_run_did_not_produce(tmp_path, mo
     assert judgments.load(data, "q1")[s.sid].query_version == 1, "nothing recorded"
 
     # the export moved under the claim: same refusal, naming both exports
-    root = _dated_export(tmp_path / "shared", when=(2026, 9, 1, 3, 0, 0))
+    root = _dated_export(write_project(tmp_path / "shared"), when=(2026, 9, 1, 3, 0, 0))
     (root / "claims").mkdir()
     ie = _ie_citation()
     (root / "claims" / "q1.json").write_text(
@@ -6638,7 +6519,7 @@ def test_a_red_query_row_prints_the_builds_own_root(tmp_path):
     from provenance import cli
 
     shared = _dated_export(tmp_path / "shared")
-    data = tmp_path / "data"
+    data = write_project(tmp_path / "data")
     (data / "claims").mkdir(parents=True)
     forged = json.loads(Claim(question_id="q1", question="?", answer="a",
                               sources=[_ie_citation(expected="615000")]).model_dump_json())
@@ -6806,7 +6687,7 @@ def test_a_query_row_judge_would_refuse_is_blocked_not_waiting(tmp_path, monkeyp
     monkeypatch.setitem(queries.REGISTRY, "test.total", queries.Query(
         lambda root, **kw: queries.QueryResult(value=12345.0), ("filer_id",), "test", 1))
     s = src(query=QueryCitation(name="test.total", params={"filer_id": "1"}, expected="12345"))
-    data = tmp_path / "data"
+    data = write_project(tmp_path / "data")
     (data / "claims").mkdir(parents=True)
     (data / "claims" / "q1.json").write_text(
         Claim(question_id="q1", question="?", answer="a", sources=[s]).model_dump_json())
@@ -6868,7 +6749,7 @@ def _archive_verified_run(tmp_path):
 
     from provenance import archive as arch
 
-    data, now = tmp_path / "data", datetime.now(UTC)
+    data, now = write_project(tmp_path / "data"), datetime.now(UTC)
     _cache(data, PAYWALLED, now - timedelta(days=3), status=403, text="", paywall_suspected=True)
     _cache(data, SNAP_A, now - timedelta(days=2))
     arch.save_records(data, {PAYWALLED: {"snapshot": SNAP_A, "error": None}})

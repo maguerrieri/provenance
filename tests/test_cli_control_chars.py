@@ -22,6 +22,7 @@ import unicodedata
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from conftest import write_project
 
 from provenance.models import Claim, PageCache, Source
 
@@ -165,10 +166,11 @@ def test_a_recipe_response_prints_its_escapes_and_keeps_its_lines(registry, monk
                  "No Form 700 filings found for Pat Doe\\udcff.", id="form700"),
     pytest.param(("source-access", f"news{ARGV}.example"), 1,
                  "Nothing recorded for news\\udcff.example.", id="source-access"),
-    pytest.param(("verify", "--data", f"x{ARGV}"), 1, "No claims found in x\\udcff/claims",
+    # A directory named so can't be a project's, so a command given one as its run refuses it.
+    pytest.param(("verify", "--data", f"x{ARGV}"), 1, "x\\udcff is neither the root of the",
                  id="verify"),
-    pytest.param(("serve", "--data", f"x{ARGV}", "--no-open-browser"), 1, "x\\udcff/out",
-                 id="serve"),
+    pytest.param(("serve", "--data", f"x{ARGV}", "--no-open-browser"), 1,
+                 "x\\udcff is neither the root of the", id="serve"),
     pytest.param(("check-claim", f"x{ARGV}/q1.json"), 1, "cannot read x\\udcff/q1.json",
                  id="check-claim"),
     pytest.param(("calaccess", "cite", f"1001{ARGV}"), 0, "id=1001\\udcff", id="cite"),
@@ -334,7 +336,7 @@ def test_fetch_and_check_print_page_text_through_printable(tmp_path):
     """Page text keeps its lines, as a researcher copies a snippet from it. An escape in it is
     text the pipeline inserted, and a snippet copied with one is on no page, so `provenance fetch`
     says so wherever it showed one."""
-    data = tmp_path / "data"
+    data = write_project(tmp_path / "data")
     _cache_page(data, title=f"Title{CTRL}", text=f"{TEXT}\nsecond line{CTRL}")
     code, lines = _provenance("fetch", URL, "--data", data, lines=True)
     assert code == 0 and TEXT in lines and f"second line{SHOWN}" in lines, lines
@@ -400,10 +402,11 @@ def test_source_import_curl_and_source_note_print_through_printable(tmp_path, re
 def _run(tmp_path, s: Source):
     """A candidate run, as `provenance new-candidate` lays it out, with its one page cached and
     verified, so `provenance judge` accepts a verdict on it."""
-    data, cand = tmp_path / "data", tmp_path / "data" / "cand"
+    data, cand = write_project(tmp_path / "data", subjects=["cand"]), tmp_path / "data" / "cand"
     _cache_page(data, s.url)
-    (data / "questions.json").write_text(json.dumps([{"id": "q1", "text": "?"}]))
     (cand / "claims").mkdir(parents=True)
+    for run in (data, cand):
+        (run / "questions.json").write_text(json.dumps([{"id": "q1", "text": "?"}]))
     (cand / "claims" / "q1.json").write_text(
         Claim(question_id="q1", question="?", answer="a", sources=[s]).model_dump_json())
     return cand
@@ -460,28 +463,26 @@ def test_a_claim_that_does_not_parse_is_skipped_with_its_error_through_printable
     assert code == 0 and "skipping q1 in q1.json" in out, out
 
 
-def test_race_and_candidate_names_print_through_printable(tmp_path, monkeypatch):
-    from provenance import races
-
-    d = tmp_path / "races"
-    d.mkdir()
-    (d / "ctrl.md").write_text(
-        '---\nname: ctrl\ntitle: "Assessor\\e[2K"\nsources: [us]\n'
+def test_race_and_candidate_names_print_through_printable(tmp_path):
+    race = tmp_path / "races" / "ctrl.md"
+    race.parent.mkdir()
+    race.write_text(
+        '---\nname: ctrl\ntitle: "Assessor\\e[2K"\n'
         'candidates:\n  - {id: pd, name: "Pat Doe\\u202e"}\n---\n\nA fictional race.\n')
-    monkeypatch.setattr(races, "RACES_DIR", d)
-    code, out = _provenance("races")
-    assert code == 0 and "ctrl Assessor\\x1b[2K sources: us" in out, out
-
-    data = tmp_path / "data"
-    data.mkdir()
+    data = write_project(tmp_path / "data", subjects=["pd"], race=race)
     (data / "questions.json").write_text(json.dumps([{"id": "q1", "text": "What?"}]))
-    code, out = _provenance("new-candidate", "pd", "--data", data, "--race", "ctrl")
+    code, out = _provenance("new-candidate", "pd", "--data", data)
     assert code == 0 and "retargeted to Pat Doe\\u202e)" in out, out
+
+    # A race that still names source lists is refused, quoting what it names.
+    race.write_text('---\nname: ctrl\nsources: ["us\\e[2K"]\n---\n')
+    code, out = _provenance("build", "--data", data)
+    assert code == 1 and "(sources: ['us\\x1b[2K'])" in out, out
 
 
 def test_a_run_directory_named_with_control_characters_prints_as_an_escape(tmp_path):
     """The operator's --data path is printed wherever a command names what it read or wrote."""
-    data = tmp_path / f"run{CTRL}"
+    data = write_project(tmp_path / f"run{CTRL}")
     (data / "claims").mkdir(parents=True)
     code, out = _provenance("build", "--data", data)
     assert code == 0, out
