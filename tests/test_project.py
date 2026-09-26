@@ -155,6 +155,16 @@ def test_a_cache_naming_a_cache_directory_itself_is_refused(tmp_path):
         project.load(tmp_path)
 
 
+def test_a_tilde_naming_no_user_is_refused_by_key(tmp_path):
+    """`expanduser()` raises for an unknown ~user, and the traceback named neither the project
+    file nor the key."""
+    write_project(tmp_path, cache="~no-such-user-here/cache", race="~no-such-user-here/race.md")
+    with pytest.raises(project.ProjectError) as e:
+        project.load(tmp_path)
+    assert "`cache` is '~no-such-user-here/cache', whose ~ names no user" in str(e.value)
+    assert "`race` is '~no-such-user-here/race.md', whose ~ names no user" in str(e.value)
+
+
 @pytest.mark.parametrize("where", ["the directory named", "its cache/"])
 def test_a_file_where_the_cache_goes_is_refused(tmp_path, where):
     """The first fetch would fail creating cache/pages under it, with an error naming neither

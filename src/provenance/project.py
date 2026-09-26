@@ -132,8 +132,7 @@ def load(root: Path) -> Project:
         # something other than a line someone wrote.
         problems.append("`cache` must name the directory that holds the shared cache/ "
                         "(\".\" for one beside this file)")
-    else:
-        cache_path = _path(root, cache)
+    elif (cache_path := _path(root, cache, "cache", problems)) is not None:
         if bad := next((p for p in (cache_path, cache_path / "cache")
                         if os.path.lexists(p) and not p.is_dir()), None):
             # A file where the cache goes: the first fetch would fail creating cache/pages under
@@ -187,7 +186,7 @@ def load(root: Path) -> Project:
         if not isinstance(race, str) or not race.strip():
             problems.append("`race` must be a path to the race file")
         else:
-            race_path = _path(root, race)
+            race_path = _path(root, race, "race", problems)
 
     if problems:
         raise UnreadableProject(f"{path} can't be read as a project: " + "; ".join(problems),
@@ -196,9 +195,16 @@ def load(root: Path) -> Project:
                    subjects=tuple(subjects), race=race_path)
 
 
-def _path(root: Path, value: str) -> Path:
-    """A path from the project file: `~` expanded, relative to the file, resolved."""
-    return (root / Path(value).expanduser()).resolve()
+def _path(root: Path, value: str, key: str, problems: list[str]) -> Path | None:
+    """A path from the project file's `key`: `~` expanded, relative to the file, resolved. None,
+    with the problem named, for a `~user` that names no user: `expanduser()` raises there, and
+    the traceback named neither the file nor the key."""
+    try:
+        expanded = Path(value).expanduser()
+    except RuntimeError:
+        problems.append(f"`{key}` is {value!r}, whose ~ names no user on this machine")
+        return None
+    return (root / expanded).resolve()
 
 
 def working_dir() -> Path:
