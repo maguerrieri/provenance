@@ -399,14 +399,19 @@ def _credential_params(url: str, headers: dict[str, str], body: str | None) -> l
 def _check_request(url: str, headers: dict[str, str], body: str | None) -> None:
     """The check a request passes wherever it is recorded or sent: `check_entry()` for every
     recipe, `run()` after filling one, and `parse_curl()` for the request a paste becomes.
-    Refuses credential headers, a login in the URL or in an `origin` or `referer` header,
-    and, through `_credential_params()`, credential parameters and a login anywhere in them.
-    Names what it found, never a value."""
+    Refuses credential headers, a login in the URL or in any URL a header's value holds, and,
+    through `_credential_params()`, credential parameters and a login anywhere in them. Names
+    what it found, never a value."""
     if bad := [k for k in headers if credential_header(k)]:
         raise Refused(f"it carries credential headers ({_names_shown(bad)})")
     for k, v in headers.items():
         if k.lower() in _URL_HEADERS and _has_login(v, f"its {k.lower()} header's URL"):
             raise Refused(f"its {k.lower()} header's URL carries a username or password")
+        # Any header, not only the two that hold a URL: `run()` sends what a recipe built by
+        # hand holds, and `check_entry()` reads every value in an entry.
+        if _login_in(v):
+            raise Refused(f"a URL in its {_names_shown([k])} header carries a username or "
+                          "password")
     if _has_login(url, "its URL"):
         raise Refused("its URL carries a username or password")
     if found := _credential_params(url, headers, body):
@@ -591,8 +596,8 @@ def check_entry(entry, host: str | None = None) -> None:
     and one a person edited by hand are all held to it. Refuses, naming where and never what:
     - a host that holds a login, or is not a host name: `host` (the file's), and its `host:`;
     - each recipe's request as `run()` would send it (`_check_request()`): credential headers,
-      a login in its URL or its `origin` or `referer`, and credential parameters or a login in
-      its URL, those headers and its body, a URL nested in any of them included;
+      a login in its URL or in any header's value, and credential parameters or a login in its
+      URL, its `origin` and `referer` and its body, a URL nested in any of them included;
     - a recipe param named like a credential, since a recipe that asks for one at run time is
       a manual retrieval;
     - a field named like a credential, at any depth, and a login in any string, prose included.
