@@ -1,4 +1,4 @@
-# voter-guide-research — conventions
+# provenance — conventions
 
 ## This repo is public: nothing from a private project lands unreviewed
 
@@ -456,7 +456,7 @@ a claim's id turned the "skipped as unreadable" line into a traceback in every c
 loads claims.
 
 So nothing the pipeline does not control is ever printed as markup. That covers claims and
-verdict notes, pages and recipe responses, CAL-ACCESS and FPPC rows, race and registry files, the
+verdict notes, pages and recipe responses, CAL-ACCESS and FPPC rows, project and registry files, the
 arguments an agent passes, paths, and exception text, which quotes any of these. Only numbers,
 the pipeline's own enums (statuses, verdicts), pattern-checked question ids and the code's own
 literals go in bare.
@@ -597,7 +597,7 @@ is this stamp's.
 
 **The stamp and the check must read the same cache.** They didn't. `provenance judge` stamped from the
 shared cache (`_cache_root()`, so `data/cache`), while `apply_to()` looked the page up under
-the data dir it was handed. For a candidate run that is `data/<candidate>/cache`, where the page
+the data dir it was handed. For a subject's run that is `data/<subject>/cache`, where the page
 normally isn't, and a missing page reads as "not stale": the check compared nothing and passed
 the verdict. Both sides now go through one lookup (`judgments.judged_copy()` / `is_stale()`).
 `cache_root` is a required keyword on `verdicts_for()` and `apply_to()`, because defaulting it
@@ -606,8 +606,8 @@ that resolves a cache root takes `--cache` (`provenance query` and the `provenan
 included). If you override `--cache` for build, override it for judge too.
 
 The miss did not stay a miss. `load_cached()` went through `cache_dir()`, which mkdirs, so the
-first check of a recorded verdict created `data/<candidate>/cache/pages`, and `_cache_root()`
-then preferred that directory to the shared one. From there every command for the candidate ran
+first check of a recorded verdict created `data/<subject>/cache/pages`, and `_cache_root()`
+then preferred that directory to the shared one. From there every command for the subject ran
 on a forked, near-empty cache: stamp and check agreed again, but about the wrong copy, and
 `provenance build` downgraded sources for want of a cached page. A read now creates nothing. A lookup
 that creates the thing it looks for can change where the next lookup goes.
@@ -873,8 +873,8 @@ crash, or a kill (a closed terminal or a tool's timeout included, which run no e
 `provenance serve` refuses, naming a refused build as a cause, and a page reloaded from a running
 `provenance serve` gets a 404. It gets one while any build runs, too, until that build writes the new
 render. Nothing is lost. The render is regenerable, and review progress lives in the browser's
-`localStorage`, keyed by the title, so it comes back with the next build that succeeds. Only the
-files a build writes are removed, along with any temp file a killed build left (`provenance serve`
+`localStorage`, keyed by the project and subject, so it comes back with the next build that
+succeeds. Only the files a build writes are removed, along with any temp file a killed build left (`provenance serve`
 lists `out/`, dotfiles included, and one can hold a whole page); anything else in `out/` stays.
 And only a run's: a `--data` the project doesn't declare is no run, and its `out/` is none of
 the project's, so it is left alone. A project file that can't be read as a project is a refusal
@@ -993,30 +993,39 @@ minimal DOM that supports single-class selectors only and throws on anything els
 template change that needs more fails loudly: extend the harness, don't stub around it. They
 skip without node only outside CI, and the fingerprint tests, which need no node, never skip.
 
-## Race-specific content lives in the project's race file
+## Project-specific content lives in the project file
 
-Nothing about a candidate, an office, or a state belongs in `src/`, the skill, or the agent
-definitions. A race is one file, which the project's provenance.toml names (`race`, a path
-relative to it). The project names its source lists too (`sources`, each a
-`src/provenance/source_lists/<region>-sources.yaml`), and they merge. If you
-find yourself adding a candidate name to the pipeline, put it in the race file instead.
+Nothing about a subject, an office, a jurisdiction or a state belongs in `src/`, the skill, or
+the agent definitions. A project's provenance.toml holds its title, its subjects (each an `id`,
+its directory, and a `name`, what the questions call it), what its researchers are told
+(`context`) and what they never are (`completeness_check`). It names its source lists too
+(`sources`, each a `src/provenance/source_lists/<region>-sources.yaml`), and they merge. If you
+find yourself adding a subject's name to the pipeline, put it in the project file instead.
 
-A race is project data, so it lives with the project. It used to live in the tool's `races/`,
-found as `parents[2]/races`, which resolves inside the tool's own install once the tool is
-installed with `uv tool install`. #9 folds the race into the project file, and the `race` key
-is the bridge until then. A race file that still names `sources:` is refused, not ignored: a
-race listing `us, ca` beside a project listing `us` would lose its California lists without a
-word. The source lists come from the project everywhere, including the verdict helpers and the
-review page's secondary-host badge, which used to read the default race's lists while build
-read another's.
+**A subject is not necessarily a person.** It can be a pending proposal or a document, so no
+name, scaffolding or help text may assume one. Two versions of an amended proposal are two
+subjects, each with its own id, run and review progress (#24 may add version pinning to a
+subject document later). A subject's name is required: it is what `provenance new-subject`
+retargets the question set to, and what its review page is titled by. A bare id, the form #8
+wrote, is refused with the form to write, since read as its own name a short id would retarget
+questions by a word inside other words.
 
-Tests see only the synthetic race in `tests/fixtures/races/`, through conftest's autouse
-`example_project`, which makes every test's `tmp_path` a project naming it. A command finds its
-project by walking up from the run, and the nearest provenance.toml wins, so a run in `tmp_path`
-itself needs nothing more. A test that lays a run out elsewhere (`tmp_path / "data"`, a
-candidate's `data/cand`) writes its own with `write_project()`, declaring the subjects it uses,
-or the command refuses the run as one the project does not declare. A test about having no
-project unlinks `tmp_path`'s file first.
+This is project data, so it lives with the project. It used to be a race file in the tool's
+`races/`, found as `parents[2]/races`, which resolves inside the tool's own install once the tool
+is installed with `uv tool install`, and then a file the project named with `race`, a bridge
+until #9 folded its content into the project file. `race` is refused, not ignored: ignored, the
+context and completeness check would drop out without a word. The source lists come from the
+project everywhere, including the verdict helpers and the review page's secondary-host badge,
+which used to read the default race's lists while build read another's.
+
+Tests see only the synthetic example project conftest writes (`write_project()`, from its
+`EXAMPLE_*` values), through its autouse `example_project`, which makes every test's `tmp_path`
+that project. A command finds its project by walking up from the run, and the nearest
+provenance.toml wins, so a run in `tmp_path` itself needs nothing more. A test that lays a run
+out elsewhere (`tmp_path / "data"`, a subject's `data/cand`) writes its own with
+`write_project()`, declaring the subjects it uses, or the command refuses the run as one the
+project does not declare. A subject given to it as a bare id gets the example's name for it, or
+`Subject <id>`. A test about having no project unlinks `tmp_path`'s file first.
 
 ## Researchers search; they are never told what they will find
 
@@ -1028,34 +1037,51 @@ answer finds that answer and stops — so a second incident, a bigger donor, a m
 filing never surfaces, and the corroboration you get back is the pipeline agreeing with
 itself.
 
-**Race context is thin on purpose.** `race.context` goes verbatim into every researcher
-prompt, and it is unverified by construction — no snippet, no source, `provenance verify` never
-looks at it. So a factual claim placed there is believed by every researcher and checked by
-none. Context earns its place by helping *find records* (which bodies keep minutes on this
-office, which LegInfo host covers which years); anything else is a question with a citation.
-Known claims live under `# Completeness check`, which `races.load()` splits out of
-`context` — check it *after* results are in, and treat a gap as a finding rather than
-topping up a claim with the answer.
+**Project context is thin on purpose.** `context` goes verbatim into every researcher prompt,
+through `provenance brief`, and it is unverified by construction — no snippet, no source,
+`provenance verify` never looks at it. So a factual claim placed there is believed by every
+researcher and checked by none. Context earns its place by helping *find records* (which
+bodies keep minutes on this office, which LegInfo host covers which years); anything else is a
+question with a citation. Known claims live in `completeness_check` — check it *after* results
+are in, and treat a gap as a finding rather than topping up a claim with the answer.
 
-## One run per candidate; one cache for all of them
+**The completeness check never reaches a researcher.** It is a key of its own, not a heading
+split out of prose, and `provenance brief` is where a researcher's context is put together:
+`cli.researcher_brief()` builds it from the fields a researcher may read, by name, so a field
+added to the project file later reaches no prompt until someone adds it there.
+`test_the_completeness_check_never_reaches_a_researcher` fails if any of the check leaks into a
+brief, for any run. `project.load()` refuses a `context` that still holds a completeness check
+heading, as a race file's body pasted whole would. The orchestrator reads the check; it pastes
+the brief, never the project file.
 
-Each candidate is a separate run in a subdirectory of the project, `<project>/<candidate-id>/`,
+## One run per subject; one cache for all of them
+
+Each subject is a separate run in a subdirectory of the project, `<project>/<subject-id>/`,
 which the project's provenance.toml lists under `subjects` — own claims, own retries, own
-review progress. `provenance new-candidate <id>` scaffolds it and retargets the question set to
-that person's name, so a researcher is never left inferring who "the candidate" means. It
-refuses a candidate the project does not list, and one with no question set to copy: it writes
-the run, never the project file.
+review progress. A command names it with `--subject <id>` or `--data <its directory>`, never
+both (they could disagree). `provenance new-subject <id>` scaffolds it and retargets the question
+set to the subject's name, replacing the other subjects' names, so a researcher is never left
+inferring which subject a question is about. It refuses a subject the project does not list,
+and one with no question set to copy: it writes the run, never the project file.
 
-The page cache is deliberately **not** per-candidate. The same filing, article, or roll call
+The page cache is deliberately **not** per-subject. The same filing, article, or roll call
 routinely covers more than one of them, and re-fetching per run would both waste time and
 risk handing two runs different bytes for the same URL.
 
-Two things that must stay per-candidate: the review app's storage key (it is derived from
-the title, which is why `provenance build --candidate <id>` names the person — two candidates
-sharing a key would show each other's checkmarks), and the race file's completeness check.
+**Review progress must stay per subject, and it is keyed by identity, not display.** The review
+page's storage key is `report.store_id()`: the project's `name` and the subject's id, hashed as
+JSON. It was the page's title, so two subjects whose pages read alike (every subject's, before
+the title named the subject), or two versions of an amended proposal, showed each other's
+checkmarks, and a `--title` moved a review's progress. #14's reviewer notes are stored with the
+progress, so they follow the same key. Two projects of one `name` share progress for subjects of
+one id, since `provenance serve` serves every project from one origin; the README says so.
+Progress saved under the title is read once, where the run has none of its own yet, and saved
+under the new key at once, so a later title-keyed save never reaches it. When you change what a
+stored key means, decide what the old key means under the new rule, and read it once rather
+than on every load.
 
 One consequence of separate runs worth keeping in mind: `conflicts.py` compares dollar
-figures across every claim it is given. That is right within a candidate and wrong across
+figures across every claim it is given. That is right within a subject and wrong across
 two, so if these datasets are ever merged, scope the cross-claim comparison by subject
 first.
 
@@ -1088,28 +1114,28 @@ changes any of it, and `tests/test_project.py` checks every combination of them.
 
 **Gotcha: a rule keyed on "does a cache exist here?" fulfils itself.** That is what the project
 file replaced, in two steps. `_cache_root()` first let a run's own `cache/` win if present. The
-first stray write into `data/<candidate>/cache` created exactly that condition, so the stray
-*became* the cache: one fetch with `--data data/<candidate>` forked the pages and hid the
+first stray write into `data/<subject>/cache` created exactly that condition, so the stray
+*became* the cache: one fetch with `--data data/<subject>` forked the pages and hid the
 CAL-ACCESS database, and every query citation in the run failed at once. The fix inferred
-again, one level up: a candidate dir used its parent's cache whenever the parent held a
-question set. That could not tell a self-contained root nested in another from a candidate of
-it, so a scratch root in `data/scratch` rebuilt the live database. Nor could it tell a candidate
+again, one level up: a subject's dir used its parent's cache whenever the parent held a
+question set. That could not tell a self-contained root nested in another from a subject of
+it, so a scratch root in `data/scratch` rebuilt the live database. Nor could it tell a subject
 scaffolded before its parent had a question set from a root, and that one forked. Don't let
 the existence of a directory decide where anything goes, since whatever first creates it gets
 to pick: declare it. A stray `cache/` in a run is never read. It is named once, in a yellow
 warning, so someone moves what it holds. Every command that touches the cache —
 `provenance calaccess` included — resolves its root through `_cache_root()` and takes
 `--cache`, or two commands disagree about where the database lives. That includes reads: the
-verdict staleness check used to look under the candidate dir and, through `cache_dir()`'s
+verdict staleness check used to look under the subject's dir and, through `cache_dir()`'s
 mkdir, recreate the stray on every run (see "A verdict is about a source as cached at judgment
 time").
 
 **No command adopts an old layout.** A directory with no provenance.toml at or above it is
 refused, with what to write. Moving a project laid out the old way (`data/` holding the question
-set, claims and cache, and a run per candidate in `data/<candidate>/`) is a reviewed change: a
-provenance.toml in `data/` with `cache = "."` and the candidates' directories under `subjects`
-(README, "Projects"). Adopting one silently would keep the inference alive for every project
-that never writes the file.
+set, claims and cache, and a run per subject in `data/<subject>/`) is a reviewed change: a
+provenance.toml in `data/` with `cache = "."`, each subject's directory under `subjects`, and
+the race file's title, context and completeness check as keys (README, "Projects"). Adopting
+one silently would keep the inference alive for every project that never writes the file.
 
 ## Question ids are stable and never reused
 
@@ -1152,11 +1178,11 @@ delete the key. An identity pair moved nothing, so it is not reported.
 misquoted question fails there, before build leaves it out of review. It checks against the set
 of the run the claim sits in, the directory holding its `claims/` (resolved, so a relative
 path from inside `claims/` works), not `--data`, in the project found by walking up from there.
-A researcher on a candidate run checks with no `--data`, which is the project root, whose set is
-the template, not the copy retargeted to the candidate.
+A researcher on a subject's run checks with no `--data`, which is the project root, whose set
+is the template, not the copy retargeted to the subject.
 
 Each run holds its own set. The project root's is the template, and a subject's is its own
-`questions.json`, retargeted to it, which `provenance new-candidate` writes. There is no
+`questions.json`, retargeted to it, which `provenance new-subject` writes. There is no
 fallback between them: a subject's run with no copy used to read the template, which is worded
 for another subject. Nor does it check nothing instead: where any run in the project has a set
 (the root or another subject) and the subject has none, no claim in it can be checked, and
@@ -1194,7 +1220,7 @@ Hardening it further cost more than it could ever save, and stable ids remove th
 
 What is left:
 - `maps_from` and `mapped_from` in a `questions.json`, and `previous_question` in a claim file,
-  still load; nothing writes them, and the gate reports a `maps_from` (above). `provenance new-candidate`
+  still load; nothing writes them, and the gate reports a `maps_from` (above). `provenance new-subject`
   copies neither of the first two: they are another run's history, and a new run has no earlier
   id space. `Claim` has no
   `previous_question` field, so it is ignored on load and the next `provenance verify` write-back drops
@@ -2611,7 +2637,7 @@ git+https://github.com/maguerrieri/provenance@v<version>`), so four things follo
   They were found beside the checkout (`Path(__file__).parents[2]`), which a wheel doesn't have,
   and every test passed, because tests run from the checkout. A test builds the wheel and checks
   the files are in it. Nothing the package reads may be looked up relative to the repo root.
-  `races/` was the last one; a race is project data now, named by the project file (#8).
+  The race files were the last one; that context is project data now, in the project file (#9).
   A file the package *writes* can't live there either: see "Only a checkout writes to the
   registry".
 - **One version for the plugin and the command.** Claude Code caches a plugin by the

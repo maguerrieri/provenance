@@ -11,13 +11,14 @@ Agents find sources and make judgment calls. Deterministic code decides whether 
 
 ## Status
 
-Imported from the private project where it was built, and still shaped by it: research is
-organized as voter-guide races. The generalization is tracked as an epic in this repo's issues.
-The tool ships with no project: write one (see [Projects](#projects)) before running a
-command in it.
+Imported from the private project where it was built, for one kind of research: candidates in
+an election. Its core no longer assumes that. A project researches one or more subjects, and a
+subject can be a person, a pending proposal or a document. The rest of the generalization is
+tracked as an epic in this repo's issues. The tool ships with no project: write one (see
+[Projects](#projects)) before running a command in it.
 
-Citation verification pipeline for voter guides. Nothing race-specific lives in the pipeline
-itself: each race is one file, which its project names.
+Nothing project-specific lives in the pipeline itself: a project's subjects, and what its
+researchers are told, are in its own `provenance.toml`.
 
 **The premise:** every claim must be traceable to a human-written source, and a human must
 be able to confirm any citation in ~15 seconds. Fabricated and misattributed citations are
@@ -140,8 +141,17 @@ buttons cover the standalone case.
 `provenance build` removes the previous `review.html` and `claims.json` from `out/` before anything
 else, so a build that refuses or fails leaves nothing for `provenance serve` to show, and a reload
 while any build runs gets a 404 until it finishes. If it can't remove them, it says so and
-stops. Your checkmarks live in the browser, keyed by the title, and come back with the next
-build that succeeds. A tab you already have open keeps its page until you reload it.
+stops. Your checkmarks live in the browser and come back with the next build that succeeds. A
+tab you already have open keeps its page until you reload it.
+
+They are kept per project and subject: by the project's `name` and the subject's id, never by
+the page's title, so two subjects never share them, nor two versions of an amended proposal
+(two subjects). Renaming either starts that review over, so export your progress first. Two
+projects with the same `name` share progress between their subjects of one id, since
+`provenance serve` serves every project from one origin: give each project its own `name`.
+Progress saved before it was kept this way was kept by the page's title, and it carries over
+once, on the first build whose title is the one it was saved under. For a run built under
+another title, build once with `--title '<that title>'`.
 
 Reading the context is the point. ⌘F proves the words are on the page; only you can tell
 whether they support the claim.
@@ -194,65 +204,90 @@ nearest one at or above the run it is given (`--data`, else the working director
 
 ```toml
 name = "example"
-sources = ["us", "ca"]       # the source lists citations are checked against
-cache = "."                  # the directory that holds cache/, as --cache names it
-subjects = ["lind", "ng"]    # optional: a run for each, in its own subdirectory
-race = "race.md"             # the race file (see below)
+title = "Example County Assessor"   # optional: the review page's title, `name` if left out
+sources = ["us", "ca"]              # the source lists citations are checked against
+cache = "."                         # the directory that holds cache/, as --cache names it
+subjects = [                        # optional: a run for each, in its own subdirectory
+  {id = "lind", name = "Avery Lind"},
+  {id = "ng", name = "Jordan Ng"},
+]
+context = """
+Where the records are: appeals board decisions are PDFs on the county site, one per hearing.
+"""
+completeness_check = """
+- A settlement the research should surface on its own.
+"""
 ```
 
 - **`cache`** is where the shared page cache and the CAL-ACCESS database live, relative to the
   file, with `~` expanded. `"."` keeps them beside it. The same path in several projects, such
   as `"~/.cache/provenance"`, shares one cache between them. `--cache` overrides it.
 - **`subjects`** lists the project's separate runs, each in its own subdirectory with its own
-  claims, verdicts, question set and review progress. `provenance new-candidate <id>` scaffolds
-  one, but only for a subject listed here: no command edits the project file. Without
-  subjects, the project root is the only run.
-- **`race`** names the race file, relative to this one.
+  claims, verdicts, question set and review progress. A subject is an `id`, its directory, and
+  a `name`, what the questions call it. It need not be a person: a pending proposal or a
+  document works the same way, and two versions of an amended proposal are two subjects, so
+  their reviews never mix. `provenance new-subject <id>` scaffolds one, but only for a subject
+  listed here: no command edits the project file. Without subjects, the project root is the
+  only run.
+- **`context`** is what every researcher is told, verbatim. See [What researchers are
+  told](#what-researchers-are-told).
+- **`completeness_check`** is what no researcher is told: the answers already known.
 
 A run is the project root or a subject's directory: `provenance verify` works on the root
-(from anywhere in the project, a subject's directory included, which it then says),
-`provenance verify --data lind` on a subject, and any other `--data` is refused. Each run holds
-its own `questions.json`, `claims/`, `judgments/`, `archives.json` and `out/`. A subject's
-`questions.json` is its own copy, retargeted to it. It never falls back to the root's, and a
-subject without one, in a project that has one, fails the question check until it gets its
-copy.
+(from anywhere in the project, a subject's directory included, which it then says), and
+`provenance verify --subject lind` (or `--data lind`) on a subject. Any other `--data`, or a
+`--subject` the project doesn't list, is refused. Each run holds its own `questions.json`,
+`claims/`, `judgments/`, `archives.json` and `out/`. A subject's `questions.json` is its own
+copy, retargeted to it: `new-subject` replaces the other subjects' names in the template's
+questions with this one's. It never falls back to the root's, and a subject without one, in a
+project that has one, fails the question check until it gets its copy.
+
+The review page is titled by the run: a subject's by its name and the project's title, the
+root's by the project's title. `provenance build --title` changes what it shows, not where its
+progress is kept.
 
 ### Moving a project laid out the old way
 
 Before project files, a project lived in `data/`: its question set, claims and cache there, and
-a run per candidate in `data/<candidate>/`, with the cache found by inference. No command adopts
-that layout: each one refuses until a project file exists. To move one, write
+a run per subject in `data/<subject>/`, with the cache found by inference, and a race file in
+the tool's `races/` holding its title, context and completeness check. No command adopts that
+layout: each one refuses until a project file exists. To move one, write
 `data/provenance.toml`:
 
 ```toml
 name = "<the race's name>"
-sources = ["us", "ca"]         # moved from the race file's `sources:`
-cache = "."                    # data/cache, as before
-subjects = ["<candidate>"]     # each data/<candidate>/ directory
-race = "../races/<race>.md"   # the clone's races/, or a copy moved in beside this file
+title = "<the race file's title>"
+sources = ["us", "ca"]                 # moved from the race file's `sources:`
+cache = "."                            # data/cache, as before
+subjects = [{id = "<id>", name = "<name>"}]   # each data/<id>/, named as the race file's candidates
+context = """<the race file's prose, up to its completeness check>"""
+completeness_check = """<the race file's completeness check section>"""
 ```
 
-Then delete `sources:` from the race file (a race still naming them is refused), and give any
-subject without a `questions.json` its own copy. Commit the project file in the project's own
-repository, so the move is reviewed like any other change. Commands then run in `data/`, or
-with `--data data/<candidate>`. Nothing else moves.
+Give any subject without a `questions.json` its own copy. Commit the project file in the
+project's own repository, so the move is reviewed like any other change. Commands then run in
+`data/`, with `--subject <id>` for a subject's run. Nothing else moves. A project file written
+before subjects had names, or naming its race file with `race`, is refused with what to write
+instead.
 
-## Adding a race
+## What researchers are told
 
-A race is one file, which the project names with `race`: frontmatter naming its title and
-candidates, then prose context that goes verbatim into researcher prompts. The source lists are
-the project's (`sources`).
+`provenance brief` prints what goes into every researcher's prompt, verbatim: the project, the
+run's subject, and `context`. It never prints `completeness_check`.
 
-```yaml
----
-name: example
-title: 2030 Example County Assessor
-election_date: 2030-11-05
-candidates:
-  - {id: lind, name: Avery Lind}
----
-```
+Keep `context` thin. It reaches every researcher unverified: no snippet, no source, nothing
+checks it, so a factual claim placed there is believed by every researcher and checked by
+none. It earns its place by helping researchers find records (which bodies keep minutes, which
+host covers which years). Anything else is a question with a citation.
 
+`completeness_check` holds the answers already known. A researcher told what it is looking for
+confirms that item instead of searching, so nothing off the list surfaces. Check it *after*
+the results are in, and treat a gap as a finding. A `context` holding a completeness check
+heading, as a race file's pasted body would, is refused.
+
+## Source lists
+
+The source lists are the project's (`sources`).
 `src/provenance/source_lists/us-sources.yaml` holds national outlets and the structural rules that apply
 everywhere — lead-generators (Ballotpedia, Wikipedia) and excluded AI aggregators.
 Regional lists (`ca-sources.yaml`, and any county or city list added to the tool) hold local outlets and
@@ -262,7 +297,7 @@ degrades gracefully instead of being rejected. A new list is a change to the too
 `src/provenance/source_lists/` in a clone, since an installed copy's lists are replaced on the
 next install.
 
-New race → new file, named in its project file. No pipeline or skill edits.
+A new project is a new `provenance.toml`. No pipeline or skill edits.
 
 ## License
 
