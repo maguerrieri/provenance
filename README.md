@@ -31,6 +31,9 @@ judge whether context supports a claim. Models never set a verification status.
 The package was `vgpipe` and the command `vg`. Both are now `provenance`: `uv run vg verify` is
 `provenance verify`, and so on for every command.
 
+The orchestration skill was `voter-guide-research`. It is now `research`, invoked as
+`provenance:research`.
+
 A run verified before the rename still holds the reasons `vg verify` wrote into its claim files,
 and some of them tell you or a researcher to run a `vg` command. Run `provenance verify`
 on it once to rewrite them.
@@ -100,7 +103,8 @@ Until the marketplace lists a release, load it from a clone with `claude --plugi
 The plugin and the command are released together, at one version. Before a run the skill
 checks `provenance --version` against the plugin's, and gives the install command for the
 plugin's version when they differ: the agents run the commands and flags of that version.
-Installed, the agents are `provenance:researcher` and `provenance:verifier`.
+Installed, the agents are `provenance:researcher` and `provenance:verifier`, and the skill that
+runs a project is `provenance:research`.
 
 ### Developing the tool
 
@@ -167,7 +171,7 @@ whether they support the claim.
 | 2 | `provenance verify` + `provenance:verifier` agents | Mechanical checks, then the judgment half; ≤2 retries, then `human_review` |
 | 3 | `provenance build` / `provenance serve` | Conflicts + review app + `claims.json` |
 
-Orchestration lives in the plugin's skill, `skills/voter-guide-research/SKILL.md`; agent
+Orchestration lives in the plugin's skill, `skills/research/SKILL.md`; agent
 definitions in `agents/`.
 
 Question ids (`q1`, `q2a`) are **stable and never reused**. They name each question's claim and

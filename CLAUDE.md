@@ -2633,7 +2633,9 @@ git+https://github.com/maguerrieri/provenance@v<version>`), so four things follo
   `uv run` works only in a clone of this repo, so it is for developing the tool: tests, CI and
   these docs. `tests/test_plugin.py` fails on `uv run provenance` in anything shipped.
 - **Installed, the agents are `provenance:researcher` and `provenance:verifier`.** The skill
-  spawns them by those names; a bare `researcher` names no agent outside this repo.
+  spawns them by those names; a bare `researcher` names no agent outside this repo. The skill
+  is `research` (`skills/research/`), which users invoke as `provenance:research`; it was
+  `voter-guide-research`.
 - **What the package reads ships in it.** The review template, the source lists and the access
   registry are package data under `src/provenance/`, found through `importlib.resources`.
   They were found beside the checkout (`Path(__file__).parents[2]`), which a wheel doesn't have,

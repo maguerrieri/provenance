@@ -1,5 +1,5 @@
 ---
-name: voter-guide-research
+name: research
 description: Use when running the provenance research pipeline for any project — fanning out research questions to subagents, verifying citations, and building the human review app. Covers the full template-to-review-app run.
 ---
 
