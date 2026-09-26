@@ -76,8 +76,8 @@ def load_rules(names: tuple[str, ...] = ("us",), sources_dir: str | None = None)
             raise FileNotFoundError(
                 f"no source list {name!r} in {d} (have: {', '.join(available(d)) or 'none'})")
         try:
-            data = yaml.load(p.read_text(), Loader=_OneOfEachKey)
-        except yaml.YAMLError as e:
+            data = yaml.load(p.read_text(encoding="utf-8"), Loader=_OneOfEachKey)
+        except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
             raise ValueError(f"source list {p} can't be read: {e}") from None
         if data is None:
             data = {}
