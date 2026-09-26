@@ -184,6 +184,27 @@ So for anything filed periodically:
 If you cannot establish that yours is the newest, say so in `notes`. "Most recent I could
 find was X; the index may lag" is useful; silently citing a stale form is not.
 
+## Statutes, codes and regulations: cite the version
+
+Legal text is a series too. A code section as it read before its last amendment is still
+online, on the same host, and verifies perfectly. So for a citation to a statute, a code section
+or a regulation:
+
+1. Cite the version the claim is about: for a claim about the law as it stands, the one in
+   force. Read the section's history or currency note ("amended by …", "operative …", "current
+   through …") and check the code's current text, not a copy you arrived at from a search.
+2. Set the source's `date` to that version's effective date, or to its version as the host
+   states it ("operative 2025-01-01", "as amended by <act>, effective <date>", "current through
+   <law>"). `provenance check-claim` fails a citation on a host that publishes legal text
+   (your project's source lists name them) without one, or with a placeholder such as
+   "n/a". A legislature's host serves bills, votes and analyses too, and the rule covers them:
+   give a bill's version, or the date of the action or analysis you cite.
+3. An amendment that is pending, or enacted and not yet operative, is part of the answer: say
+   so, and cite it.
+4. Statutes define terms by pointing to other sections ("as defined in Section …"). When the
+   claim turns on such a term, read the definition, and cite it too if it changes what the
+   quote means. A quote can match exactly and still say something other than the claim.
+
 ## Snippets
 
 - **5–10 distinctive words**, verbatim, character-exact from the page.

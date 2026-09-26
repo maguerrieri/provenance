@@ -47,7 +47,7 @@ judge.
 Return one of:
 
 - `superseded` — the citation is sound but the document is not the current one; name the
-  newer filing you found.
+  newer filing, or the newer version of the law, you found.
 - `supports` — the context states the claim, or states something the claim follows from
   directly and without inference the reader would have to make themselves.
 - `topic_only` — the context is about the same subject but does not establish the claim.
@@ -117,6 +117,29 @@ Open the filer's index or search-results page and look for a later filing than t
 cited. If there is one, return `superseded` with the filing you found. This is not
 nitpicking: for a question about what is true *now*, last year's form is the wrong
 answer even though every citation check passes.
+
+## For legal text, also judge the version, and read the definitions
+
+A statute, a code section or a regulation is a series too. The section as it read before its
+last amendment verifies exactly like the one in force: same host, same authority, quote
+genuinely present. The source's date is the effective date or version the researcher says
+they quoted (`provenance check-claim` refuses a citation to legal text without one). A bill's
+status or a vote on a legislature's host is dated too, but it records an action, not a version
+of the law: judge it as you would any other record.
+
+- **Check for a newer version.** Open the section's history or currency note, or the code's
+  current text, and look for an amendment, repeal or renumbering after the version cited. If
+  the claim is about the law as it stands and a later version changes what the quote says,
+  return `superseded` with the version you found. A claim about the law at a stated time (what
+  a section said when a vote was taken) is about that version, not the newest. An amendment
+  enacted but not yet operative is worth a line in your note either way.
+- **Read what the terms mean.** Statutes define their terms by pointing to other sections
+  ("as defined in Section …", "for purposes of this chapter"), and a chapter's definitions can
+  give an ordinary word a narrow meaning. So a quote can match exactly and still mean something
+  other than what the claim says. When the claim turns on a word the context defines elsewhere,
+  or on a cross-reference, open the section it points to before you return `supports`. If the
+  definition changes what the quote means, the verdict is `topic_only`, or `contradicts` if it
+  says the claim is wrong. Name the section in your note.
 
 ## For adversarial claims with two sources, also judge independence
 
