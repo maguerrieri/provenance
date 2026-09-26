@@ -104,12 +104,13 @@ def load_rules(names: tuple[str, ...] = ("us",), sources_dir: str | None = None,
             hosts = [] if hosts is None else hosts   # `key:` with nothing under it lists none
             if not isinstance(hosts, list):
                 raise ValueError(f"source list {p}: {k!r} must be a list of host names")
-            if bad := [h for h in hosts
-                       if not isinstance(h, str) or not _HOST.fullmatch(h.strip().lower())]:
+            # One test for a host, the one a project's `primary_hosts` passes (`bare_host()`),
+            # so a list and a project can't disagree about what a host is.
+            if bad := [h for h in hosts if not isinstance(h, str) or bare_host(h) is None]:
                 raise ValueError(f"source list {p}: {k!r} holds what is not a bare host name: "
                                  f"{', '.join(map(repr, bad))} (write `example.gov`: no "
-                                 f"scheme, path, port or `www.`)")
-            merged[k].extend(_ascii(h.strip().lower()) for h in hosts)
+                                 f"scheme, path, port or `www.`, and not an IP address)")
+            merged[k].extend(map(bare_host, hosts))
     # Read here, where they join the rules, not only in project.load(): one given any other way
     # (a Project built in code) would otherwise be compared as written, and match nothing.
     merged["primary_document"].extend(h for h in map(bare_host, primary_hosts) if h)
