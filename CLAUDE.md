@@ -876,6 +876,9 @@ render. Nothing is lost. The render is regenerable, and review progress lives in
 `localStorage`, keyed by the title, so it comes back with the next build that succeeds. Only the
 files a build writes are removed, along with any temp file a killed build left (`provenance serve`
 lists `out/`, dotfiles included, and one can hold a whole page); anything else in `out/` stays.
+And only a run's: a `--data` the project doesn't declare is no run, and its `out/` is none of
+the project's, so it is left alone. A project file that can't be read is a refusal like any
+other, and the run it was asked for is still that project's, so that run's render goes first.
 If they can't be removed, the build says so and stops, and they stay until someone removes them
 by hand. Two builds of one run at once are not supported: both write the same `out/`, so the
 last to finish decides what is there, and one can remove the other's temp file mid-write.
@@ -1022,7 +1025,11 @@ changes any of it, and `tests/test_project.py` checks every combination of them.
 - **The walk follows the path as given, not its symlinks' targets** (`project.find()`). A
   subject symlinked to another disk is declared in the project it sits in; its real directory
   has none above it. A run reached through a symlink from outside its project is refused, never
-  mistaken, since the run check compares resolved paths. And since a subject may be a symlink,
+  mistaken, since the run check compares resolved paths. The walk starts from the path as the
+  shell names it, too: `os.getcwd()` resolves symlinks, so from inside a symlinked subject it
+  named the real directory, and every command there was refused. `project.working_dir()` takes
+  `$PWD` where it is the same directory, and `project.absolute()` joins a relative path onto it;
+  a path is never `.resolve()`d before the walk. And since a subject may be a symlink,
   names alone don't keep runs apart: one that resolves to the root, or to another subject's
   directory, is refused, since it would be one run under two names.
 - **A provenance.toml inside a declared subject is refused from both sides.** The nearest file
@@ -1105,11 +1112,12 @@ the template, not the copy retargeted to the candidate.
 Each run holds its own set. The project root's is the template, and a subject's is its own
 `questions.json`, retargeted to it, which `provenance new-candidate` writes. There is no
 fallback between them: a subject's run with no copy used to read the template, which is worded
-for another subject. Nor does it check nothing instead: where the project has a set and the
-subject has none, no claim in it can be checked, and build, status and check-claim fail as for
-a set that can't be read (`cli._no_own_set()`). Saying so and passing would be a prose rule with
-no gate, and a subject moved from the old layout without its copy would render claims on
-retired ids that the fallback used to leave out. A subject's own copy is not updated when the template gains a question, so
+for another subject. Nor does it check nothing instead: where any run in the project has a set
+(the root or another subject) and the subject has none, no claim in it can be checked, and
+build, status and check-claim fail as for a set that can't be read (`cli._no_own_set()`). Saying
+so and passing would be a prose rule with no gate, and a subject moved from the old layout
+without its copy, or one whose copy was lost, would render claims on retired ids. Only a project
+with no set anywhere, before its questions are written, checks nothing and says so. A subject's own copy is not updated when the template gains a question, so
 add a new one to each run's copy as well. A set that can't be read as one question per id fails the whole
 command, and build renders nothing, since no claim could be checked. The message names every
 problem: not a list, an entry with no id or text, an id no claim can carry (`QID_PATTERN`), or

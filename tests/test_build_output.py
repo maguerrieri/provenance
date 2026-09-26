@@ -116,6 +116,18 @@ def test_a_project_file_that_cannot_be_read_leaves_no_review_app(run, monkeypatc
     assert _left(run) == set(), out
 
 
+def test_a_directory_that_is_no_run_keeps_its_out(run, tmp_path):
+    """Only a run's render is removed. A directory the project doesn't declare is no run, and
+    what its out/ holds is none of the project's: a mistyped --data must not delete it."""
+    other = tmp_path / "data" / "site"
+    (other / "out").mkdir(parents=True)
+    (other / "out" / report.REVIEW_HTML).write_text("someone else's page")
+    code, out = _provenance("build", "--data", other)
+    assert code == 1 and "is neither the root of the project" in out, out
+    assert _left(other) == {report.REVIEW_HTML}, out
+    assert _left(run) == {report.REVIEW_HTML, report.CLAIMS_JSON}, "nor the project's own"
+
+
 def test_the_question_id_refusal_says_the_app_was_not_rendered(run):
     _unreadable_questions(run)
     code, out = _provenance("build", "--data", run)
