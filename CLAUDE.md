@@ -1289,7 +1289,10 @@ check each way:
   suite. It refuses a login in any URL, in any string, in every reading `_readings()` knows
   (NFKC, percent-encoding, HTML and backslash escapes): nested in a query, fragment, form field
   or JSON value at any depth (#163), or written into prose. A login is an `@` in a URL's
-  authority. A scheme-less `user:x@host` counts only where a host is expected, since in a query
+  authority, and each authority is read in every decoding too, since decoded first,
+  `%2F…%40` ends it before the `@`. Decoding runs until nothing changes: a value that still
+  decodes after eight rounds is refused, since stopping at a fixed depth let a login one layer
+  deeper through. A scheme-less `user:x@host` counts only where a host is expected, since in a query
   it reads the same as a search (`from:alice@agency.example`); there any `@` is refused (a host
   argument, which `.hostname` never cleaned without a `://`, so `source-note` wrote the login
   into a file name, #161). Each recipe's request gets `_check_request()`, which `run()` also
