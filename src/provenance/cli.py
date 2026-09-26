@@ -2731,13 +2731,19 @@ def _scaffold(root: Path, name: str, sources: list[str], cache: str, files: dict
     text = _PROJECT_FILE.format(name=_toml_string(name), sources=json.dumps(sources),
                                 cache=_toml_string(cache))
 
+    def ours(f: Path, ident: tuple[int, int]) -> bool:
+        """Whether `f` is still the file this run installed: one another process put in its
+        place is theirs, to leave in place and never to adopt."""
+        try:
+            st = os.lstat(f)
+        except OSError:
+            return False
+        return (st.st_dev, st.st_ino) == ident
+
     def undo() -> None:
         for f, ident in reversed(written):
-            # Only while it is still the file this run installed: one another process put in
-            # its place is theirs.
             try:
-                st = os.lstat(f)
-                if (st.st_dev, st.st_ino) == ident:
+                if ours(f, ident):
                     f.unlink()
             except OSError:
                 pass
@@ -2779,7 +2785,9 @@ def _scaffold(root: Path, name: str, sources: list[str], cache: str, files: dict
             undo()
             _refuse(f"could not write {path}: {e}. Nothing was written.")
     _fsync_dir(root)
-    if held := _run_files(root, files):
+    # Exempt only what this run still owns: a question set another writer put in place of the
+    # one `ask` installed is a run's file like any other.
+    if held := _run_files(root, [f.name for f, ident in written if ours(f, ident)]):
         undo()
         _refuse_run_files(root, held)
     try:
