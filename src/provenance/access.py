@@ -17,6 +17,7 @@ import re
 import shlex
 from dataclasses import dataclass, field
 from functools import lru_cache
+from importlib.resources import files
 from itertools import pairwise
 from pathlib import Path
 from urllib.parse import SplitResult, unquote_plus, urlsplit, urlunsplit
@@ -24,7 +25,8 @@ from urllib.parse import SplitResult, unquote_plus, urlsplit, urlunsplit
 import httpx
 import yaml
 
-REGISTRY = Path(__file__).resolve().parents[2] / "sources" / "access"
+# Package data, so an installed copy (uv tool install) has it.
+REGISTRY = Path(files(__package__) / "source_access")
 
 # Never persisted, never replayed. An endpoint that only works with your session is a manual
 # retrieval, not a pipeline capability, and recording the credential would be both a leak and

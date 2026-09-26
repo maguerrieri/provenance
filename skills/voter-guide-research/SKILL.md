@@ -233,8 +233,8 @@ A run that skips it produces green rows nobody has actually checked.
 
 **Read `races/<race>.md`** — that file holds everything race-specific: the candidates, the
 known adversarial claims, the powers of the office, the primary-source hosts, and which
-source lists apply (`sources: [us, ca]` → `sources/us-sources.yaml` +
-`sources/ca-sources.yaml`).
+source lists apply (`sources: [us, ca]` → `source_lists/us-sources.yaml` +
+`source_lists/ca-sources.yaml`).
 
 Paste its **"Race context"** and **"Primary sources"** sections verbatim into every
 researcher prompt. Do not summarize them — the specifics (exact vote shares, which LegInfo

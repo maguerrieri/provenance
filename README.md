@@ -135,11 +135,11 @@ then prose context that goes verbatim into researcher prompts.
 name: example
 title: 2030 Example County Assessor
 election_date: 2030-11-05
-sources: [us, ca]          # sources/us-sources.yaml + sources/ca-sources.yaml
+sources: [us, ca]          # source_lists/us-sources.yaml + source_lists/ca-sources.yaml
 ---
 ```
 
-`sources/us-sources.yaml` holds national outlets and the structural rules that apply
+`src/provenance/source_lists/us-sources.yaml` holds national outlets and the structural rules that apply
 everywhere — lead-generators (Ballotpedia, Wikipedia) and excluded AI aggregators.
 Regional lists (`ca-sources.yaml`, and any county or city list you add) hold local outlets and
 primary-document hosts. Lists merge, most-restrictive category wins, and unlisted domains
