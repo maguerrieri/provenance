@@ -2327,4 +2327,4 @@ def human_command(name: str, params: dict[str, str], cache_root: str | None = No
         cache = f" --cache {shlex.quote(root if not root.startswith('-') else './' + root)}"
     args = "".join(f" --param {shlex.quote(str(k))}={shlex.quote(str(v))}"
                    for k, v in params.items())
-    return f"uv run provenance query {shlex.quote(name)}{cache}{args}"
+    return f"provenance query {shlex.quote(name)}{cache}{args}"

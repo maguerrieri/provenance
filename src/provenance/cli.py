@@ -1012,7 +1012,7 @@ def _amendment_footer(marks: list, omitted: list = (), reattributed: list | None
         also = (", or list rows an earlier amendment's cover gave this candidate"
                 if reattributed is not None else "")
         why = problem or ("its covers cannot say which amendment of a filing is its latest. "
-                          "Rebuild it from a complete export: uv run provenance calaccess build")
+                          "Rebuild it from a complete export: provenance calaccess build")
         con.print(Text("This database cannot tell whether a filing's latest amendment dropped "
                        f"any of these rows{also}: {why}", style="yellow"), soft_wrap=True)
     else:
@@ -1030,7 +1030,7 @@ def _amendment_footer(marks: list, omitted: list = (), reattributed: list | None
                       f"figure counting one goes to human_review.[/]")
     if any(m is None for m in omitted):
         con.print("[yellow]This database cannot tell whether a later amendment left out a "
-                  "schedule these rows are on: they carry no FORM_TYPE. Rebuild it: uv run provenance "
+                  "schedule these rows are on: they carry no FORM_TYPE. Rebuild it: provenance "
                   "calaccess build[/]")
     elif left_out := sum(1 for m in omitted if m):
         con.print(f"[yellow]{left_out} row(s) are in no figure: a later amendment of their "
@@ -1412,7 +1412,7 @@ def _print_handoff(h, run_args: str) -> None:
     if all(s.context is None for s in h.sources):
         line("Nothing in this claim can be judged yet.", "yellow")
         return
-    line(f"Record each verdict: uv run provenance judge {shlex.quote(h.question_id)} <sid> "
+    line(f"Record each verdict: provenance judge {shlex.quote(h.question_id)} <sid> "
          f"supports|topic_only|contradicts|superseded --context <token> --note \"<one line>\""
          f"{run_args}")
 
@@ -2178,8 +2178,8 @@ def new_candidate(candidate: str, data: Path = DATA, race: str = "",
 
     at, cid = _printable(str(root)), _printable(c.id)
     con.print("[green]ready[/] " + escape(f"{at}\n"
-                                          f"  uv run provenance verify --data {at}\n"
-                                          f"  uv run provenance build  --data {at} --candidate {cid}"))
+                                          f"  provenance verify --data {at}\n"
+                                          f"  provenance build  --data {at} --candidate {cid}"))
 
 
 @app.command()

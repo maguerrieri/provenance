@@ -572,7 +572,7 @@ def test_a_table_without_form_type_is_refused_until_rebuilt(tmp_path):
     con = calaccess.connect(root)
     try:
         with pytest.raises(calaccess.DegradedDatabase,
-                           match=r"no EXPN_CD\.FORM_TYPE.*uv run provenance calaccess build"):
+                           match=r"no EXPN_CD\.FORM_TYPE.*database: provenance calaccess build"):
             calaccess.unrestated_schedules(con, "EXPN_CD", [EXP_GAP])
         assert calaccess.unrestated_schedules(con, "NO_SUCH_CD", [EXP_GAP]) == [], (
             "a table that is not there has no rows to leave out")
