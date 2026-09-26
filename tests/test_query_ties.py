@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import zipfile
 
-from vgpipe import calaccess, queries
-from vgpipe.models import QueryCitation, Source
-from vgpipe.verify import verify_query_source
+from provenance import calaccess, queries
+from provenance.models import QueryCitation, Source
+from provenance.verify import verify_query_source
 
 FILER = "9990790"
 F460, F497 = "9990791", "9990792"

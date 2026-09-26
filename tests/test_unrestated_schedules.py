@@ -21,9 +21,9 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from vgpipe import calaccess, cli, queries
-from vgpipe.models import QueryCitation, Source, Verification
-from vgpipe.verify import revalidate_from_cache, verify_source
+from provenance import calaccess, cli, queries
+from provenance.models import QueryCitation, Source, Verification
+from provenance.verify import revalidate_from_cache, verify_source
 
 FILER = "8884100"
 GAP_460 = "8884101"      # schedules A and I at amendment 0; amendment 1 restates only C
@@ -161,7 +161,7 @@ def test_a_total_leaving_out_a_gift_goes_to_human_review_naming_the_filing(root)
     assert "they belong in this figure" in v.reason
     assert SETTLED_460 not in v.reason, "a settled filing is not one to open"
     assert "more schedule(s)" not in v.reason, "no count of more when there are none"
-    assert "vg query" in v.reason and v.query_run is not None   # the re-run command
+    assert "provenance query" in v.reason and v.query_run is not None   # the re-run command
 
 
 def test_a_gift_a_counted_row_also_reports_is_not_left_out(root):
@@ -310,7 +310,7 @@ def test_a_listing_that_cannot_check_says_so(root, monkeypatch):
     assert "cannot tell whether a later amendment left out a schedule" in out
 
 
-def test_vg_query_warns_before_the_value_is_recorded(root, monkeypatch):
+def test_provenance_query_warns_before_the_value_is_recorded(root, monkeypatch):
     args = ["query", "calaccess.contributor_total", "--cache", str(root)]
     for k, v in VELDT.items():
         args += ["--param", f"{k}={v}"]
@@ -336,7 +336,7 @@ def test_a_miss_whose_every_match_was_left_out_says_so(root, monkeypatch):
     assert v.status == "human_review", "no parameters can make it reproduce; a person opens it"
     assert v.reason.startswith("the query counts nothing") and PHRASE in v.reason
     assert "nothing here reproduces the claimed '700'" in v.reason, "the claim is named too"
-    assert calaccess.filing_url(GAP_460) in v.reason and "vg query" in v.reason
+    assert calaccess.filing_url(GAP_460) in v.reason and "provenance query" in v.reason
     s.verification = Verification(status="verified")
     v = revalidate_from_cache(s, root).verification
     assert v.status == "human_review" and PHRASE in v.reason and GAP_460 in v.reason
@@ -514,7 +514,7 @@ def test_a_reason_listing_a_share_of_unknown_size_first_does_not_call_the_rest_s
              for i in range(queries.UNSETTLED_SHOWN)]
     stated = calaccess.UnrestatedSchedule("8884799", "A", 0, 1, amount=900.0, rows=1)
     reason = queries.QueryResult(value="Ansel Veldt", omitted=blank + [stated]).unsettled
-    assert "and 1 more schedule(s), which `vg query` lists" in reason
+    assert "and 1 more schedule(s), which `provenance query` lists" in reason
     assert "smaller shares" not in reason and "8884799" not in reason
     assert "no largest contributor can be named" in reason
 
@@ -529,10 +529,10 @@ def test_a_left_out_miss_still_names_the_schedules_that_count_the_gift(root):
     assert "left out. Not counted here: form_type=F496P3" in result.note
 
 
-def test_a_reason_with_both_kinds_names_each_and_vg_query_lists_the_rest(tmp_path,
+def test_a_reason_with_both_kinds_names_each_and_provenance_query_lists_the_rest(tmp_path,
                                                                          monkeypatch):
     """A value can count rows a cover's later amendment lacks and leave out a schedule too.
-    The reason says both, each naming its largest few, and `vg query` lists every one."""
+    The reason says both, each naming its largest few, and `provenance query` lists every one."""
     counted = [calaccess.Unrestated("8884301", 0, 1, amount=90.0, rows=1)]
     left_out = [calaccess.UnrestatedSchedule(f"888440{i}", "A", 0, 1, amount=500.0 - i, rows=1)
                 for i in range(queries.UNSETTLED_SHOWN + 2)]
@@ -543,7 +543,7 @@ def test_a_reason_with_both_kinds_names_each_and_vg_query_lists_the_rest(tmp_pat
     assert "8884301" in reason and "more filing(s)" not in reason
     assert all(u.filing_id in reason for u in left_out[:queries.UNSETTLED_SHOWN])
     assert not any(u.filing_id in reason for u in left_out[queries.UNSETTLED_SHOWN:])
-    assert "and 2 more schedule(s) with smaller shares, which `vg query` lists" in reason
+    assert "and 2 more schedule(s) with smaller shares, which `provenance query` lists" in reason
 
     monkeypatch.setattr(queries, "run", lambda name, params, root: result)
     monkeypatch.setattr(cli.con, "_width", 250)
@@ -572,7 +572,7 @@ def test_a_table_without_form_type_is_refused_until_rebuilt(tmp_path):
     con = calaccess.connect(root)
     try:
         with pytest.raises(calaccess.DegradedDatabase,
-                           match=r"no EXPN_CD\.FORM_TYPE.*uv run vg calaccess build"):
+                           match=r"no EXPN_CD\.FORM_TYPE.*uv run provenance calaccess build"):
             calaccess.unrestated_schedules(con, "EXPN_CD", [EXP_GAP])
         assert calaccess.unrestated_schedules(con, "NO_SUCH_CD", [EXP_GAP]) == [], (
             "a table that is not there has no rows to leave out")

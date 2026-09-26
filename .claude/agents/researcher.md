@@ -62,15 +62,15 @@ failure happens: it is tempting to take a copy of the document from some other s
 that. **Don't do it silently.** Check what is already known first:
 
 ```
-uv run vg source-access                      # what's in the registry
-uv run vg source-access <host>               # naive fetch, working endpoint, known limits
+uv run provenance source-access                      # what's in the registry
+uv run provenance source-access <host>               # naive fetch, working endpoint, known limits
 ```
 
 If there is a recipe, use it. If there isn't, and you find a way in, record it rather than
 keeping it in your head — the next researcher will hit the same wall:
 
 ```
-uv run vg source-import-curl <file>          # from a browser "copy as cURL"
+uv run provenance source-import-curl <file>          # from a browser "copy as cURL"
 ```
 
 If it is genuinely closed, that is a finding too. Say so, give the human a precise retrieval
@@ -80,7 +80,7 @@ next run; a silent substitution costs the guide its credibility.
 
 ## A scanned PDF has no text to search
 
-When `vg check` or `vg check-claim` says **"PDF has no text layer"**, the page is a scan: the
+When `provenance check` or `provenance check-claim` says **"PDF has no text layer"**, the page is a scan: the
 pipeline has nothing to search, which says nothing about whether your citation is right. It is
 not a reason to swap in a copy you can read. Open the PDF, confirm the quote by eye, and either
 cite a copy that has a text layer, **with `secondary_host_ack`** saying why it is the same
@@ -88,13 +88,13 @@ document, or keep the scan with `page` set to the page the quote is on.
 
 Some PDFs are only partly scanned: a typed cover page, scanned schedules behind it. A miss on
 one names the pages with no text layer. If your quote is on one of them, set `page` to it
-(`vg check "<url>" "<snippet>" --page N` to test), and it is handled as a scan, like the case
+(`provenance check "<url>" "<snippet>" --page N` to test), and it is handled as a scan, like the case
 above, instead of as a quote that isn't there. If it isn't, the miss is real.
 
-The `[[page N]]` lines `vg fetch` prints are the pipeline's page locators, not the document's
+The `[[page N]]` lines `provenance fetch` prints are the pipeline's page locators, not the document's
 text: never quote one, or a span running across one. Put the page number in `page`.
 
-A kept scan still fails `vg check-claim`, because nothing mechanical can check it. That one
+A kept scan still fails `provenance check-claim`, because nothing mechanical can check it. That one
 failure is the exception to "not finished until it exits clean": hand the claim on with
 `notes` saying which source is a scan and which page to read, and it goes to `human_review`
 for a person. Never swap in a different document to get a clean exit.
@@ -106,15 +106,15 @@ protection — so donor and independent-expenditure questions go through the nig
 export instead:
 
 ```
-uv run vg calaccess filer "<committee name>"                       # find the filer id
-uv run vg calaccess contributions <filer_id> --top 25              # who gave, how much
-uv run vg calaccess independent-expenditures <last> --first <first> # who spent for/against
+uv run provenance calaccess filer "<committee name>"                       # find the filer id
+uv run provenance calaccess contributions <filer_id> --top 25              # who gave, how much
+uv run provenance calaccess independent-expenditures <last> --first <first> # who spent for/against
 ```
 
 Before falling back to a mirror, try:
 
 ```
-uv run vg calaccess cite <filer_id> [--filing-id <id>]
+uv run provenance calaccess cite <filer_id> [--filing-id <id>]
 ```
 
 Pass `--session <year>` and `--year <claim year>`: a bare lookup returned a 2023 landing page
@@ -136,13 +136,13 @@ of hunting for the number as text:
 ```json
 "query": {"name": "calaccess.contributor_total",
           "params": {"filer_id": "<filer id>",
-                     "contributor": "<exact name as vg calaccess contributions prints it>"},
-          "expected": "<the figure exactly as vg query prints it>"}
+                     "contributor": "<exact name as provenance calaccess contributions prints it>"},
+          "expected": "<the figure exactly as provenance query prints it>"}
 ```
 
 Verification re-runs it and compares — reproducible, and the reviewer checks it by running the
-printed command. `uv run vg query` lists what can be asked. Get the exact parameter values
-from the data first (`vg calaccess contributions`), because a name that is close but not exact
+printed command. `uv run provenance query` lists what can be asked. Get the exact parameter values
+from the data first (`provenance calaccess contributions`), because a name that is close but not exact
 returns a miss, not a number. Record `expected` exactly as the query prints it: it must match
 to the cent, so a rounded figure ("12000" for 11987.40) fails.
 
@@ -158,14 +158,14 @@ names the late report's filing. Don't record the schedule-A figure from that not
 total. Either cite the late report's filing page for the gift, or pass `form_type=A` and word
 the claim as a schedule-A figure ("reported on its campaign statements through <date>").
 
-If `vg query` says **"Will not verify"**, the record behind the figure isn't settled. It counts
+If `provenance query` says **"Will not verify"**, the record behind the figure isn't settled. It counts
 rows from a filing whose latest amendment has none, leaves out a schedule an earlier amendment
 reported and a later one has no rows on, or (`ie_total`) leaves out rows a filing's own
 amendment gave this candidate because its latest cover names someone else, and in each case the
 export cannot say what that later amendment did; or (with `form_type=A`) it leaves out late
 reports that a person checks your wording against. The query is fine and the number is what the
 data gives, so don't change the parameters or switch to a mirror to get a clean result. Cite it
-anyway. `vg check-claim` then fails it as `human_review`, and like a kept scan that one failure
+anyway. `provenance check-claim` then fails it as `human_review`, and like a kept scan that one failure
 is the exception: hand the claim on with `notes` naming the filings the warning lists, for a
 person to open. The warning can name a filing that is not on the schedule you counted, most
 often a Form 496 on a schedule-A figure. A large late gift is reported on both forms, the figure
@@ -186,8 +186,8 @@ filed (`'last'/'first'`) with its figure and the city, ZIP and employer on its f
 late report by filing. Open those filings and decide whether they are the same giver. Don't add
 the figures yourself, and don't call anyone "the largest contributor" from that note.
 `names=as_filed` gives the figure under the name you asked for, or ranks each name as filed. As
-with `form_type=A`, `vg query` then says **"Will not verify"** and lists the other names, and
-`vg check-claim` fails it as `human_review`: a person checks whether they are one giver. Word
+with `form_type=A`, `provenance query` then says **"Will not verify"** and lists the other names, and
+`provenance check-claim` fails it as `human_review`: a person checks whether they are one giver. Word
 the claim as that filing name's figure, not the donor's whole total, cite it anyway, and hand it
 on with `notes` naming the other names. The two switches are separate: each lifts only its own
 check.
@@ -240,7 +240,7 @@ So for anything filed periodically:
    own query instead — it calls the same endpoint the portal does:
 
    ```
-   uv run vg form700 "<first>" "<last>"
+   uv run provenance form700 "<first>" "<last>"
    ```
 
    It prints every filing newest-first with its filed date, the year it covers, and the
@@ -284,7 +284,7 @@ find was X; the index may lag" is useful; silently citing a stale form is not.
 Write your claim file, then run:
 
 ```
-uv run vg check-claim data/claims/<question_id>.json
+uv run provenance check-claim data/claims/<question_id>.json
 ```
 
 **You are not finished until this exits clean.** It runs the same checks the verifier
@@ -296,7 +296,7 @@ round trip and tells you precisely what to fix.
 To test a single snippet before you commit to it:
 
 ```
-uv run vg check "<url>" "<your snippet>"
+uv run provenance check "<url>" "<your snippet>"
 ```
 
 ### The mistake to avoid
@@ -315,9 +315,9 @@ Pick the span a person would highlight to prove the point, then check it.
 
 Write `data/claims/<question_id>.json`. Keep the `question_id` exactly as you were given
 it — it must match `[A-Za-z0-9][A-Za-z0-9._-]{0,63}` (it becomes a filename, and the
-schema rejects anything else). Copy `question` exactly too: `vg check-claim` fails any
+schema rejects anything else). Copy `question` exactly too: `provenance check-claim` fails any
 difference from the run's question set but whitespace, quote and dash style, and case, and
-`vg build` leaves such a claim out of review. Never edit `questions.json` to match your claim:
+`provenance build` leaves such a claim out of review. Never edit `questions.json` to match your claim:
 
 ```json
 {

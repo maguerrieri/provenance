@@ -10,7 +10,7 @@
   instead of printing, and a refusal exited with the wrong code.
 
 `cli._printable()` shows each as an escape. Each test here puts such text where a print site
-prints it, and `_vg()` checks the whole output of every run: nothing that acts on a terminal,
+prints it, and `_provenance()` checks the whole output of every run: nothing that acts on a terminal,
 and no exception in place of the command's usual exit code.
 """
 
@@ -23,7 +23,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from vgpipe.models import Claim, PageCache, Source
+from provenance.models import Claim, PageCache, Source
 
 # An erase-line sequence, a C1 CSI with its own erase-line, a right-to-left override and a line
 # separator, and how `_printable()` shows them.
@@ -43,12 +43,12 @@ _ACTING = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
 NOTE = "The source holds the character, not the escape, so a copy with one in it matches nothing"
 
 
-def _vg(*args, lines: bool = False):
-    """Run `vg`, and return (exit code, output): whitespace-joined, or as its lines. Fails if
+def _provenance(*args, lines: bool = False):
+    """Run `provenance`, and return (exit code, output): whitespace-joined, or as its lines. Fails if
     any character in the output acts on a terminal, or if the command raised."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     # rich folds a long tmp path at 80 columns. Put back `_width` itself, not the width it
     # computed, which would pin it (CLAUDE.md, "Rich reads brackets as markup").
@@ -75,8 +75,8 @@ def _vg(*args, lines: bool = False):
 
 
 def _cache_page(data, url=URL, *, title="T", text=TEXT):
-    from vgpipe.fetch import cache_path
-    from vgpipe.models import EXTRACTOR_VERSION
+    from provenance.fetch import cache_path
+    from provenance.models import EXTRACTOR_VERSION
 
     cache_path(data, url).write_text(PageCache(
         url=url, final_url=url, status=200, content_type="text/html", title=title, text=text,
@@ -95,11 +95,11 @@ def _source(**kw) -> Source:
 
 
 def test_a_filer_name_that_erases_the_line_prints_as_text(tmp_path, monkeypatch):
-    from vgpipe import calaccess
+    from provenance import calaccess
 
     monkeypatch.setattr(calaccess, "find_filers", lambda root, name, limit: [
         {"filer_id": f"1001{CTRL}", "first": "Pat", "last": f"Doe{CTRL}"}])
-    code, out = _vg("calaccess", "filer", "Doe", "--data", tmp_path)
+    code, out = _provenance("calaccess", "filer", "Doe", "--data", tmp_path)
     assert code == 0 and f"1001{SHOWN} Pat Doe{SHOWN}" in out, out
     assert calaccess.committee_url("1001") + SHOWN in out
 
@@ -123,7 +123,7 @@ recipes:
 
 @pytest.fixture
 def registry(tmp_path, monkeypatch):
-    from vgpipe import access
+    from provenance import access
 
     reg = tmp_path / "reg"
     reg.mkdir()
@@ -138,25 +138,25 @@ def test_a_recipe_response_prints_its_escapes_and_keeps_its_lines(registry, monk
     NEL is a line break to some readers, so it shows."""
     import httpx
 
-    from vgpipe import access
+    from provenance import access
 
     body = f'{{"a": "one{CTRL}",\r\n "b": "two\x85"}}\n'
     monkeypatch.setattr(access, "run", lambda recipe, params: httpx.Response(200, text=body))
-    code, lines = _vg("source-access", "news.example", "--run-recipe", "search", "--param",
+    code, lines = _provenance("source-access", "news.example", "--run-recipe", "search", "--param",
                       "q=levy", lines=True)
     assert code == 0
     assert f'{{"a": "one{SHOWN}",' in lines and ' "b": "two\\x85"}' in lines, lines
     assert NOTE in " ".join(lines), lines
 
     monkeypatch.setattr(access, "run", lambda recipe, params: httpx.Response(200, text="{}\r\n"))
-    code, out = _vg("source-access", "news.example", "--run-recipe", "search")
+    code, out = _provenance("source-access", "news.example", "--run-recipe", "search")
     assert code == 0 and NOTE not in out, out
 
     def refused(recipe, params):
         raise ValueError(f"recipe needs{CTRL}")
 
     monkeypatch.setattr(access, "run", refused)
-    code, out = _vg("source-access", "news.example", "--run-recipe", "search")
+    code, out = _provenance("source-access", "news.example", "--run-recipe", "search")
     assert code == 1 and f"ValueError: recipe needs{SHOWN}" in out, out
 
 
@@ -181,7 +181,7 @@ def test_a_lone_surrogate_in_an_argument_prints_as_an_escape(args, code, said, t
                                                              monkeypatch):
     """An undecodable byte in argv reaches the command as a lone surrogate, and each command
     echoes its arguments back somewhere: a refusal, a "nothing found", a path."""
-    from vgpipe import calaccess, fppc, queries
+    from provenance import calaccess, fppc, queries
 
     monkeypatch.chdir(tmp_path)   # a relative --data stays inside the test's directory
     monkeypatch.setattr(fppc, "search", lambda first, last: [])
@@ -192,7 +192,7 @@ def test_a_lone_surrogate_in_an_argument_prints_as_an_escape(args, code, said, t
         raise ValueError(f"bad value {params['last']}")
 
     monkeypatch.setattr(queries, "run", refused)
-    got, out = _vg(*args)
+    got, out = _provenance(*args)
     assert got == code and said in out, out
 
 
@@ -200,7 +200,7 @@ def test_a_lone_surrogate_in_an_argument_prints_as_an_escape(args, code, said, t
 
 
 def test_contributions_print_donor_text_through_printable(tmp_path, monkeypatch):
-    from vgpipe import calaccess
+    from provenance import calaccess
 
     # The cut cells get what fits their width as shown: `\x1b[2K` shows as 7 characters.
     monkeypatch.setattr(calaccess, "contributions_to", lambda root, filer_id, top, since: [
@@ -210,7 +210,7 @@ def test_contributions_print_donor_text_through_printable(tmp_path, monkeypatch)
                                date=f"2030-01-02{CTRL}", filings=2,
                                unrestated=(calaccess.Unrestated(f"2002{CTRL}", rows_amend=0,
                                                                 cover_amend=1),))])
-    code, out = _vg("calaccess", "contributions", "1001", "--data", tmp_path)
+    code, out = _provenance("calaccess", "contributions", "1001", "--data", tmp_path)
     assert code == 0, out
     assert f"1\\ud800 Doe{SHOWN} Acme\\ud800 2030-01-02{SHOWN} 2x" in out
     assert f"2002{SHOWN}: a1 has none" in out
@@ -219,7 +219,7 @@ def test_contributions_print_donor_text_through_printable(tmp_path, monkeypatch)
 def test_independent_expenditures_print_filer_text_through_printable(tmp_path, monkeypatch):
     """The unreadable-amount cell had no guard at all here, where the contributions listing
     already showed a control character in the same kind of field."""
-    from vgpipe import calaccess
+    from provenance import calaccess
 
     monkeypatch.setattr(calaccess, "independent_expenditures", lambda root, last, **kw: [
         {"AMOUNT": "n/a\x9b", "stance": f"X{CTRL}", "FILER_NAML": f"PAC{LONE}\x1b[2K",
@@ -227,7 +227,7 @@ def test_independent_expenditures_print_filer_text_through_printable(tmp_path, m
          "cite_url": calaccess.filing_url("2002") + CTRL,
          "unrestated": (calaccess.Unrestated(f"2002{CTRL}", rows_amend=0, cover_amend=1),),
          "reattributed": None}])   # every listed row carries one (#89)
-    code, out = _vg("calaccess", "independent-expenditures", "Doe", "--data", tmp_path)
+    code, out = _provenance("calaccess", "independent-expenditures", "Doe", "--data", tmp_path)
     assert code == 0, out
     assert (f"n/a\\x9b X{SHOWN} PAC\\ud800\\x1b[2K Pat Doe\\x1b[2K 2030-01-02{SHOWN} "
             f"{calaccess.filing_url('2002')}{SHOWN} 2002{SHOWN}: a1 has none") in out
@@ -237,48 +237,48 @@ def test_a_cell_is_cut_to_its_width_as_shown_and_never_inside_an_escape(tmp_path
     """Cut before escaping, a cell of control bytes showed four times as wide as its column and
     folded the table. Cut after, it could end inside an escape, which then reads as another
     character. Each escape here shows as 4 characters: 3 fit an amount's 14, 7 a name's 30."""
-    from vgpipe import calaccess
+    from provenance import calaccess
 
     soh, stx = "\\x01", "\\x02"   # as shown
     monkeypatch.setattr(calaccess, "contributions_to", lambda root, filer_id, top, since: [
         calaccess.Contribution(filing_id="2002", filer_id="1001", contributor="\x02" * 40,
                                employer="Acme", occupation="", amount=None,
                                amount_filed="\x01" * 14, date="2030-01-02")])
-    code, out = _vg("calaccess", "contributions", "1001", "--data", tmp_path)
+    code, out = _provenance("calaccess", "contributions", "1001", "--data", tmp_path)
     assert code == 0 and f"{soh * 3} {stx * 7} Acme" in out, out
 
     monkeypatch.setattr(calaccess, "independent_expenditures", lambda root, last, **kw: [
         {"AMOUNT": "\x01" * 14, "stance": "support", "FILER_NAML": "PAC", "CAND_NAMF": "Pat",
          "CAND_NAML": "Doe", "EXP_DATE": "2030-01-02", "cite_url": calaccess.filing_url("2002"),
          "unrestated": (), "reattributed": None}])
-    code, out = _vg("calaccess", "independent-expenditures", "Doe", "--data", tmp_path)
+    code, out = _provenance("calaccess", "independent-expenditures", "Doe", "--data", tmp_path)
     assert code == 0 and f"{soh * 3} support PAC" in out, out
 
 
 def test_exception_text_keeps_its_own_line_breaks(tmp_path, monkeypatch):
     """Shown whole through `_printable()`, the download command a missing export names, and the
     link an HTTP error ends with, landed on the line before them after a `\\x0a`."""
-    from vgpipe import fppc
+    from provenance import fppc
 
-    code, lines = _vg("calaccess", "build", "--data", tmp_path, lines=True)
+    code, lines = _provenance("calaccess", "build", "--data", tmp_path, lines=True)
     assert code == 1 and any(x.startswith("  curl -L -o ") for x in lines), lines
 
     def failed(first, last):
         raise RuntimeError(f"HTTP 500{LONE}\nFor more information check: https://err.example/")
 
     monkeypatch.setattr(fppc, "search", failed)
-    code, lines = _vg("form700", "Pat", "Doe", lines=True)
+    code, lines = _provenance("form700", "Pat", "Doe", lines=True)
     assert code == 1 and "For more information check: https://err.example/" in lines, lines
     assert "FPPC search failed: RuntimeError: HTTP 500\\ud800" in lines
 
 
 def test_calaccess_cite_prints_snapshot_notes_through_printable(tmp_path, monkeypatch):
-    from vgpipe import calaccess
+    from provenance import calaccess
 
     answers = iter([("https://web.archive.org/web/2030/x", f"checked{CTRL}"),
                     (None, f"no capture{LONE}")])
     monkeypatch.setattr(calaccess, "citable_snapshot", lambda url, **kw: next(answers))
-    code, lines = _vg("calaccess", "cite", "1001", "--filing-id", "2002", "--data", tmp_path,
+    code, lines = _provenance("calaccess", "cite", "1001", "--filing-id", "2002", "--data", tmp_path,
                       lines=True)
     assert code == 0, lines
     # Its own line breaks stay: the snapshot, the note and the live URL are one line each.
@@ -286,34 +286,34 @@ def test_calaccess_cite_prints_snapshot_notes_through_printable(tmp_path, monkey
 
 
 def test_query_prints_its_value_and_notes_through_printable(tmp_path, monkeypatch):
-    from vgpipe import queries
+    from provenance import queries
 
     monkeypatch.setattr(queries, "run", lambda name, params, root: queries.QueryResult(
         value=None, found=False, detail=f"no rows{CTRL}", suggestions=[f"Doe{LONE}"]))
-    code, out = _vg("query", "calaccess.ie_total", "--param", "last=Doe", "--data", tmp_path)
+    code, out = _provenance("query", "calaccess.ie_total", "--param", "last=Doe", "--data", tmp_path)
     assert code == 1 and f"no match — no rows{SHOWN} — NO MATCH. Did you mean: Doe\\ud800" in out
 
     monkeypatch.setattr(queries, "run", lambda name, params, root: queries.QueryResult(
         value=f"Doe{CTRL}", detail=f"top donor{LONE}", version=1))
-    code, out = _vg("query", "calaccess.ie_total", "--param", "last=Doe", "--data", tmp_path)
+    code, out = _provenance("query", "calaccess.ie_total", "--param", "last=Doe", "--data", tmp_path)
     assert code == 0 and f"Doe{SHOWN} (top donor\\ud800)" in out, out
     assert NOTE in out   # a researcher copies the value into `expected` as printed
 
     monkeypatch.setattr(queries, "run", lambda name, params, root: queries.QueryResult(
         value=1250.0, detail=f"total{CTRL}", version=1))
-    code, out = _vg("query", "calaccess.ie_total", "--param", "last=Doe", "--data", tmp_path)
+    code, out = _provenance("query", "calaccess.ie_total", "--param", "last=Doe", "--data", tmp_path)
     # Only the note has an escape, and nobody copies the note.
     assert code == 0 and "1250.0" in out and NOTE not in out, out
 
 
 def test_form700_prints_the_index_through_printable(monkeypatch):
     """The FPPC index is JSON, which can carry a lone surrogate as an escape."""
-    from vgpipe import fppc
+    from provenance import fppc
 
     monkeypatch.setattr(fppc, "search", lambda first, last: [fppc.Filing(
         filer="Pat Doe", filed_date=f"2030-03-01{LONE}", filing_years=[2029],
         agencies=[f"Board{CTRL}"], index_id=f"idx{CTRL}")])
-    code, out = _vg("form700", "Pat", f"Doe{CTRL}")
+    code, out = _provenance("form700", "Pat", f"Doe{CTRL}")
     assert code == 0, out
     assert f"2030-03-01\\ud800 2029 Board{SHOWN} idx{SHOWN}" in out
     assert "Most recent: filed 2030-03-01\\ud800, covering 2029." in out
@@ -323,7 +323,7 @@ def test_form700_prints_the_index_through_printable(monkeypatch):
         raise RuntimeError(f"HTTP 500{LONE}")
 
     monkeypatch.setattr(fppc, "search", failed)
-    code, out = _vg("form700", "Pat", "Doe")
+    code, out = _provenance("form700", "Pat", "Doe")
     assert code == 1 and "FPPC search failed: RuntimeError: HTTP 500\\ud800" in out, out
 
 
@@ -332,35 +332,35 @@ def test_form700_prints_the_index_through_printable(monkeypatch):
 
 def test_fetch_and_check_print_page_text_through_printable(tmp_path):
     """Page text keeps its lines, as a researcher copies a snippet from it. An escape in it is
-    text the pipeline inserted, and a snippet copied with one is on no page, so `vg fetch`
+    text the pipeline inserted, and a snippet copied with one is on no page, so `provenance fetch`
     says so wherever it showed one."""
     data = tmp_path / "data"
     _cache_page(data, title=f"Title{CTRL}", text=f"{TEXT}\nsecond line{CTRL}")
-    code, lines = _vg("fetch", URL, "--data", data, lines=True)
+    code, lines = _provenance("fetch", URL, "--data", data, lines=True)
     assert code == 0 and TEXT in lines and f"second line{SHOWN}" in lines, lines
     assert any(f"title: Title{SHOWN}" in x for x in lines), lines
     assert NOTE in " ".join(lines), lines
 
     _cache_page(data, f"{URL}/plain", text=f"{TEXT}\r\n{TEXT}")   # a CRLF is a line break
-    code, out = _vg("fetch", f"{URL}/plain", "--data", data)
+    code, out = _provenance("fetch", f"{URL}/plain", "--data", data)
     assert code == 0 and TEXT in out and NOTE not in out, out
 
     # A cut at 1200 characters between a CR and its LF left the CR to show as an escape.
     _cache_page(data, f"{URL}/crlf", text="a" * 1199 + "\r\nb")
-    code, out = _vg("fetch", f"{URL}/crlf", "--data", data)
+    code, out = _provenance("fetch", f"{URL}/crlf", "--data", data)
     assert code == 0 and "\\x0d" not in out and NOTE not in out, out
 
-    code, out = _vg("check", URL, "approved the Example Levy on a 4-1 vote", "--data", data)
+    code, out = _provenance("check", URL, "approved the Example Levy on a 4-1 vote", "--data", data)
     assert code == 0 and "OK — literal and unique." in out, out
-    code, out = _vg("check", URL, f"approved the Example Levy{CTRL} on a vote", "--data", data)
+    code, out = _provenance("check", URL, f"approved the Example Levy{CTRL} on a vote", "--data", data)
     assert code == 1, out
 
 
 def test_source_access_prints_registry_entries_through_printable(registry):
-    code, out = _vg("source-access")
+    code, out = _provenance("source-access")
     assert code == 0 and "news.example api search portal\\x1b[2K" in out, out
 
-    code, lines = _vg("source-access", "news.example", lines=True)
+    code, lines = _provenance("source-access", "news.example", lines=True)
     assert code == 0, lines
     text = "\n".join(lines)
     for said in ("news.example — portal\\x1b[2K  (api, verified 2030-01-02)",
@@ -373,7 +373,7 @@ def test_source_access_prints_registry_entries_through_printable(registry):
 
 def test_source_import_curl_and_source_note_print_through_printable(tmp_path, registry,
                                                                     monkeypatch):
-    from vgpipe import access
+    from provenance import access
 
     monkeypatch.setattr(access, "parse_curl", lambda text: {
         "entry": {"host": "api.news.example", "name": f"portal\u202e", "access": "api",
@@ -382,7 +382,7 @@ def test_source_import_curl_and_source_note_print_through_printable(tmp_path, re
         "dropped_credentials": [f"cookie{CTRL}"], "dropped_headers": [f"x-trace{CTRL}"]})
     paste = tmp_path / "req.sh"
     paste.write_text("curl 'https://api.news.example/records'")
-    code, lines = _vg("source-import-curl", paste, "--no-write", lines=True)
+    code, lines = _provenance("source-import-curl", paste, "--no-write", lines=True)
     assert code == 0, lines
     text = "\n".join(lines)
     assert f"dropped credentials: cookie{SHOWN}" in text
@@ -390,7 +390,7 @@ def test_source_import_curl_and_source_note_print_through_printable(tmp_path, re
     assert "name: portal\\u202e\n" in text   # YAML, a line at a time
     assert NOTE in " ".join(lines)
 
-    code, out = _vg("source-note", f"new{CTRL}.example", "probed; needs a session")
+    code, out = _provenance("source-note", f"new{CTRL}.example", "probed; needs a session")
     assert code == 0 and "recorded " in out, out
 
 
@@ -398,8 +398,8 @@ def test_source_import_curl_and_source_note_print_through_printable(tmp_path, re
 
 
 def _run(tmp_path, s: Source):
-    """A candidate run, as `vg new-candidate` lays it out, with its one page cached and
-    verified, so `vg judge` accepts a verdict on it."""
+    """A candidate run, as `provenance new-candidate` lays it out, with its one page cached and
+    verified, so `provenance judge` accepts a verdict on it."""
     data, cand = tmp_path / "data", tmp_path / "data" / "cand"
     _cache_page(data, s.url)
     (data / "questions.json").write_text(json.dumps([{"id": "q1", "text": "?"}]))
@@ -415,20 +415,20 @@ def test_agent_written_claims_and_verdicts_print_through_printable(tmp_path):
     s = _source(url=f"{URL}\x9b2K\u202e", publisher=f"Gazette{CTRL}")
     cand = _run(tmp_path, s)
 
-    code, out = _vg("verify", "--data", cand)
+    code, out = _provenance("verify", "--data", cand)
     assert code == 0 and f"q1 verified Gazette{SHOWN}" in out, out
 
-    code, out = _vg("handoff", "q1", "--data", cand)
+    code, out = _provenance("handoff", "q1", "--data", cand)
     assert code == 0 and f"{URL}\\x9b2K\\u202e" in out, out
     token = re.search(rf"sid {re.escape(s.sid)}\s+context token (\w+)", out).group(1)
-    code, out = _vg("judge", "q1", s.sid, "topic_only", "--note", f"roll call{CTRL}",
+    code, out = _provenance("judge", "q1", s.sid, "topic_only", "--note", f"roll call{CTRL}",
                     "--context", token, "--data", cand)
     assert code == 0 and f"recorded for q1/{s.sid}: roll call{SHOWN}" in out, out
 
-    code, out = _vg("judgments", "--data", cand)
+    code, out = _provenance("judgments", "--data", cand)
     assert code == 0 and f"Gazette{SHOWN} {s.sid} topic_only roll call{SHOWN}" in out, out
 
-    code, out = _vg("check-claim", cand / "claims" / "q1.json", "--data", cand)
+    code, out = _provenance("check-claim", cand / "claims" / "q1.json", "--data", cand)
     assert code == 0 and f"verified Gazette{SHOWN}: " in out, out
 
 
@@ -440,11 +440,11 @@ def test_a_shard_or_claim_file_named_with_control_characters_prints_as_an_escape
     (cand / "judgments" / f"x{CTRL}.json").write_text(json.dumps([{
         "sid": _source().sid, "verdict": "supports", "note": "",
         "judged_at": "2030-01-01T00:00:00+00:00"}]))
-    code, out = _vg("judgments", "--data", cand)
+    code, out = _provenance("judgments", "--data", cand)
     assert f"under an id no claim has (x{SHOWN}.json)" in out, out
 
     (cand / "claims" / f"q1{CTRL}.json").write_text((cand / "claims" / "q1.json").read_text())
-    code, out = _vg("status", "--data", cand)
+    code, out = _provenance("status", "--data", cand)
     assert code == 1 and f"in q1{SHOWN}.json and q1.json" in out, out
 
 
@@ -456,12 +456,12 @@ def test_a_claim_that_does_not_parse_is_skipped_with_its_error_through_printable
         "question_id": "q1", "question": "?", "answer": "a",
         "sources": [{**_source().model_dump(mode="json"),
                      "query": {"name": "calaccess.ie_total", "params": {f"k{CTRL}": 5}}}]}))
-    code, out = _vg("status", "--data", tmp_path)
+    code, out = _provenance("status", "--data", tmp_path)
     assert code == 0 and "skipping q1 in q1.json" in out, out
 
 
 def test_race_and_candidate_names_print_through_printable(tmp_path, monkeypatch):
-    from vgpipe import races
+    from provenance import races
 
     d = tmp_path / "races"
     d.mkdir()
@@ -469,13 +469,13 @@ def test_race_and_candidate_names_print_through_printable(tmp_path, monkeypatch)
         '---\nname: ctrl\ntitle: "Assessor\\e[2K"\nsources: [us]\n'
         'candidates:\n  - {id: pd, name: "Pat Doe\\u202e"}\n---\n\nA fictional race.\n')
     monkeypatch.setattr(races, "RACES_DIR", d)
-    code, out = _vg("races")
+    code, out = _provenance("races")
     assert code == 0 and "ctrl Assessor\\x1b[2K sources: us" in out, out
 
     data = tmp_path / "data"
     data.mkdir()
     (data / "questions.json").write_text(json.dumps([{"id": "q1", "text": "What?"}]))
-    code, out = _vg("new-candidate", "pd", "--data", data, "--race", "ctrl")
+    code, out = _provenance("new-candidate", "pd", "--data", data, "--race", "ctrl")
     assert code == 0 and "retargeted to Pat Doe\\u202e)" in out, out
 
 
@@ -483,24 +483,24 @@ def test_a_run_directory_named_with_control_characters_prints_as_an_escape(tmp_p
     """The operator's --data path is printed wherever a command names what it read or wrote."""
     data = tmp_path / f"run{CTRL}"
     (data / "claims").mkdir(parents=True)
-    code, out = _vg("build", "--data", data)
+    code, out = _provenance("build", "--data", data)
     assert code == 0, out
     assert f"no questions.json in {tmp_path}/run{SHOWN}" in out
     assert f"wrote {tmp_path}/run{SHOWN}/out/review.html" in out
 
 
 def test_archive_prints_what_save_page_now_said_through_printable(tmp_path, monkeypatch):
-    from vgpipe import archive as arch
+    from provenance import archive as arch
 
     cand = _run(tmp_path, _source(publisher=f"Gazette{CTRL}"))
     monkeypatch.setattr(arch, "have_credentials", lambda: True)
     monkeypatch.setattr(arch, "archive_all", lambda urls, delay, progress: [
         progress(u, None, f"save failed{CTRL}") for u in urls])
-    code, out = _vg("archive", "--data", cand, "--delay", "0")
+    code, out = _provenance("archive", "--data", cand, "--delay", "0")
     assert code == 0 and f"fail {URL} save failed{SHOWN}" in out, out
 
 
 def test_clear_contradiction_names_a_source_id_argument_as_an_escape(tmp_path):
     cand = _run(tmp_path, _source())
-    code, out = _vg("clear-contradiction", "q1", f"abc{ARGV}{CTRL}", "--data", cand)
+    code, out = _provenance("clear-contradiction", "q1", f"abc{ARGV}{CTRL}", "--data", cand)
     assert code == 1 and f"no contradicts verdict on abc\\udcff{SHOWN} to clear" in out, out

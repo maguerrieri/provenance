@@ -65,13 +65,13 @@ def citable_url(index_id: str, filing: "Filing | None" = None) -> str:
 
     **This URL is NOT fetchable, and nothing in the pipeline replays it.** An earlier version
     of this docstring claimed `fetch.py` recognised it and replayed the two-step API; it does
-    not, and a researcher who believed that got `vg check` caching the JSON envelope and
+    not, and a researcher who believed that got `provenance check` caching the JSON envelope and
     reporting the snippet absent. Measured again 2026-08-22: `GetRedactedFormPdf` returns a
     `PDFDownloadUrl` bound to the cookie jar that minted it, so a fresh client gets a 2,556
     byte error page, and every other document route returns the SPA shell.
 
     Consequence, stated plainly: **a Form 700 question is structurally `not_found`.** Use
-    `vg form700` to establish which filing is current, then give the human a retrieval
+    `provenance form700` to establish which filing is current, then give the human a retrieval
     instruction (portal, name, filing year, agency). Do not cite a copy on another host to
     fill the gap — that verifies perfectly and is the wrong document.
 

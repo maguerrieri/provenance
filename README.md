@@ -12,9 +12,9 @@ Agents find sources and make judgment calls. Deterministic code decides whether 
 ## Status
 
 Imported from the private project where it was built, and still shaped by it: the package is
-`vgpipe`, the command is `vg`, and research is organized as voter-guide races. The rename and the
+`provenance`, the command is `provenance`, and research is organized as voter-guide races. The rename and the
 generalization are tracked as epics in this repo's issues. The tool ships with no race file: add
-one (see [Adding a race](#adding-a-race)) before `vg verify` or `vg build`.
+one (see [Adding a race](#adding-a-race)) before `provenance verify` or `provenance build`.
 
 Citation verification pipeline for voter guides. Nothing race-specific lives in the pipeline
 itself: each race is one file in `races/`.
@@ -29,17 +29,17 @@ judge whether context supports a claim. Models never set a verification status.
 
 ```bash
 uv sync
-uv run vg races                                                            # what's defined
-uv run vg check "https://example.org/article" "a short verbatim snippet"   # ad-hoc
-uv run vg verify        # deterministic checks over data/claims/*.json
-uv run vg archive       # web.archive.org snapshots
-uv run vg build         # conflicts + render the review app
-uv run vg serve         # http://127.0.0.1:8765/review.html
+uv run provenance races                                                            # what's defined
+uv run provenance check "https://example.org/article" "a short verbatim snippet"   # ad-hoc
+uv run provenance verify        # deterministic checks over data/claims/*.json
+uv run provenance archive       # web.archive.org snapshots
+uv run provenance build         # conflicts + render the review app
+uv run provenance serve         # http://127.0.0.1:8765/review.html
 ```
 
 ## The review app
 
-`vg serve` opens a local checklist. Per source: the cached page context with your snippet
+`provenance serve` opens a local checklist. Per source: the cached page context with your snippet
 **highlighted in place**, plus the live link, the archive link, a copy-snippet button, and
 a persistent checkbox. Keyboard: `j`/`k` move, `space` check, `f` flag, `o` open, `a`
 archive, `c` copy. Filters: unchecked, adversarial, paywalled, conflicts, needs-review.
@@ -48,14 +48,14 @@ A check belongs to one claim: a source cited by two questions is checked under e
 separately. It also clears itself when what you checked changes, and the row says so: the
 claim (a reworded answer), the excerpt you read (a re-fetch that changes its text or
 highlight), or, on a row with no excerpt, the snapshot offered instead (a new one from
-`vg archive`). Flags and notes are about the source, and show wherever it is cited.
+`provenance archive`). Flags and notes are about the source, and show wherever it is cited.
 
 Serve it rather than opening `review.html` directly — several browsers disable
 `localStorage` on `file://` origins, which silently loses your progress. Export/import
 buttons cover the standalone case.
 
-`vg build` removes the previous `review.html` and `claims.json` from `out/` before anything
-else, so a build that refuses or fails leaves nothing for `vg serve` to show, and a reload
+`provenance build` removes the previous `review.html` and `claims.json` from `out/` before anything
+else, so a build that refuses or fails leaves nothing for `provenance serve` to show, and a reload
 while any build runs gets a 404 until it finishes. If it can't remove them, it says so and
 stops. Your checkmarks live in the browser, keyed by the title, and come back with the next
 build that succeeds. A tab you already have open keeps its page until you reload it.
@@ -69,8 +69,8 @@ whether they support the claim.
 |---|---|---|
 | 0 | main session | Split the template into atomic questions; a human approves the split |
 | 1 | `researcher` agents, parallel | One question each → `data/claims/<qid>.json` |
-| 2 | `vg verify` + `verifier` agents | Mechanical checks, then the judgment half; ≤2 retries, then `human_review` |
-| 3 | `vg build` / `vg serve` | Conflicts + review app + `claims.json` |
+| 2 | `provenance verify` + `verifier` agents | Mechanical checks, then the judgment half; ≤2 retries, then `human_review` |
+| 3 | `provenance build` / `provenance serve` | Conflicts + review app + `claims.json` |
 
 Orchestration lives in `.claude/skills/voter-guide-research/SKILL.md`; agent definitions in
 `.claude/agents/`.
@@ -79,7 +79,7 @@ Question ids (`q1`, `q2a`) are **stable and never reused**. They name each quest
 verdict files, so a split or reworded question gets a new id and the old id is retired. To
 retire one, move its claim out of `claims/` (to `claims-archive/`) and its verdict shard out of
 `judgments/` (to `judgments-archive/`), and point any `derives_from` that names it at the new id. Nothing re-files a claim
-onto another id: `vg remap`, which used to, is retired. `vg build` and `vg status` are the rule's
+onto another id: `provenance remap`, which used to, is retired. `provenance build` and `provenance status` are the rule's
 gate: a claim whose id `questions.json` no longer lists, or whose question differs from the one
 its id names, is left out of the review app, and the command exits 1.
 
@@ -93,10 +93,10 @@ its id names, is left out of the review app, and the command exits 1.
 | Normalized fallback (whitespace/quotes/dashes/ligatures) | flagged `normalized_match` / `pdf_normalized_match` — never silent |
 | Snippet appears exactly once | `snippet_not_unique` |
 | Source class (`sources.yaml`) | `bad_source_class` |
-| Paywall | `could_not_verify_paywall` — flagged, never failed; `vg archive` then re-checks the snippet against the snapshot and upgrades to `verified_via_archive` when it's readable |
+| Paywall | `could_not_verify_paywall` — flagged, never failed; `provenance archive` then re-checks the snippet against the snapshot and upgrades to `verified_via_archive` when it's readable |
 | Snapshot holds the cited page | a capture of another URL, a bot check, or one missing the snippet is `archive_unusable` (badged, no link); one that won't load, has nothing to compare against, or misses the snippet but has scanned or blank pages it could be on is `archive_unconfirmed` — warnings, never failures |
 | Corroboration: 1 mechanical, 2 independent publishers adversarial | `human_review` |
-| Claim answers the question its id names in `questions.json` | left out of the review app, and `vg build` and `vg status` exit 1; `vg check-claim` fails the one claim |
+| Claim answers the question its id names in `questions.json` | left out of the review app, and `provenance build` and `provenance status` exit 1; `provenance check-claim` fails the one claim |
 
 `uv run pytest` covers all of them offline, including the four failure modes that matter:
 fabricated quote, repeated snippet, smart-quote drift, excluded aggregator. The review-app

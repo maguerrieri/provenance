@@ -3,8 +3,8 @@
 When a re-fetch fails, `fetch._warn_kept()` logs the page it kept, and Python's last-resort
 handler writes that line to stderr as it is. Two parts of it come from outside the pipeline:
 
-- the URL, which a claim cited or `vg fetch` was given. `_http_only()` lets a C1 control and a
-  bidi override through, and `vg fetch`'s argument is not checked at all;
+- the URL, which a claim cited or `provenance fetch` was given. `_http_only()` lets a C1 control and a
+  bidi override through, and `provenance fetch`'s argument is not checked at all;
 - the failure reason, which is exception text from the failed fetch.
 
 So an ESC or C1 sequence in either reached the operator's terminal, as it did from `cli.py`'s
@@ -28,15 +28,15 @@ from pathlib import Path
 import httpx
 import pytest
 
-import vgpipe
-from vgpipe import fetch as fetch_mod
-from vgpipe.models import EXTRACTOR_VERSION, PageCache, RefetchFailure
+import provenance
+from provenance import fetch as fetch_mod
+from provenance.models import EXTRACTOR_VERSION, PageCache, RefetchFailure
 
 # What acts on a terminal or makes a write raise: the categories `terminal.printable()` escapes.
 _ACTING = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
 
 TEXT = "The board approved the Example Levy on a 4-1 vote after a long hearing on Tuesday."
-RETRY = "Retry: vg fetch --refresh "
+RETRY = "Retry: provenance fetch --refresh "
 WITHHELD = "No retry command: "
 
 
@@ -82,13 +82,13 @@ def _assert_inert(msg: str) -> None:
 
 
 def _argv_in_a_real_shell(cmd: str) -> list[str]:
-    """The arguments `sh` would pass to `cmd`, with `vg` swapped for an argv printer. shlex
+    """The arguments `sh` would pass to `cmd`, with `provenance` swapped for an argv printer. shlex
     expands neither `$(...)` nor backticks, so it round-trips an unquoted substitution as one
     argument; a real shell shows what running the command would do. Payloads are harmless."""
     show_argv = (f"{shlex.quote(sys.executable)} -c "
                  "'import json, sys; print(json.dumps(sys.argv[1:]))'")
-    assert cmd.startswith("vg ")
-    out = subprocess.run(["sh", "-c", f"{show_argv} {cmd[len('vg '):]}"],
+    assert cmd.startswith("provenance ")
+    out = subprocess.run(["sh", "-c", f"{show_argv} {cmd[len('provenance '):]}"],
                          capture_output=True, check=True, text=True).stdout
     return json.loads(out)
 
@@ -104,7 +104,7 @@ def test_a_kept_page_logs_its_url_and_failure_reason_as_escapes(tmp_path, refuse
                           "(ConnectError: connection reset\\x1b[2K, "), msg
     assert f"under extractor v{EXTRACTOR_VERSION - 1}" in msg, msg
     assert RETRY not in msg and WITHHELD in msg, msg
-    assert "Retry with vg verify --refresh, which reads it from the claim citing it" in msg, msg
+    assert "Retry with provenance verify --refresh, which reads it from the claim citing it" in msg, msg
 
 
 @pytest.mark.parametrize("url", [
@@ -119,7 +119,7 @@ def test_the_retry_command_runs_as_printed(tmp_path, refused, caplog, url):
     _assert_inert(msg)
     assert msg.startswith(f"{url}: re-fetch failed (ConnectError: connection reset\\x1b[2K, ")
     cmd = msg.split("Retry: ", 1)[1]
-    assert shlex.split(cmd) == ["vg", "fetch", "--refresh", url]
+    assert shlex.split(cmd) == ["provenance", "fetch", "--refresh", url]
     assert _argv_in_a_real_shell(cmd) == ["fetch", "--refresh", url]
 
 
@@ -196,7 +196,7 @@ def test_every_log_or_warning_outside_cli_has_been_checked():
     call in the package: a new one fails here until someone has checked what it prints and added
     it to `CHECKED`."""
     found = set()
-    for path in sorted(Path(vgpipe.__file__).parent.glob("*.py")):
+    for path in sorted(Path(provenance.__file__).parent.glob("*.py")):
         if path.name != "cli.py":
             found |= {f"{path.stem}.{fn}" for fn in _terminal_writes(ast.parse(path.read_text()))}
     assert found == CHECKED, (

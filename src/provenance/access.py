@@ -406,7 +406,7 @@ _CURL_VALUE_OPTIONS = frozenset({
 
 
 _MANUAL = ("An endpoint that needs one is a manual retrieval: record it with "
-           "`vg source-note <host> <finding> --access manual`")
+           "`provenance source-note <host> <finding> --access manual`")
 
 
 def _refuse_option(option: str) -> ValueError:
@@ -482,7 +482,7 @@ def parse_curl(text: str) -> dict:
             return check(*args)
         except ValueError as e:
             raise ValueError(f"{e}. Record the endpoint by hand with "
-                             "`vg source-note <host> <finding>`") from None
+                             "`provenance source-note <host> <finding>`") from None
 
     def header(name: str, value: str) -> None:
         name = name.strip().lower()

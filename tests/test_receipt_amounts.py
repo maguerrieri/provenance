@@ -14,9 +14,9 @@ import zipfile
 
 import pytest
 
-from vgpipe import calaccess, cli, queries
-from vgpipe.models import QueryCitation, Source
-from vgpipe.verify import verify_source
+from provenance import calaccess, cli, queries
+from provenance.models import QueryCitation, Source
+from provenance.verify import verify_source
 
 # What CAST reads as a number nobody filed: "" and "N/A" as 0.0, "1,000" as 1.0, "$100" as 0.0.
 UNREADABLE = ["", "   ", "N/A", "-", "1,000", "$100", "1.2.3", "[/]"]

@@ -2,7 +2,7 @@
 
 A verdict is keyed by sid, which covers the quote, not what the claim says about it. A retry
 that rewrites the answer and keeps the quote kept the verdict too, about words the claim no
-longer says. `vg judge` now stamps each verdict with the judged claim's fingerprint, so that
+longer says. `provenance judge` now stamps each verdict with the judged claim's fingerprint, so that
 can be seen (#74 reads it as stale). Every host and name here is synthetic.
 """
 
@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from vgpipe import judgments
-from vgpipe.models import EXTRACTOR_VERSION, Claim, PageCache, Source
+from provenance import judgments
+from provenance.models import EXTRACTOR_VERSION, Claim, PageCache, Source
 
 HOST = "https://ledger.example"
 
@@ -51,7 +51,7 @@ def test_a_claims_identity_is_its_question_and_answer():
 def test_a_fingerprint_and_a_sid_are_made_one_way():
     """judgments checks both against one shape, so they share one recipe (`models.short_id`).
     The sid's input is unchanged, since changing it would lapse every recorded verdict."""
-    from vgpipe.models import short_id
+    from provenance.models import short_id
 
     s, c = src("a"), claim("q1")
     assert s.sid == short_id(s.url, s.snippet)
@@ -70,12 +70,12 @@ def test_moving_a_nul_between_question_and_answer_changes_the_fingerprint():
 
 
 def _verified_run(root: Path, *claims: Claim) -> Path:
-    """A run whose claims `vg verify` has checked offline against cached pages, so `vg judge`
+    """A run whose claims `provenance verify` has checked offline against cached pages, so `provenance judge`
     records verdicts on them."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli
-    from vgpipe.fetch import cache_path
+    from provenance import cli
+    from provenance.fetch import cache_path
 
     (root / "claims").mkdir(parents=True)
     (root / "questions.json").write_text(json.dumps(
@@ -93,10 +93,10 @@ def _verified_run(root: Path, *claims: Claim) -> Path:
     return root
 
 
-def _vg(*args) -> tuple[int, str]:
+def _provenance(*args) -> tuple[int, str]:
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     width = cli.con.width
     cli.con.width = 10_000   # rich folds a long tmp path mid-word at 80 columns
@@ -108,8 +108,8 @@ def _vg(*args) -> tuple[int, str]:
 
 
 def _handed(data, qid: str, sid: str) -> list[str]:
-    """`--context` and the token `vg handoff` prints beside `sid`, as a verifier passes it on."""
-    code, out = _vg("handoff", qid, "--data", data)
+    """`--context` and the token `provenance handoff` prints beside `sid`, as a verifier passes it on."""
+    code, out = _provenance("handoff", qid, "--data", data)
     assert code == 0, out
     token = re.search(rf"sid {re.escape(sid)}\s+context token (\w+)", out)
     assert token, out
@@ -125,7 +125,7 @@ def _rewrite_answer(run: Path, qid: str, answer: str) -> None:
 def test_judge_stamps_the_claim_it_judged(tmp_path):
     shared = src("shared")
     run = _verified_run(tmp_path / "run", c := claim("q1", shared))
-    code, out = _vg("judge", "q1", shared.sid, "supports", "--data", run,
+    code, out = _provenance("judge", "q1", shared.sid, "supports", "--data", run,
                     *_handed(run, "q1", shared.sid))
     assert code == 0, out
     assert judgments.load(run, "q1")[shared.sid].claim_fingerprint == c.fingerprint
@@ -136,11 +136,11 @@ def test_judge_stamps_the_claim_it_judged(tmp_path):
 def test_a_verdict_shows_that_a_retry_rewrote_its_claim(tmp_path):
     """The repro #74 builds on: the answer flips, the quote stays, so the sid and the verdict
     stay. The stamp is what no longer matches."""
-    from vgpipe import cli
+    from provenance import cli
 
     s = src("a")
     run = _verified_run(tmp_path / "run", claim("q1", s, answer="It approved the appeal."))
-    assert _vg("judge", "q1", s.sid, "supports", "--data", run,
+    assert _provenance("judge", "q1", s.sid, "supports", "--data", run,
                *_handed(run, "q1", s.sid))[0] == 0
     _rewrite_answer(run, "q1", "It denied the appeal.")
 
@@ -151,15 +151,15 @@ def test_a_verdict_shows_that_a_retry_rewrote_its_claim(tmp_path):
 
 
 def test_judging_again_after_a_retry_stamps_what_the_claim_says_now(tmp_path):
-    from vgpipe import cli
+    from provenance import cli
 
     s = src("a")
     run = _verified_run(tmp_path / "run", claim("q1", s, answer="It approved the appeal."))
-    assert _vg("judge", "q1", s.sid, "supports", "--data", run,
+    assert _provenance("judge", "q1", s.sid, "supports", "--data", run,
                *_handed(run, "q1", s.sid))[0] == 0
     _rewrite_answer(run, "q1", "It denied the appeal.")
 
-    code, out = _vg("judge", "q1", s.sid, "topic_only", "--data", run,
+    code, out = _provenance("judge", "q1", s.sid, "topic_only", "--data", run,
                     *_handed(run, "q1", s.sid))
     assert code == 0, out
     (now,) = cli.load_claims(run / "claims")

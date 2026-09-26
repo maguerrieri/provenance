@@ -21,7 +21,7 @@ from .verify import secondary_host
 
 TEMPLATES = Path(__file__).resolve().parents[2] / "templates"
 
-# What a build leaves in out/. review.html is what `vg serve` serves, so it goes first here and
+# What a build leaves in out/. review.html is what `provenance serve` serves, so it goes first here and
 # is written last: while it is there, a build finished writing it.
 REVIEW_HTML, CLAIMS_JSON = "review.html", "claims.json"
 
@@ -33,7 +33,7 @@ def _temp_for(p: Path, pid: int | str) -> Path:
 def clear_render(out_dir: Path) -> None:
     """Remove the review app an earlier build rendered, before this build can refuse.
 
-    A build that exits early writes nothing, so the last render stayed in out/ and `vg serve`
+    A build that exits early writes nothing, so the last render stayed in out/ and `provenance serve`
     served it: a reviewer ticked a page the pipeline had just refused to produce. It is
     regenerable, and the checkboxes live in the browser, keyed by title, so nothing is lost.
     A temp file a killed build left goes too: serve lists out/, dotfiles included, and one
@@ -47,7 +47,7 @@ def clear_render(out_dir: Path) -> None:
 
 def _write_whole(p: Path, text: str) -> None:
     """Replace `p` whole, as `judgments._write()` does: a temp file beside it, on disk, then
-    renamed over it. `vg serve` may be reading review.html while a build writes it, and a
+    renamed over it. `provenance serve` may be reading review.html while a build writes it, and a
     build killed mid-write must not leave half a page."""
     tmp = _temp_for(p, os.getpid())
     try:
@@ -220,5 +220,5 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "voter guide",
     _write_whole(json_path, json.dumps(export, indent=2))
 
     html_path = out_dir / REVIEW_HTML
-    _write_whole(html_path, html)   # last: `vg serve` serves it, so it means the rest is written
+    _write_whole(html_path, html)   # last: `provenance serve` serves it, so it means the rest is written
     return html_path, json_path

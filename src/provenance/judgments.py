@@ -1,6 +1,6 @@
 """Verifier judgments, stored apart from the claims they judge.
 
-They cannot live in the claim file. `vg verify` reloads claim files with
+They cannot live in the claim file. `provenance verify` reloads claim files with
 `strip_machine_fields()` on — which is what stops a researcher marking its own citation
 verified — so a verdict written there is destroyed by the next verify run. In the smoke test
 the orchestrator had to hand-sequence every verify before every writeback, and the verdicts
@@ -63,7 +63,7 @@ class Judgment:
     # Which page that was, when it is not the cited URL: the snapshot an archive-verified
     # context came from. Empty for the cited page, as on every verdict from before it existed.
     page_url: str = ""
-    # Which claim it judged: `Claim.fingerprint` of the claim `vg judge` was given, its question
+    # Which claim it judged: `Claim.fingerprint` of the claim `provenance judge` was given, its question
     # and answer. A retry that rewrites either keeps the sid, and so the verdict, while the
     # words it judged are gone; this is what shows it, and a verdict whose fingerprint is not
     # the claim's is stale (`_claim_stale()`). Empty on a verdict recorded before it existed,
@@ -74,7 +74,7 @@ class Judgment:
 class UnreadableJudgments(ValueError):
     """A verdict file, or the judgments directory, exists but cannot be read as verdicts.
 
-    A ValueError, so `vg judge`'s existing handler already reports it. A subclass, so every
+    A ValueError, so `provenance judge`'s existing handler already reports it. A subclass, so every
     other command can stop on exactly this without also catching unrelated ValueErrors (a
     pydantic ValidationError is one) and presenting a bug as a data problem.
     """
@@ -82,7 +82,7 @@ class UnreadableJudgments(ValueError):
 
 class Unjudgeable(ValueError):
     """A verdict on this source cannot be recorded now, because nothing would tie it to the
-    copy of the page the verifier read. `vg judge` refuses with the message and writes nothing."""
+    copy of the page the verifier read. `provenance judge` refuses with the message and writes nothing."""
 
 
 _TYPES = get_type_hints(Judgment)
@@ -156,7 +156,7 @@ def path_for(root: Path, question_id: str) -> Path:
     """The shard for a question id — refusing any id that would name a file elsewhere.
 
     The claim schema constrains question ids, but only for values that pass through it, and
-    `vg judge` takes its id straight from the command line, where verifier agents (which have
+    `provenance judge` takes its id straight from the command line, where verifier agents (which have
     Bash) put it. `../claims/q7` made record() create and replace a file outside judgments/,
     and an absolute path discards `root` entirely. So the check lives here, where the path is
     built, and every read or write by question id passes through it. The schema's own shape
@@ -172,7 +172,7 @@ def path_for(root: Path, question_id: str) -> Path:
 
 
 def backup_dir(root: Path) -> Path:
-    """Where a re-home by the retired `vg remap` kept every shard as it was while it rewrote
+    """Where a re-home by the retired `provenance remap` kept every shard as it was while it rewrote
     them. Nothing writes it now, so one that exists was left by an interrupted re-home."""
     return root / "judgments-backup"
 
@@ -194,7 +194,7 @@ def _lock(root: Path, *, shared: bool = False):
     """Hold the judgments directory while reading or rewriting it.
 
     record() reads a shard and then rewrites it, and verifier agents record in parallel, so a
-    second `vg judge` that landed in between was never read, and the rewrite deleted it. Writers
+    second `provenance judge` that landed in between was never read, and the rewrite deleted it. Writers
     take the lock exclusively. Readers take it shared, so they read after a write in progress
     rather than before it; each shard is replaced whole (_write()), so none reads half of one.
     It is an flock on the directory itself: no lock file to litter a tracked data dir, and a
@@ -220,7 +220,7 @@ def _lock(root: Path, *, shared: bool = False):
                 except BlockingIOError:
                     if time.monotonic() > deadline:
                         raise UnreadableJudgments(
-                            f"{d} has been locked by another vg process for over "
+                            f"{d} has been locked by another provenance process for over "
                             f"{LOCK_TIMEOUT:.0f}s. A verdict write holds it for "
                             f"milliseconds, so that process is stuck: stop it and re-run."
                         ) from None
@@ -231,23 +231,23 @@ def _lock(root: Path, *, shared: bool = False):
             os.close(fd)
 
 
-# A commit on main whose `vg judgments --rollback` undoes an interrupted re-home. Named outright,
+# A commit on main whose `provenance judgments --rollback` undoes an interrupted re-home. Named outright,
 # and in full: a lookup such as `git log -S'def rollback('` finds whatever commit last touched
 # that text, and an abbreviated id can become ambiguous as the repository grows.
 LAST_WITH_ROLLBACK = "6f73eac879f5ce54a196436c781a8939217c5154"
 
 
 def leftovers(root: Path) -> list[Path]:
-    """Scratch an interrupted re-home by the retired `vg remap` left that no reader uses: a
+    """Scratch an interrupted re-home by the retired `provenance remap` left that no reader uses: a
     backup still being built, which had touched no shard, or one already retired after its
-    re-home finished. The next re-home used to clear them. Now nothing does, so `vg judgments`
+    re-home finished. The next re-home used to clear them. Now nothing does, so `provenance judgments`
     names them, and neither is ever to be restored from."""
     return [d for d in (root / "judgments-backup.partial", root / "judgments-backup.discard")
             if d.exists()]
 
 
 def refuse_if_interrupted(root: Path) -> None:
-    """Raise if a re-home by the retired `vg remap` or `vg judgments --repair` was interrupted.
+    """Raise if a re-home by the retired `provenance remap` or `provenance judgments --repair` was interrupted.
     A backup left behind means a rewrite stopped partway: some shards may already hold their new
     contents and others not. Reading that as the verdicts would render whatever is missing as
     unreviewed, which is the silent loss the backup exists to prevent. The command that undoes
@@ -263,12 +263,12 @@ def refuse_if_interrupted(root: Path) -> None:
         # exists() would read this as "no backup" (3.13+), and the shards as whole.
         raise UnreadableJudgments(f"cannot tell whether {b} exists: {e}.") from None
     raise UnreadableJudgments(
-        f"{b} exists, so a re-home of {root / 'judgments'} by the retired `vg remap` or `vg "
+        f"{b} exists, so a re-home of {root / 'judgments'} by the retired `provenance remap` or `provenance "
         f"judgments --repair` was interrupted, and its shards may be half-rewritten. This "
-        f"version cannot undo it: run `vg judgments --rollback --data "
+        f"version cannot undo it: run `provenance judgments --rollback --data "
         f"{shlex.quote(str(root.resolve()))}` from a checkout of commit {LAST_WITH_ROLLBACK}, "
         f"which still has it. It puts back everything the re-home changed: the verdicts, and the "
-        f"claim files and questions.json if it was `vg remap --apply`. Then, from that checkout, "
+        f"claim files and questions.json if it was `provenance remap --apply`. Then, from that checkout, "
         f"re-run the command that was interrupted to finish it, since this version cannot apply a "
         f"migration either.")
 
@@ -333,7 +333,7 @@ def load_every(root: Path) -> dict[str, dict[str, Judgment]]:
     last.
 
     Reads every shard before returning anything, so an unreadable one stops the caller before
-    it reports on any, and a caller that also needs the verdicts (`vg judgments`) gets them
+    it reports on any, and a caller that also needs the verdicts (`provenance judgments`) gets them
     from the same read.
     """
     with _lock(root, shared=True):
@@ -362,9 +362,9 @@ def _load_every(root: Path) -> dict[str, dict[str, Judgment]]:
 # load() refuses an unknown key, so an older checkout reading a shared data/ would stop on every
 # shard this code rewrote — including shards of page verdicts, which never use these. A query
 # verdict still carries them: older code cannot check it, and refusing says so. `page_url` the
-# same way: `vg judge` sets it only for a snapshot, which older code would check against the
+# same way: `provenance judge` sets it only for a snapshot, which older code would check against the
 # paywall stub, and leaves it empty for the cited page, which older code checks right.
-# `claim_fingerprint` is on every verdict `vg judge` records now, so older code refuses those
+# `claim_fingerprint` is on every verdict `provenance judge` records now, so older code refuses those
 # shards, which is the safe side: it could not tell that the claim was rewritten since. A shard
 # holding only older verdicts stays one older code reads.
 _WRITTEN_WHEN_SET = ("query_version", "export_date", "page_url", "claim_fingerprint")
@@ -406,7 +406,7 @@ def record(root: Path, question_id: str, sid: str, verdict: str, note: str = "",
            claim_fingerprint: str = "") -> Judgment:
     """Write one verdict into `question_id`'s shard, replacing any earlier one for `sid`.
 
-    `claim_fingerprint` is the judged claim's `Claim.fingerprint`. `vg judge` always passes it;
+    `claim_fingerprint` is the judged claim's `Claim.fingerprint`. `provenance judge` always passes it;
     left empty, the verdict reads like one recorded before fingerprints existed."""
     j = Judgment(sid=sid, verdict=verdict, note=note,
                  page_fetched_at=page_fetched_at, extractor_version=extractor_version,
@@ -441,11 +441,11 @@ def dropped(claim, judged: dict[str, Judgment]) -> list:
 
     "No longer cites" is by sid, which covers url and snippet: a retry that re-quotes the same
     page holds the claim too, since a new quote can be a more agreeable passage of a page that
-    argued against it. A verdict filed under the claim before `vg judge` checked that it cites
+    argued against it. A verdict filed under the claim before `provenance judge` checked that it cites
     the source is held the same way. Each fails toward review, where a human can clear it.
 
     Never checked for staleness: that compares a verdict with the source it judged, which the
-    claim no longer carries, and `vg judge` cannot re-judge a source nothing cites. Holding the
+    claim no longer carries, and `provenance judge` cannot re-judge a source nothing cites. Holding the
     claim in review is the direction to fail in."""
     from .models import DroppedContradiction
 
@@ -579,7 +579,7 @@ def _same_file(root: Path, stem: str, question_id: str) -> bool:
 def opened_as(root: Path, stem: str, question_ids) -> str | None:
     """The one id among `question_ids`, other than its own name, that this disk opens shard
     `stem` as: q1 for Q1.json where the disk folds case. None if there is none, or more than one.
-    `vg judgments` asks it, so it counts a shard for the claim `vg build` opens it as.
+    `provenance judgments` asks it, so it counts a shard for the claim `provenance build` opens it as.
     """
     same = [q for q in question_ids
             if q != stem and q.casefold() == stem.casefold() and _same_file(root, stem, q)]
@@ -589,7 +589,7 @@ def opened_as(root: Path, stem: str, question_ids) -> str | None:
 def _judged_page(cache_root: Path, url: str):
     # The one lookup both sides of a verdict go through: `judged_copy()` when it is recorded
     # and `is_stale()` when it is applied. They used to resolve their roots separately, and did so
-    # differently — `vg judge` stamped from the shared cache (data/cache) while the check looked
+    # differently — `provenance judge` stamped from the shared cache (data/cache) while the check looked
     # under the candidate dir (data/<candidate>/cache), found no page, and so compared nothing and
     # passed the verdict.
     from .fetch import load_cached
@@ -600,7 +600,7 @@ def _judged_page(cache_root: Path, url: str):
 def query_stamp(cache_root: Path, query) -> tuple[int, str]:
     """(query_version, export_date) now: the registry's current definition and the export
     under `cache_root`. (0, "") for a name the registry does not know, which reads as stale.
-    What a claim's run must match (`unjudgeable_query()`) before `vg judge` stamps that run:
+    What a claim's run must match (`unjudgeable_query()`) before `provenance judge` stamps that run:
     judge stamps the run it checked, never a second read of this, which a rebuild between the
     two could move."""
     from . import queries
@@ -617,14 +617,14 @@ def unjudgeable_query(query, ran, cache_root: Path) -> str:
     always the one the verifier read, since a re-verify can replace it while the verifier
     works; the context token (`context_token()`) is what ties the verdict to that one.
 
-    `vg judge` stamps the verdict with this run, so it must match the registry and this root.
+    `provenance judge` stamps the verdict with this run, so it must match the registry and this root.
     A context an older definition produced, stamped with the current one, would make a verdict
     about the old calculation read as current — the exact case versioning exists to catch —
     and one from another database's export would hide that the data differs. So when the run,
     the registry and this root disagree, re-verify first.
 
     This reads a claim file, and on the trusted side: a forged `query_run` can only get past
-    the refusal, and past it is exactly the stamp `vg judge` wrote before this check existed —
+    the refusal, and past it is exactly the stamp `provenance judge` wrote before this check existed —
     the registry's version and this root's export. It can refuse; it can never grant."""
     version, export = query_stamp(cache_root, query)
     root = Path(cache_root).resolve()
@@ -640,7 +640,7 @@ def unjudgeable_query(query, ran, cache_root: Path) -> str:
         why = (f"this citation was last verified under v{ran.version}"
                f"{_against(query.name, ran.export_date)} under {ran.cache_root}, but {now}, so "
                f"the context you judged is not what it gives here")
-    return (f"{why}. Run `vg verify`, then judge it again, with the same --cache for both "
+    return (f"{why}. Run `provenance verify`, then judge it again, with the same --cache for both "
             f"commands.")
 
 
@@ -716,7 +716,7 @@ _RECORDED = object()   # judged_copy(): read the copy from the source itself
 
 def judged_copy(source, cache_root: Path, *, seen=_RECORDED) -> tuple[str, str, int]:
     """(page_url, page_fetched_at, extractor_version) to stamp a verdict on `source` with —
-    the copy of the page `vg verify` built the verifier's context from. `page_url` is empty when
+    the copy of the page `provenance verify` built the verifier's context from. `page_url` is empty when
     that is the cited page (see `_WRITTEN_WHEN_SET`). Raises Unjudgeable when that copy cannot
     be named, is not where the context comes from now, or is no longer the one cached.
 
@@ -725,7 +725,7 @@ def judged_copy(source, cache_root: Path, *, seen=_RECORDED) -> tuple[str, str, 
     since (see `unjudgeable_page()`).
 
     Stamping whatever was cached at judge time let another run's re-fetch land between
-    `vg verify` and `vg judge`: the verdict was stamped from the new copy, read fresh against
+    `provenance verify` and `provenance judge`: the verdict was stamped from the new copy, read fresh against
     it, and rendered green on text the verifier never saw. And for an archive-verified
     source the context comes from the snapshot, not from the paywall stub at the cited URL,
     which never changes — so a verdict stamped from the stub survived every re-archive.
@@ -737,17 +737,17 @@ def judged_copy(source, cache_root: Path, *, seen=_RECORDED) -> tuple[str, str, 
         seen = source.verification.context_page
     if seen is None:
         raise Unjudgeable(
-            f"`vg verify` has recorded no page this source's context came from: it has no "
+            f"`provenance verify` has recorded no page this source's context came from: it has no "
             f"context to judge (it is {source.verification.status}), or it was verified before "
-            f"pages were recorded. Run `vg verify` for this run, then judge the context it gives.")
+            f"pages were recorded. Run `provenance verify` for this run, then judge the context it gives.")
     if why := _moved(seen.url, source):
         raise Unjudgeable(f"the context you were given no longer describes this source: {why}. "
-                          f"Run `vg verify` for this run, then judge the context it gives.")
+                          f"Run `provenance verify` for this run, then judge the context it gives.")
     page = _judged_page(cache_root, seen.url)
     if page is None:
         # An empty stamp could never go stale, however often the page is re-fetched after.
         raise Unjudgeable(f"{seen.url} is not in the page cache at {cache_root}, so this verdict "
-                          f"could not name the copy it judged. Run `vg verify` for this run, or "
+                          f"could not name the copy it judged. Run `provenance verify` for this run, or "
                           f"pass the --cache it uses.")
     if (_instant(page.fetched_at), page.extractor_version) != (_instant(seen.fetched_at),
                                                                seen.extractor_version):
@@ -755,17 +755,17 @@ def judged_copy(source, cache_root: Path, *, seen=_RECORDED) -> tuple[str, str, 
             f"the context you were given was built from the copy of {_which(seen.url, source)} "
             f"fetched {seen.fetched_at} (extractor v{seen.extractor_version}), and the cache now "
             f"holds one fetched {page.fetched_at} (v{page.extractor_version}). A verdict stamped "
-            f"now would describe text you did not read. Run `vg verify` for this run, then judge "
+            f"now would describe text you did not read. Run `provenance verify` for this run, then judge "
             f"the context it gives.")
     page_url = "" if seen.url == source.url else seen.url
     return page_url, str(page.fetched_at), page.extractor_version
 
 
 def unjudgeable_page(source, seen, cache_root: Path) -> str:
-    """Why `vg judge` would refuse a verdict on this page citation now, or "": the page
+    """Why `provenance judge` would refuse a verdict on this page citation now, or "": the page
     counterpart of `unjudgeable_query()`. `seen` is the claim file's `context_page`, captured
-    before anything rebuilt the verification — `vg judge` reads the file, not a revalidated
-    copy. `vg judgments` asks this so its gate never waits on a verdict that cannot be recorded."""
+    before anything rebuilt the verification — `provenance judge` reads the file, not a revalidated
+    copy. `provenance judgments` asks this so its gate never waits on a verdict that cannot be recorded."""
     try:
         judged_copy(source, cache_root, seen=seen)
     except Unjudgeable as e:
@@ -775,7 +775,7 @@ def unjudgeable_page(source, seen, cache_root: Path) -> str:
 
 @dataclass(frozen=True)
 class HandedRun:
-    """The run a query citation's context came from, as `vg handoff` prints it."""
+    """The run a query citation's context came from, as `provenance handoff` prints it."""
     name: str
     version: int
     dataset: str       # "" for a query whose data has no exports
@@ -785,14 +785,14 @@ class HandedRun:
 
 @dataclass(frozen=True)
 class HandedContext:
-    """What `vg handoff` prints for a source there is something to judge on."""
+    """What `provenance handoff` prints for a source there is something to judge on."""
     text: str
     query_run: HandedRun | None   # a query citation's run; None for a page
 
 
 @dataclass(frozen=True)
 class HandedSource:
-    """One source as `vg handoff` prints it."""
+    """One source as `provenance handoff` prints it."""
     sid: str
     status: str
     publisher: str
@@ -808,7 +808,7 @@ class HandedSource:
 
 @dataclass(frozen=True)
 class Handoff:
-    """Everything `vg handoff` prints for one claim, as one value (`cli._handed()` builds it).
+    """Everything `provenance handoff` prints for one claim, as one value (`cli._handed()` builds it).
     The printer reads nothing else and `context_token()` hashes it, so a field the hand-off
     prints is one the token covers without anyone listing it."""
     question_id: str
@@ -819,7 +819,7 @@ class Handoff:
     sources: tuple[HandedSource, ...]
 
 
-# What the token leaves out of the hand-off, by name; everything else is in it. The ids `vg judge`
+# What the token leaves out of the hand-off, by name; everything else is in it. The ids `provenance judge`
 # takes as arguments and checks itself: the question id here, and the judged source's sid in
 # `context_token()`. The other sources' sids are in it: a query citation's covers the figure it
 # asserts, which nothing else printed does. The status and the reason a source has nothing to
@@ -844,9 +844,9 @@ def context_token(handed: Handoff, sid: str) -> str:
     """A short fingerprint of the hand-off a verifier was given to judge source `sid` from: all
     of `handed` but what `_NOT_HASHED` names and that source's own sid, and which source's block
     it was printed beside (`[n/N]`). "" when the hand-off has nothing to judge on that source.
-    `vg judge --context` must hand it back.
+    `provenance judge --context` must hand it back.
 
-    `vg judge` reads the claim file as it is when judge runs, and nothing from the verifier said
+    `provenance judge` reads the claim file as it is when judge runs, and nothing from the verifier said
     what it had read. So a re-verify landing while a verifier worked (another run re-fetched the
     page, and this one rebuilt the context from the new copy) left judge a copy it could stamp
     and a context no verifier had seen, and the row rendered green on it. The token is how the
@@ -871,7 +871,7 @@ def context_token(handed: Handoff, sid: str) -> str:
     if n is None or handed.sources[n - 1].context is None:
         return ""
     hashed = _hashed(handed)
-    del hashed["sources"][n - 1]["sid"]   # the argument `vg judge` found this block by
+    del hashed["sources"][n - 1]["sid"]   # the argument `provenance judge` found this block by
     shown = json.dumps({"handoff": hashed, "judged": n}, sort_keys=True, ensure_ascii=True,
                        allow_nan=False, separators=(",", ":"))
     return hashlib.sha256(shown.encode("ascii")).hexdigest()[:16]
@@ -881,12 +881,12 @@ def wrong_context(handed: Handoff, sid: str, token: str, *, handoff: str) -> str
     """Why a verdict on `sid` handed back with `token` is not about the hand-off `handed` gives
     now, or "". Every verdict must carry a token: a query citation's too, since the run check
     (`unjudgeable_query()`) ties it only to the run on disk when judge runs, not to the one the
-    verifier read. `handoff` is the `vg handoff` command, with the run's --data and --cache,
+    verifier read. `handoff` is the `provenance handoff` command, with the run's --data and --cache,
     that prints what to judge.
 
     The token is agent-supplied and the hand-off is built from a claim file loaded trusted, and
     both are safe for the same reason: this can refuse, never grant. A forged token matching
-    the current hand-off gets exactly what `vg judge` recorded before tokens existed, and any
+    the current hand-off gets exactly what `provenance judge` recorded before tokens existed, and any
     other blocks the verdict. So the refusal never prints the current token: a verifier handed
     one could retry with it and record a verdict about text it has not read."""
     token = token.strip().lower()
@@ -945,17 +945,17 @@ def is_stale(j: "Judgment", cache_root: Path, source) -> str:
         # matches `expected` discards the source whatever the verdict says.
         return _query_stale(j, source.query)
     if not j.page_url and source.verification.status == "could_not_verify_paywall":
-        # Stamped from the cited page, on a row whose live page is gated now. `vg judge` only
+        # Stamped from the cited page, on a row whose live page is gated now. `provenance judge` only
         # stamps a copy a context came from, and a paywalled row has none, so this verdict is
         # either from before verdicts named their page — possibly about a snapshot the row was
         # verified against then and is not now — or about a page since re-fetched behind a
         # paywall. The stub never changes, so no time comparison can tell the first case.
-        # Not re-judgeable as it stands (`vg judge` refuses a row with no context), so the
+        # Not re-judgeable as it stands (`provenance judge` refuses a row with no context), so the
         # reason says what is: the row needs a context back first.
         return ("judged against the cited page, which is now paywalled: it may be about a "
                 "snapshot that no longer backs this row, and nothing can show which. Nothing "
-                "can be judged here until `vg archive` or `vg verify` gives the row a context")
-    # Empty for the cited page: `vg judge` names only a snapshot (see _WRITTEN_WHEN_SET), and
+                "can be judged here until `provenance archive` or `provenance verify` gives the row a context")
+    # Empty for the cited page: `provenance judge` names only a snapshot (see _WRITTEN_WHEN_SET), and
     # a verdict from before `page_url` existed was stamped from the cited page too.
     judged_url = j.page_url or source.url
     if why := _moved(judged_url, source):
@@ -1018,7 +1018,7 @@ def _claim_stale(j: "Judgment", fingerprint: str) -> str:
     A legacy verdict, recorded before verdicts named their claim, is stale. The page rule's
     exception does not carry over: it bounds a legacy verdict by `judged_at` against the time
     every fetch stamps on its page, and nothing records when an answer was written.
-    `checked_at` moves on every `vg verify`, and a claim file's mtime on every write-back and
+    `checked_at` moves on every `provenance verify`, and a claim file's mtime on every write-back and
     checkout. With no bound, it is the query rule instead: unknown fails toward re-checking."""
     if not j.claim_fingerprint:
         return ("recorded before verdicts named the claim they judged, so nothing shows it is "
@@ -1044,7 +1044,7 @@ def verdicts_for(claim, root: Path, judged: dict[str, Judgment] | None = None, *
     A verdict is stale when it judged another question or answer (`_claim_stale()`, checked
     here because this is where the claim is in hand) or another copy of the page or query
     (`is_stale()`). Both halves are reported: re-judging needs the page half settled too, and
-    `vg judge` refuses a page it cannot stamp.
+    `provenance judge` refuses a page it cannot stamp.
     """
     if judged is None:
         judged = load(root, claim.question_id)
@@ -1065,14 +1065,14 @@ def apply_to(claim, root: Path, *, cache_root: Path) -> list[str]:
 def merge(verdicts) -> list[str]:
     """`apply_to()`'s body, for a caller that also needs the `verdicts_for()` rows it merged.
 
-    `vg judgments` merges through here and then runs build's other offline checks, so its
-    count is what `vg build` renders rather than a re-derivation of it: an earlier count
+    `provenance judgments` merges through here and then runs build's other offline checks, so its
+    count is what `provenance build` renders rather than a re-derivation of it: an earlier count
     trusted any recorded verdict, and read 0 while build still showed stale ones as pending.
     """
     stale: list[str] = []
     for s, j, why in verdicts:
         if j is None or why:
-            # Reset to unreviewed, not merely skipped: `vg build` loads claim files trusting
+            # Reset to unreviewed, not merely skipped: `provenance build` loads claim files trusting
             # machine fields, so a `support` already sitting in the file — hand- or
             # agent-written, or left from before verdicts moved out — would otherwise render
             # as judged. A verdict comes from data/judgments/ or not at all, and unjudged

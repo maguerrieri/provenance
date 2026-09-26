@@ -17,11 +17,11 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from vgpipe import cli
-from vgpipe.conflicts import detect
-from vgpipe.fetch import cache_path
-from vgpipe.models import EXTRACTOR_VERSION, Claim, PageCache, Source
-from vgpipe.verify import check_corroboration, check_inputs
+from provenance import cli
+from provenance.conflicts import detect
+from provenance.fetch import cache_path
+from provenance.models import EXTRACTOR_VERSION, Claim, PageCache, Source
+from provenance.verify import check_corroboration, check_inputs
 
 LEDGER = "https://daily-ledger.example/levy-vote"
 WEEKLY = "https://harbor-weekly.example/levy-vote"
@@ -144,7 +144,7 @@ def _cache(root: Path, url: str) -> None:
     cache_path(root, url).write_text(page.model_dump_json())
 
 
-def _vg(*args) -> tuple[int, str]:
+def _provenance(*args) -> tuple[int, str]:
     width = cli.con.width
     cli.con.width = 10_000   # rich folds a long tmp path mid-word at 80 columns
     try:
@@ -155,8 +155,8 @@ def _vg(*args) -> tuple[int, str]:
 
 
 def _handed(data, qid: str, sid: str) -> list[str]:
-    """`--context` and the token `vg handoff` prints beside `sid`, as a verifier passes it on."""
-    code, out = _vg("handoff", qid, "--data", data)
+    """`--context` and the token `provenance handoff` prints beside `sid`, as a verifier passes it on."""
+    code, out = _provenance("handoff", qid, "--data", data)
     assert code == 0, out
     token = re.search(rf"sid {re.escape(sid)}\s+context token (\w+)", out)
     assert token, out
@@ -164,7 +164,7 @@ def _handed(data, qid: str, sid: str) -> list[str]:
 
 
 def _built(data: Path) -> dict:
-    code, out = _vg("build", "--data", data)
+    code, out = _provenance("build", "--data", data)
     assert code == 0, out
     [claim] = json.loads((data / "out" / "claims.json").read_text())
     return claim
@@ -182,7 +182,7 @@ def test_build_and_status_list_a_recorded_contradiction_and_only_that(tmp_path):
     (data / "claims" / "q1.json").write_text(
         Claim(question_id="q1", question="?", answer="a",
               sources=[ledger, weekly]).model_dump_json())
-    code, out = _vg("verify", "--data", data)
+    code, out = _provenance("verify", "--data", data)
     assert code == 0, out
 
     # Written into the claim file by hand: no verdict was recorded, so none is listed.
@@ -196,7 +196,7 @@ def test_build_and_status_list_a_recorded_contradiction_and_only_that(tmp_path):
 
     for sid, verdict, note in ((ledger.sid, "supports", "states the vote"),
                                (weekly.sid, "contradicts", "says the vote went the other way")):
-        code, out = _vg("judge", "q1", sid, verdict, "--note", note, "--data", data,
+        code, out = _provenance("judge", "q1", sid, verdict, "--note", note, "--data", data,
                         *_handed(data, "q1", sid))
         assert code == 0, out
     built = _built(data)
@@ -208,7 +208,7 @@ def test_build_and_status_list_a_recorded_contradiction_and_only_that(tmp_path):
     html = (data / "out" / "review.html").read_text()
     assert "Conflicts (1)" in html and line in html
 
-    code, out = _vg("status", "--data", data)
+    code, out = _provenance("status", "--data", data)
     assert code == 0, out
     row = next(ln for ln in out.splitlines() if ln.split()[:1] == ["q1"])
     assert "human_review" in row and row.split()[-1] == "1", row

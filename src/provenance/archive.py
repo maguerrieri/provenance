@@ -24,12 +24,12 @@ SAVE = "https://web.archive.org/save/"
 SAVE_API = "https://web.archive.org/save"
 AVAIL = "https://archive.org/wayback/available"
 
-# The pipeline's own record of what `vg archive` saved, one file per run. It exists so that
+# The pipeline's own record of what `provenance archive` saved, one file per run. It exists so that
 # `archive_url` can be a machine field like `verification`: stripped from agent-authored
 # claim files on ingest, and re-applied from here by every command that writes claims back.
-# Keeping the value in the claim file instead meant `vg verify` could not strip it (that
+# Keeping the value in the claim file instead meant `provenance verify` could not strip it (that
 # would delete every snapshot), so an agent-authored one survived — and on a URL where Save
-# Page Now fails, `vg archive` kept it and verified against it.
+# Page Now fails, `provenance archive` kept it and verified against it.
 RECORDS = "archives.json"
 
 # `web/<timestamp>[<modifier>_]/<target>`. The modifier (`id_`, `if_`, …) selects a replay
@@ -125,7 +125,7 @@ def _page_key(url: str) -> tuple[str, str, str, str] | None:
 
 
 def cited_page(url: str) -> str | None:
-    """The page a citation points at. A citation may itself be a snapshot — `vg calaccess
+    """The page a citation points at. A citation may itself be a snapshot — `provenance calaccess
     cite` recommends one for bot-protected pages — and then it points at that snapshot's
     target, so a snapshot of the same target is a snapshot of the cited page."""
     return wayback_target(url) if is_snapshot(url) else url
@@ -148,7 +148,7 @@ def snapshot_of(url: str, snapshot_url: str, *, also: tuple[str, ...] = ()) -> b
 
 
 def load_records(data: Path) -> dict[str, dict]:
-    """The snapshots `vg archive` saved for this run, keyed by cited URL.
+    """The snapshots `provenance archive` saved for this run, keyed by cited URL.
 
     An unreadable file raises rather than reading as empty: empty means "nothing archived",
     so every snapshot link would vanish from the review app with no sign of why.
@@ -159,18 +159,18 @@ def load_records(data: Path) -> dict[str, dict]:
     try:
         raw = json.loads(p.read_text())
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
-        raise ValueError(f"{p} is unreadable ({e}) — `vg archive` sets it aside and "
+        raise ValueError(f"{p} is unreadable ({e}) — `provenance archive` sets it aside and "
                          "rebuilds it") from None
     # A record that isn't one is damage too: dropping it would lose that URL's snapshot
     # without a word.
     if not isinstance(raw, dict) or not all(isinstance(r, dict) for r in raw.values()):
-        raise ValueError(f"{p} is not a URL → snapshot mapping — `vg archive` sets it aside "
+        raise ValueError(f"{p} is not a URL → snapshot mapping — `provenance archive` sets it aside "
                          "and rebuilds it")
     return raw
 
 
 def save_records(data: Path, records: dict[str, dict]) -> None:
-    """Write atomically: `vg archive` saves after every URL, and an interrupted write must
+    """Write atomically: `provenance archive` saves after every URL, and an interrupted write must
     not leave a half file that every later command refuses to read."""
     data.mkdir(parents=True, exist_ok=True)
     tmp = data / f".{RECORDS}.tmp"
@@ -189,7 +189,7 @@ def save(url: str, *, timeout: float = 60.0, prefer_existing: bool = False) -> t
         if snap:
             return snap, None
     auth = auth_header()
-    ua = {"User-Agent": "vgpipe/0.1 (voter guide citation archiver)"}
+    ua = {"User-Agent": "provenance/0.1 (voter guide citation archiver)"}
     try:
         if auth:
             # Authenticated SPN takes a POST and answers with JSON: a job id to poll, or the

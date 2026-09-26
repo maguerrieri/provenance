@@ -109,7 +109,7 @@ class Contribution:
 
 
 # The phrases citable_snapshot() opens its not-citable notes with. Kept beside the notes they
-# match: `vg calaccess cite` colours by them, and a new note missing here reads green.
+# match: `provenance calaccess cite` colours by them, and a new note missing here reads green.
 _UNUSABLE = ("WRONG CYCLE", "no dollar figures", "could not be read")
 
 
@@ -241,7 +241,7 @@ def _read_export_info(path: str, _mtime_ns: int, _size: int) -> tuple[tuple[str,
     except sqlite3.DatabaseError:
         # No table — built before exports were dated, or interrupted before build() wrote it
         # last — or not a database at all. Unknown either way: this only annotates, so it must
-        # not stop `vg judge` or `vg build`.
+        # not stop `provenance judge` or `provenance build`.
         return ()
     finally:
         con.close()
@@ -311,11 +311,11 @@ LATEST_VIEWS = (("RCPT_CD", "RCPT_LATEST"), ("EXPN_CD", "EXPN_LATEST"),
 
 class DegradedDatabaseWarning(UserWarning):
     """The database lacks a column a dedup view needs, so some results can be wrong until
-    it is rebuilt with `vg calaccess build`."""
+    it is rebuilt with `provenance calaccess build`."""
 
 
 class DegradedDatabase(RuntimeError):
-    """A citable query refused to answer from a degraded database. `vg verify` and `vg build`
+    """A citable query refused to answer from a degraded database. `provenance verify` and `provenance build`
     then record the citation as not reproduced, never as verified."""
 
 
@@ -330,7 +330,7 @@ COVER_FALLBACK = (
     "that column was loaded), so cover records cannot be narrowed to the latest amendment. "
     "An independent expenditure can be attributed to a candidate or stance that a later "
     "amendment replaced, and no figure can be checked for rows a later amendment dropped. "
-    "Rebuild the database: uv run vg calaccess build")
+    "Rebuild the database: uv run provenance calaccess build")
 
 
 def connect_citable(root: Path) -> sqlite3.Connection:
@@ -394,13 +394,13 @@ def cover_problem_at(root: Path) -> str | None:
 NO_COVERS = (
     "this CAL-ACCESS database has no CVR_CAMPAIGN_DISCLOSURE_CD table, so no figure can be "
     "checked for rows a filing's later amendment dropped. The export it was built from lacked "
-    "the cover table: download a complete export, then uv run vg calaccess build")
+    "the cover table: download a complete export, then uv run provenance calaccess build")
 
 EMPTY_COVERS = (
     "this CAL-ACCESS database's CVR_CAMPAIGN_DISCLOSURE_CD table has no rows, so no filing has a "
     "cover record to say which amendment is its latest, and no figure can be checked for rows a "
     "filing's later amendment dropped. The export it was built from lacked the cover records: "
-    "download a complete export, then uv run vg calaccess build")
+    "download a complete export, then uv run provenance calaccess build")
 
 
 @dataclass(frozen=True)
@@ -587,7 +587,7 @@ LATE_FALLBACK = (
     "this CAL-ACCESS database cannot read Form 497 late contribution reports (S497_CD): it was "
     "built before they were loaded, or the export's table lacks a column they need. So a "
     "contribution total cannot tell whether a late contribution is missing from it, whether "
-    "or not it names schedule A. Rebuild the database: uv run vg calaccess build")
+    "or not it names schedule A. Rebuild the database: uv run provenance calaccess build")
 
 # What queries._pending_late reads from S497_CD. DATE_THRU is optional.
 LATE_COLUMNS = ("FILING_ID", "AMEND_ID", "TRAN_ID", "FORM_TYPE", "ENTY_NAML", "ENTY_NAMF",
@@ -618,7 +618,7 @@ SCHEDULE_FALLBACK = (
     "this CAL-ACCESS database has no {table}.FORM_TYPE (it was built before that column was "
     "loaded), so its schedules cannot be told apart, and no figure from that table can be "
     "checked for a schedule a filing's later amendment left out. Rebuild the database: "
-    "uv run vg calaccess build")
+    "uv run provenance calaccess build")
 
 
 @dataclass(frozen=True)
@@ -869,7 +869,7 @@ def build(root: Path, *, progress=None) -> Path:
             pass
     # Last, so it certifies a finished build. Written first, it was committed with the first
     # table, and an interrupted rebuild answered queries from missing tables under a full
-    # export date. Without it the database reads as undated, which `vg judge` and the review
+    # export date. Without it the database reads as undated, which `provenance judge` and the review
     # page both say.
     con.execute(f'CREATE TABLE "{EXPORT_META}" ("key" TEXT PRIMARY KEY, "value" TEXT)')
     # not_in_export: wanted tables the export has no file for (late_reports_loaded).
@@ -885,14 +885,14 @@ def build(root: Path, *, progress=None) -> Path:
 def connect(root: Path) -> sqlite3.Connection:
     dbp = db_path(root)
     if not dbp.exists():
-        raise FileNotFoundError(f"{dbp} not found — run `vg calaccess build` first")
+        raise FileNotFoundError(f"{dbp} not found — run `provenance calaccess build` first")
     con = sqlite3.connect(dbp)
     con.row_factory = sqlite3.Row
     install_views(con)
     # A name's key, as the queries group, match and dedup names (queries._name_key).
     from .queries import _name_key
 
-    con.create_function("vg_name_key", 1, _name_key, deterministic=True)
+    con.create_function("provenance_name_key", 1, _name_key, deterministic=True)
     return con
 
 

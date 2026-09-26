@@ -18,9 +18,9 @@ import zipfile
 
 import pytest
 
-from vgpipe import calaccess, queries
-from vgpipe.models import QueryCitation, Source
-from vgpipe.verify import revalidate_from_cache, verify_query_source
+from provenance import calaccess, queries
+from provenance.models import QueryCitation, Source
+from provenance.verify import revalidate_from_cache, verify_query_source
 
 FILER = "9990661"
 OTHER_FILER = "9990670"
@@ -495,8 +495,8 @@ def test_a_short_total_does_not_verify_green(tmp_path):
     assert "the query reproduces 8000.0, but it leaves out late-reported" in by_name.reason
     assert "filing 9990664 (Form 497): $700.00 in 1 entry" in by_name.reason, by_name.reason
     assert f"open {calaccess.filing_url(F497)}" in by_name.reason
-    assert "uv run vg query calaccess.filer_total" in by_name.reason
-    assert by_name.query_run is not None, "stamped, as a mismatch is, for vg judge"
+    assert "uv run provenance query calaccess.filer_total" in by_name.reason
+    assert by_name.query_run is not None, "stamped, as a mismatch is, for provenance judge"
     # A mismatch is still a mismatch, not a question for a person.
     assert cite("9000", form_type="A").status == "snippet_not_found"
 
@@ -514,7 +514,7 @@ def test_a_database_built_before_late_reports_were_loaded_refuses_the_default(tm
     for name, params in (("contributor_total", {"contributor": "Fernhollow Growers PAC"}),
                          ("filer_total", {}), ("top_contributor", {})):
         for form_type in ({}, {"form_type": "A"}, {"form_type": ""}):
-            with pytest.raises(calaccess.DegradedDatabase, match="uv run vg calaccess build"):
+            with pytest.raises(calaccess.DegradedDatabase, match="uv run provenance calaccess build"):
                 run(root, name, **params, **form_type)
     # another schedule never depended on late reports: a miss, not a refusal
     assert not run(root, "filer_total", form_type="C").found
@@ -534,7 +534,7 @@ def test_an_export_without_late_reports_is_not_a_degraded_database(tmp_path):
 
 def test_build_does_not_keep_a_named_figure_green_while_a_late_report_is_pending(tmp_path):
     """A claim file verified before the late report reached the export, or under a version that
-    did not ask, re-runs at every build: the same rule `vg verify` applies, applied there too."""
+    did not ask, re-runs at every build: the same rule `provenance verify` applies, applied there too."""
     root = build(tmp_path, ON_SCHEDULE_A, late=s497("L-1", "Saltmarsh", "Tobiah", "700"))
 
     def claimed_green(root, **params):
@@ -568,7 +568,7 @@ MANY_FILINGS = FILINGS + "".join(f"{FILER}\t{f}\tF497\t10/5/2026{DAY}\n" for f i
 
 
 def test_a_named_figure_names_its_late_reports_largest_first(tmp_path):
-    """The reason becomes a claim file's, so it names five and says how many more; `vg query`
+    """The reason becomes a claim file's, so it names five and says how many more; `provenance query`
     prints the rest. An amount nobody stated could be anything, so it comes first."""
     amounts = ["100", "", "900", "300", "-2000", "500", "200"]
     late = "".join(s497(f"L-{i}", "Saltmarsh", "Tobiah", a, filing=f)
@@ -581,7 +581,7 @@ def test_a_named_figure_names_its_late_reports_largest_first(tmp_path):
             in got.unsettled), got.unsettled
     named = [f for f in MANY if f"filing {f} " in got.unsettled]
     assert sorted(named) == sorted(MANY[i] for i in (1, 4, 2, 5, 3)), got.unsettled
-    assert "and 2 more late report(s), which `vg query` lists" in got.unsettled, got.unsettled
+    assert "and 2 more late report(s), which `provenance query` lists" in got.unsettled, got.unsettled
 
 
 def test_a_value_unsettled_two_ways_names_both(tmp_path):
@@ -661,10 +661,10 @@ def test_a_ranking_its_own_detail_calls_unsettled_does_not_verify(tmp_path):
     assert ("they could change the ranking" in got.detail) == bool(got.unsettled), got.note
 
 
-def test_vg_query_says_a_figure_will_not_verify_before_it_is_recorded(tmp_path):
+def test_provenance_query_says_a_figure_will_not_verify_before_it_is_recorded(tmp_path):
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     late = "".join(s497(f"L-{i}", "Saltmarsh", "Tobiah", str(100 * (i + 1)), filing=f)
                    for i, f in enumerate(MANY))

@@ -10,11 +10,11 @@ from pathlib import Path
 
 import pytest
 
-from vgpipe import fetch as fetch_mod
-from vgpipe.models import Claim, PageCache, Source
-from vgpipe.normalize import normalize
-from vgpipe.sources import load_rules
-from vgpipe.verify import check_corroboration, revalidate_from_cache, verify_source
+from provenance import fetch as fetch_mod
+from provenance.models import Claim, PageCache, Source
+from provenance.normalize import normalize
+from provenance.sources import load_rules
+from provenance.verify import check_corroboration, revalidate_from_cache, verify_source
 
 # Pin the source lists so these tests don't depend on which races/ files exist.
 RULES = load_rules(("us", "ca"))
@@ -50,8 +50,8 @@ def stub(monkeypatch):
     def _fetch(url, root, *, refresh=False, timeout=30.0):
         return pages.get(url, _page(url=url, status=404, text="", error="not found"))
 
-    monkeypatch.setattr("vgpipe.verify.fetch", _fetch)
-    monkeypatch.setattr("vgpipe.verify.load_cached", lambda root, url: pages.get(url))
+    monkeypatch.setattr("provenance.verify.fetch", _fetch)
+    monkeypatch.setattr("provenance.verify.load_cached", lambda root, url: pages.get(url))
     return pages
 
 
@@ -218,7 +218,7 @@ def test_paywall_flag_is_recomputed_not_sticky(stub, tmp_path):
 
 def test_agent_cannot_declare_its_own_citation_verified():
     """The core invariant: pipeline-owned fields in an agent-authored file are discarded."""
-    from vgpipe.models import strip_machine_fields
+    from provenance.models import strip_machine_fields
 
     forged = {
         "question_id": "q9", "question": "?", "answer": "a", "confidence": "direct",
@@ -243,7 +243,7 @@ def test_verified_status_must_be_reproducible_from_cache(tmp_path, monkeypatch):
     """Even a status that reaches build must survive an offline re-check against the
     cached page it was supposedly verified against."""
     cached = {"https://calmatters.org/a": _page()}
-    monkeypatch.setattr("vgpipe.verify.load_cached", lambda root, url: cached.get(url))
+    monkeypatch.setattr("provenance.verify.load_cached", lambda root, url: cached.get(url))
 
     honest = src()
     honest.verification.status = "verified"
@@ -281,7 +281,7 @@ def test_context_window_keeps_left_context():
     """`context_window` advances past the partial word at the slice start; it must not
     collapse to the last space before the match (that would strip nearly all of the
     left-hand context the human needs to judge the claim)."""
-    from vgpipe.normalize import context_window
+    from provenance.normalize import context_window
 
     text = "alpha bravo charlie delta echo foxtrot golf hotel india juliet " * 6
     start = text.index("hotel india juliet", 200)
@@ -296,7 +296,7 @@ def test_context_window_keeps_left_context():
 
 
 def test_source_lists_merge_per_race():
-    from vgpipe.sources import classify
+    from provenance.sources import classify
 
     us = load_rules(("us",))
     both = load_rules(("us", "ca"))
@@ -308,7 +308,7 @@ def test_source_lists_merge_per_race():
 
 
 def test_race_file_declares_title_and_sources():
-    from vgpipe.races import available, load
+    from provenance.races import available, load
 
     assert "example" in available()
     r = load("example")
@@ -322,7 +322,7 @@ def test_question_id_cannot_escape_the_claims_directory(tmp_path):
     traversal must be rejected at the schema boundary, not at the write."""
     import pydantic
 
-    from vgpipe.cli import save_claims
+    from provenance.cli import save_claims
 
     for bad in ("../../etc/passwd", "/tmp/evil", "q1/../../x", "", "a" * 65):
         with pytest.raises(pydantic.ValidationError):
@@ -337,7 +337,7 @@ def test_question_id_cannot_escape_the_claims_directory(tmp_path):
 def test_save_claims_refuses_a_path_outside_the_directory(tmp_path):
     """Defense in depth: even if the schema constraint were loosened, the write itself
     must refuse to leave the data directory."""
-    from vgpipe.cli import save_claims
+    from provenance.cli import save_claims
 
     c = Claim(question_id="q1", question="?", answer="a")
     object.__setattr__(c, "question_id", "../escaped")   # bypass validation deliberately
@@ -352,7 +352,7 @@ def test_duplicate_question_ids_are_rejected(tmp_path):
     status total and renders it twice in the review app."""
     import json
 
-    from vgpipe.cli import load_claims
+    from provenance.cli import load_claims
 
     claim = {"question_id": "q1", "question": "?", "answer": "a",
              "confidence": "direct", "sources": []}
@@ -366,7 +366,7 @@ def test_duplicate_question_ids_are_rejected(tmp_path):
 def test_paywalled_source_is_verified_against_its_snapshot(stub, tmp_path):
     """A paywalled row is where the human has the least to work with, so if the snapshot
     is readable the pipeline should do the check instead of handing over a bare link."""
-    from vgpipe.verify import verify_against_archive
+    from provenance.verify import verify_against_archive
 
     snap = "https://web.archive.org/web/2026/https://ocregister.com/x"
     stub[snap] = _page(url=snap)
@@ -397,7 +397,7 @@ def test_review_progress_key_survives_question_set_changes(tmp_path):
     already in progress — the one moment losing it is most expensive."""
     import re as _re
 
-    from vgpipe.report import render
+    from provenance.report import render
 
     def key_for(claims):
         html, _ = render(claims, tmp_path, title="2030 Example County Assessor")
@@ -459,7 +459,7 @@ def test_dehyphenation_is_not_applied_to_html(stub, tmp_path):
 
 def test_reverify_preserves_verifier_judgment_but_not_across_a_changed_quote(stub, tmp_path):
     """The verifier agent's support verdict is the expensive half to produce. Re-running
-    vg verify must not wipe it — but it must also not carry it onto different words."""
+    provenance verify must not wipe it — but it must also not carry it onto different words."""
     stub["https://calmatters.org/a"] = _page()
 
     s = verify_source(src(), tmp_path, rules=RULES)
@@ -484,7 +484,7 @@ def test_reverify_preserves_verifier_judgment_but_not_across_a_changed_quote(stu
 def test_render_does_not_mutate_the_claim_models(tmp_path):
     """Render-only fields belong on view objects; writing them into a pydantic instance
     shadows computed properties like Source.sid."""
-    from vgpipe.report import render
+    from provenance.report import render
 
     c = Claim(question_id="q1", question="?", answer="a", sources=[src()])
     render([c], tmp_path, title="T")
@@ -497,7 +497,7 @@ def test_sources_disagreeing_with_each_other_are_flagged():
     """Two outlets reporting different numbers for the same fact is the single most
     valuable thing a voter-guide pipeline can surface. It is invisible to the
     answer-vs-snippets check, which passes as long as the answer matches one of them."""
-    from vgpipe.conflicts import detect
+    from provenance.conflicts import detect
 
     c = Claim(
         question_id="q1", question="?", answer="The state paid $120,000 in 2019.",
@@ -542,13 +542,13 @@ def test_non_http_urls_are_rejected():
 
 
 def test_verify_rerun_keeps_recorded_snapshots(stub, tmp_path):
-    """vg verify strips archive_url on load and writes claims back, so it must put the
+    """provenance verify strips archive_url on load and writes claims back, so it must put the
     pipeline's own snapshots back from the run's records — and only those. An agent-authored
     archive_url with no record behind it does not survive the write-back."""
     import json
 
-    from vgpipe import archive as arch
-    from vgpipe import cli
+    from provenance import archive as arch
+    from provenance import cli
 
     snap = "https://web.archive.org/web/2026/https://calmatters.org/a"
     stub["https://calmatters.org/a"] = _page()
@@ -586,7 +586,7 @@ def test_review_app_escapes_hostile_claim_content(tmp_path):
     reviewer's browser, where it could mark every citation checked in localStorage and
     defeat the human verification this whole pipeline exists to provide.
     """
-    from vgpipe.report import render
+    from provenance.report import render
 
     c = Claim(
         question_id="q1",
@@ -632,7 +632,7 @@ def test_urls_with_attribute_breakout_characters_are_rejected():
 def test_archive_verified_row_survives_build(tmp_path, monkeypatch):
     """verified_via_archive means the LIVE page was unreadable, so revalidating against
     src.url would fail by design and discard a status the pipeline itself produced —
-    wiping every legitimately archive-verified row on `vg build`."""
+    wiping every legitimately archive-verified row on `provenance build`."""
     snap = "https://web.archive.org/web/2026/https://ocregister.com/x"
     cached = {
         # the live page is a paywall stub — exactly the situation this status exists for
@@ -641,7 +641,7 @@ def test_archive_verified_row_survives_build(tmp_path, monkeypatch):
                                            paywall_suspected=True),
         snap: _page(url=snap),
     }
-    monkeypatch.setattr("vgpipe.verify.load_cached", lambda root, url: cached.get(url))
+    monkeypatch.setattr("provenance.verify.load_cached", lambda root, url: cached.get(url))
 
     s = src(url="https://ocregister.com/x", publisher="OC Register", archive_url=snap)
     s.verification.status = "verified_via_archive"
@@ -660,7 +660,7 @@ def test_claimed_verified_cannot_ride_through_on_a_normalized_match(tmp_path, mo
     """'verified' promises the human's literal Cmd-F will hit. A normalized-only match
     doesn't keep that promise, so a forged or stale 'verified' must not survive on one."""
     cached = {"https://calmatters.org/a": _page(text="the state paid “$120,000” to settle")}
-    monkeypatch.setattr("vgpipe.verify.load_cached", lambda root, url: cached.get(url))
+    monkeypatch.setattr("provenance.verify.load_cached", lambda root, url: cached.get(url))
 
     s = src(snippet='paid "$120,000" to settle')   # straight quotes; page has curly
     s.verification.status = "verified"
@@ -676,7 +676,7 @@ def test_claimed_verified_cannot_ride_through_on_a_normalized_match(tmp_path, mo
 
 def test_archive_upgrade_flags_a_normalized_only_hit(stub, tmp_path):
     """The flag-don't-hide invariant applies to snapshots too."""
-    from vgpipe.verify import verify_against_archive
+    from provenance.verify import verify_against_archive
 
     snap = "https://web.archive.org/web/2026/https://ocregister.com/x"
     stub[snap] = _page(url=snap)
@@ -721,7 +721,7 @@ def test_load_claims_does_not_trust_by_default(tmp_path):
     call site says so — defaulting to trust is how this invariant erodes."""
     import json
 
-    from vgpipe.cli import load_claims
+    from provenance.cli import load_claims
 
     (tmp_path / "q1.json").write_text(json.dumps({
         "question_id": "q1", "question": "?", "answer": "a", "corroboration_ok": True,
@@ -743,7 +743,7 @@ def test_revalidation_recomputes_the_excerpt_it_vouches_for(tmp_path, monkeypatc
     review app actually draws, so a file pairing a reproducible status with a fabricated
     excerpt would show the human the fabrication under a green badge."""
     cached = {"https://calmatters.org/a": _page()}
-    monkeypatch.setattr("vgpipe.verify.load_cached", lambda root, url: cached.get(url))
+    monkeypatch.setattr("provenance.verify.load_cached", lambda root, url: cached.get(url))
 
     s = src()   # snippet really is on the page, so the status itself reproduces
     s.verification.status = "verified"
@@ -781,11 +781,11 @@ def test_judgment_does_not_transfer_to_a_neighbouring_phrase(stub, tmp_path):
 
 
 def test_archive_queues_every_cited_url(stub, tmp_path, monkeypatch):
-    """vg archive's contract is to snapshot every cited URL. Skipping sources that already
+    """provenance archive's contract is to snapshot every cited URL. Skipping sources that already
     carry an archive_url lets a stale or prefilled snapshot persist forever."""
     import json
 
-    from vgpipe import cli
+    from provenance import cli
 
     (tmp_path / "q1.json").write_text(json.dumps({
         "question_id": "q1", "question": "?", "answer": "a",
@@ -829,7 +829,7 @@ def test_wayback_prefix_upgrade_leaves_the_archived_target_alone():
     """The availability API answers with an http:// snapshot URL and the cited URL is
     embedded in the path, so a blanket replace would rewrite the archived target too and
     name a snapshot that doesn't exist."""
-    from vgpipe.archive import _https
+    from provenance.archive import _https
 
     assert (_https("http://web.archive.org/web/2019/http://example.com/a")
             == "https://web.archive.org/web/2019/http://example.com/a")
@@ -839,11 +839,11 @@ def test_wayback_prefix_upgrade_leaves_the_archived_target_alone():
 
 
 def test_status_reflects_what_build_will_render(tmp_path, monkeypatch, capsys):
-    """`vg status` trusts the file for speed, so it must run the same offline checks build
+    """`provenance status` trusts the file for speed, so it must run the same offline checks build
     runs — otherwise it can report `verified` for a row the report downgrades."""
     import json
 
-    from vgpipe import cli
+    from provenance import cli
 
     claims_dir = tmp_path / "claims"
     claims_dir.mkdir()
@@ -854,7 +854,7 @@ def test_status_reflects_what_build_will_render(tmp_path, monkeypatch, capsys):
                      "snippet": "a quote with no cached page behind it",
                      "verification": {"status": "verified"}}]}))
 
-    monkeypatch.setattr("vgpipe.verify.load_cached", lambda root, url: None)
+    monkeypatch.setattr("provenance.verify.load_cached", lambda root, url: None)
     cli.status(data=tmp_path)
     out = capsys.readouterr().out
     assert "human_review" in out, "a status the pipeline can't reproduce must not read as verified"
@@ -888,7 +888,7 @@ def test_error_page_containing_the_snippet_does_not_verify(stub, tmp_path):
 
 def test_not_found_is_not_badged_as_a_failure(tmp_path):
     """The header calls not_found deliberate, not failure. The badge must agree."""
-    from vgpipe.report import render
+    from provenance.report import render
 
     c = Claim(question_id="q1", question="?", answer="looked, found nothing",
               confidence="not_found")
@@ -917,8 +917,8 @@ def test_unchecked_corroboration_is_not_verified_or_failed():
 
 def test_saved_snapshot_url_satisfies_the_model():
     """SPN can land on http://; the model requires https, so save() must normalize or
-    vg archive raises when it assigns the result."""
-    from vgpipe.archive import _https
+    provenance archive raises when it assigns the result."""
+    from provenance.archive import _https
 
     normalized = _https("http://web.archive.org/web/2026/https://ocregister.com/x")
     Source(url="https://ocregister.com/x", archive_url=normalized, publisher="P",
@@ -929,7 +929,7 @@ def test_completeness_check_never_reaches_a_researcher_prompt():
     """race.context is pasted verbatim into researcher prompts. A researcher told what it
     is looking for confirms that item instead of searching, and anything not on the list
     never surfaces — so known claims live in a section the loader keeps out of context."""
-    from vgpipe.races import load
+    from provenance.races import load
 
     r = load("example")
     assert "Doe settlement" in r.completeness_check
@@ -940,9 +940,9 @@ def test_completeness_check_never_reaches_a_researcher_prompt():
 
 
 def test_prompt_context_carries_no_uncited_factual_claims():
-    """Context is unverified by construction — no snippet, no source, no `vg verify` — so a
+    """Context is unverified by construction — no snippet, no source, no `provenance verify` — so a
     factual claim placed there is believed by every researcher and checked by none."""
-    from vgpipe.races import load
+    from provenance.races import load
 
     ctx = load("example").context
     for smuggled in ("58.3", "41.7", "Pike", "Marlowe", "re-registered"):
@@ -957,7 +957,7 @@ def test_check_claim_gate_rejects_a_one_word_snippet(tmp_path, monkeypatch):
 
     import typer
 
-    from vgpipe import cli
+    from provenance import cli
 
     claim = {"question_id": "qtest", "question": "?", "answer": "a", "confidence": "direct",
              "sources": [{"url": "https://calmatters.org/a", "publisher": "CalMatters",
@@ -977,7 +977,7 @@ def test_new_candidate_retargets_the_question_set(tmp_path):
     'the candidate' is."""
     import json
 
-    from vgpipe import cli
+    from provenance import cli
 
     (tmp_path / "questions.json").write_text(json.dumps([
         {"id": "q1", "text": "What did Avery Lind say about housing?", "claim_type": "mechanical"}]))
@@ -993,12 +993,12 @@ def test_new_candidate_retargets_the_question_set(tmp_path):
 
 
 def test_new_candidate_starts_a_run_with_no_migration_pending(tmp_path):
-    """A template can still carry maps_from and mapped_from, left by the retired `vg remap`.
+    """A template can still carry maps_from and mapped_from, left by the retired `provenance remap`.
     They are another run's history, and a new run has no earlier id space, so it copies
     neither."""
     import json
 
-    from vgpipe import cli
+    from provenance import cli
 
     (tmp_path / "questions.json").write_text(json.dumps([
         {"id": "q1", "text": "votes", "claim_type": "mechanical", "maps_from": "q2"},
@@ -1016,7 +1016,7 @@ def test_filing_citation_without_a_date_is_rejected():
     """A superseded filing verifies perfectly — same host, same institutional author,
     snippet genuinely present — so the only mechanical grip on recency is the filing's own
     date. Without it nobody, agent or human, can tell which form they are looking at."""
-    from vgpipe.verify import missing_filing_date
+    from provenance.verify import missing_filing_date
 
     undated = src(url="https://www.fppc.ca.gov/documents/700.pdf", publisher="FPPC",
                   author="California FPPC", source_type="primary_document", date=None)
@@ -1033,7 +1033,7 @@ def test_filing_citation_without_a_date_is_rejected():
 
 def test_superseded_is_a_verifier_verdict():
     """The wrong-document failure needs somewhere to live: it is judgment, not mechanics."""
-    from vgpipe.models import Verification
+    from provenance.models import Verification
 
     v = Verification(support="superseded", support_note="2025 Form 700 exists")
     assert v.support == "superseded"
@@ -1047,7 +1047,7 @@ def test_form700_search_parses_filings_newest_first(monkeypatch):
 
     import httpx
 
-    from vgpipe import fppc
+    from provenance import fppc
 
     payload = _json.dumps({"documents": [
         {"filingInfo": {"filedDate": "2025-03-03T00:00:00", "isAmendment": False},
@@ -1076,7 +1076,7 @@ def test_curl_import_drops_credentials(tmp_path):
     manual retrieval, not a pipeline capability."""
     import json as _json
 
-    from vgpipe.access import parse_curl
+    from provenance.access import parse_curl
 
     # .gitleaks.toml allowlists "tokensecret" by exact value. Renaming it, or adding another
     # fake credential here, needs a matching entry there or the secret-scan job fails.
@@ -1099,7 +1099,7 @@ def test_curl_import_drops_credentials(tmp_path):
 def test_recipe_refuses_to_run_with_credential_headers():
     """A recipe needing a cookie is describing a manual retrieval; running it would bake a
     human's session into the pipeline and misrepresent what it can do unattended."""
-    from vgpipe.access import Recipe, run
+    from provenance.access import Recipe, run
 
     r = Recipe(id="bad", method="GET", url="https://example.gov/x",
                headers={"Cookie": "SESSION=x"})
@@ -1109,7 +1109,7 @@ def test_recipe_refuses_to_run_with_credential_headers():
 
 def test_registry_lookup_matches_subdomains(tmp_path):
     """A researcher hitting a document URL should find the entry recorded for its host."""
-    from vgpipe.access import find
+    from provenance.access import find
 
     entry = find("https://form700search.fppc.ca.gov/Home/GetDocument?indexId=abc")
     assert entry is not None
@@ -1143,23 +1143,23 @@ def _cache_judged_page(root, url):
     stale, so a test about something else has to give its verdicts one."""
     from datetime import timedelta
 
-    from vgpipe.fetch import cache_path
+    from provenance.fetch import cache_path
 
     cache_path(root, url).write_text(
         _page(url=url, final_url=url,
               fetched_at=datetime.now(UTC) - timedelta(hours=1)).model_dump_json())
 
 
-# What `vg judge` stamps on a verdict about the `question="?", answer="a"` claim most tests
+# What `provenance judge` stamps on a verdict about the `question="?", answer="a"` claim most tests
 # build. A verdict without it judged no answer anyone can name, and is stale (#74).
 FP = Claim(question_id="q1", question="?", answer="a").fingerprint
 
 
 def _stamp(root, url):
     """(page_fetched_at, extractor_version) of the copy cached at `url`: what a verdict stamped
-    from it records. Tests only — `vg judge` stamps through `judgments.judged_copy()`, since the
+    from it records. Tests only — `provenance judge` stamps through `judgments.judged_copy()`, since the
     copy cached now need not be the one the verifier read."""
-    from vgpipe.fetch import load_cached
+    from provenance.fetch import load_cached
 
     page = load_cached(root, url)
     return (str(page.fetched_at), page.extractor_version) if page is not None else ("", 0)
@@ -1171,8 +1171,8 @@ def test_judgments_survive_a_verify_run(tmp_path):
     to sequence every verify before every writeback by hand."""
     import json
 
-    from vgpipe import judgments
-    from vgpipe.models import strip_machine_fields
+    from provenance import judgments
+    from provenance.models import strip_machine_fields
 
     s = src()
     _cache_judged_page(tmp_path, s.url)
@@ -1191,10 +1191,10 @@ def test_judgments_survive_a_verify_run(tmp_path):
 
 
 def test_archiving_an_archive_url_is_a_no_op():
-    """`vg archive` wrapped an already-Wayback URL into
+    """`provenance archive` wrapped an already-Wayback URL into
     web.archive.org/save/https://web.archive.org/web/…, which the model then rejected — and
-    `vg build` died on the entire run, not the one row."""
-    from vgpipe.archive import is_snapshot, save
+    `provenance build` died on the entire run, not the one row."""
+    from provenance.archive import is_snapshot, save
 
     snap = "https://web.archive.org/web/2026/https://ocregister.com/x"
     assert is_snapshot(snap)
@@ -1278,7 +1278,7 @@ def _fake_export(tmp_path):
 def test_calaccess_build_and_query(tmp_path):
     """CAL-ACCESS is the only reachable route to donor data — both UIs over it are closed to
     programmatic clients — so this path has to work on the export's real messiness."""
-    from vgpipe import calaccess
+    from provenance import calaccess
 
     root = _fake_export(tmp_path)
     calaccess.build(root)
@@ -1295,7 +1295,7 @@ def test_calaccess_build_and_query(tmp_path):
 def test_calaccess_rows_carry_a_citable_url(tmp_path):
     """A row in a local TSV is not a citation: no URL to open, nothing to Cmd-F. Every result
     carries the filing's own page so the human cites that instead."""
-    from vgpipe import calaccess
+    from provenance import calaccess
 
     root = _fake_export(tmp_path)
     calaccess.build(root)
@@ -1310,7 +1310,7 @@ def test_calaccess_rows_carry_a_citable_url(tmp_path):
 
 
 def test_calaccess_build_without_the_export_says_how_to_get_it(tmp_path):
-    from vgpipe import calaccess
+    from provenance import calaccess
 
     with pytest.raises(FileNotFoundError, match="dbwebexport.zip"):
         calaccess.build(tmp_path)
@@ -1323,7 +1323,7 @@ def test_candidate_matching_is_exact_by_default(tmp_path):
     data, real amounts, wrong person: the pipeline's snippet checks would never have caught it."""
     import zipfile
 
-    from vgpipe import calaccess
+    from provenance import calaccess
 
     root = tmp_path
     (root / "cache" / "calaccess").mkdir(parents=True, exist_ok=True)
@@ -1353,7 +1353,7 @@ def test_archive_credentials_come_only_from_the_environment(monkeypatch):
     """Save Page Now rate-limits anonymous clients hard — a full run left 58 of ~150 URLs
     unarchived. Keys raise the quota, and they live in the environment: never in the repo,
     never in a file this code reads, never in a claim file."""
-    from vgpipe import archive
+    from provenance import archive
 
     monkeypatch.delenv(archive.ACCESS_KEY_ENV, raising=False)
     monkeypatch.delenv(archive.SECRET_KEY_ENV, raising=False)
@@ -1374,7 +1374,7 @@ def test_authenticated_archiving_uses_the_spn_api(monkeypatch):
     """Authenticated SPN is a POST returning a job to poll, not the redirect-following GET."""
     import httpx
 
-    from vgpipe import archive
+    from provenance import archive
 
     monkeypatch.setenv(archive.ACCESS_KEY_ENV, "abc")
     monkeypatch.setenv(archive.SECRET_KEY_ENV, "xyz")
@@ -1405,7 +1405,7 @@ def test_question_ids_sort_numerically():
     """A 31-question run rendered q1, q10, q11 … q2, q20 in the review app, which makes it
     hard to see what is missing. Ids are number-then-optional-letter, so compare the number
     as a number."""
-    from vgpipe.cli import qid_sort_key
+    from provenance.cli import qid_sort_key
 
     ids = ["q10", "q2", "q1", "q31", "q2b", "q2a", "q9", "q20"]
     assert sorted(ids, key=qid_sort_key) == [
@@ -1418,16 +1418,16 @@ def test_calaccess_citable_snapshot_prefers_the_official_page(monkeypatch):
     """cal-access pages are bot-protected, so a direct citation fails verification and pushes
     researchers onto third-party mirrors. A Wayback snapshot of the official page IS
     fetchable, so it can carry the record instead."""
-    from vgpipe import calaccess
+    from provenance import calaccess
 
     snap = "https://web.archive.org/web/20230117090000/https://cal-access.sos.ca.gov/x"
-    monkeypatch.setattr("vgpipe.archive.existing_snapshot", lambda url, timeout=20.0: snap)
+    monkeypatch.setattr("provenance.archive.existing_snapshot", lambda url, timeout=20.0: snap)
     # With no root to fetch with, it returns the snapshot but still bounds what it supports.
     got, note = calaccess.citable_snapshot("https://cal-access.sos.ca.gov/x")
     assert got == snap
     assert "per-donor" in note, "must not imply itemization is citable from here"
 
-    monkeypatch.setattr("vgpipe.archive.existing_snapshot", lambda url, timeout=20.0: None)
+    monkeypatch.setattr("provenance.archive.existing_snapshot", lambda url, timeout=20.0: None)
     got, note = calaccess.citable_snapshot("https://cal-access.sos.ca.gov/x")
     assert got is None
     assert "secondary_host_ack" in note, "must point at the honest fallback, not a silent one"
@@ -1439,13 +1439,13 @@ def test_citable_snapshot_refuses_the_wrong_cycle(monkeypatch, tmp_path):
     reintroduced. The note has to bound what the snapshot supports."""
     from datetime import UTC, datetime
 
-    from vgpipe import calaccess
-    from vgpipe.models import PageCache
+    from provenance import calaccess
+    from provenance.models import PageCache
 
     snap = ("https://web.archive.org/web/20230117090000/"
             "https://cal-access.sos.ca.gov/Campaign/Committees/Detail.aspx?id=9990001")
-    monkeypatch.setattr("vgpipe.archive.existing_snapshot", lambda url, timeout=20.0: snap)
-    monkeypatch.setattr("vgpipe.fetch.fetch", lambda url, root, **kw: PageCache(
+    monkeypatch.setattr("provenance.archive.existing_snapshot", lambda url, timeout=20.0: snap)
+    monkeypatch.setattr("provenance.fetch.fetch", lambda url, root, **kw: PageCache(
         url=url, final_url=url, status=200, content_type="text/html",
         text="Election Cycle: 2023 through 2024 Historical  CURRENT STATUS ACTIVE",
         fetched_at=datetime.now(UTC)))
@@ -1462,12 +1462,12 @@ def test_citable_snapshot_says_totals_are_not_itemization(monkeypatch, tmp_path)
     individual donor's amount would have a real official page that doesn't say it."""
     from datetime import UTC, datetime
 
-    from vgpipe import calaccess
-    from vgpipe.models import PageCache
+    from provenance import calaccess
+    from provenance.models import PageCache
 
     snap = "https://web.archive.org/web/20251118100000/https://cal-access.sos.ca.gov/x"
-    monkeypatch.setattr("vgpipe.archive.existing_snapshot", lambda url, timeout=20.0: snap)
-    monkeypatch.setattr("vgpipe.fetch.fetch", lambda url, root, **kw: PageCache(
+    monkeypatch.setattr("provenance.archive.existing_snapshot", lambda url, timeout=20.0: snap)
+    monkeypatch.setattr("provenance.fetch.fetch", lambda url, root, **kw: PageCache(
         url=url, final_url=url, status=200, content_type="text/html",
         text=("Election Cycle: 2025 through 2026 Historical "
               "CONTRIBUTIONS FROM THIS PERIOD | $456,789.01"),
@@ -1482,22 +1482,22 @@ def test_citable_snapshot_says_totals_are_not_itemization(monkeypatch, tmp_path)
 def test_citable_snapshot_does_not_describe_a_snapshot_it_could_not_read(monkeypatch, tmp_path):
     """An empty body has no "$" in it, so a failed fetch used to be reported as a landing page
     with no dollar figures — a description of a page nobody saw."""
-    from vgpipe import calaccess
+    from provenance import calaccess
 
     snap = "https://web.archive.org/web/20251118100000/https://cal-access.sos.ca.gov/x"
-    monkeypatch.setattr("vgpipe.archive.existing_snapshot", lambda url, timeout=20.0: snap)
+    monkeypatch.setattr("provenance.archive.existing_snapshot", lambda url, timeout=20.0: snap)
     for page, why in [
         (dict(status=0, text="", error="ConnectError: connection reset"), "ConnectError"),
         # Wayback's own error page has text and no "$" — it is not a landing page either.
         (dict(status=503, text="This snapshot is temporarily unavailable."), "HTTP 503"),
     ]:
-        monkeypatch.setattr("vgpipe.fetch.fetch", lambda url, root, page=page, **kw: _page(
+        monkeypatch.setattr("provenance.fetch.fetch", lambda url, root, page=page, **kw: _page(
             url=url, **page))
         got, note = calaccess.citable_snapshot("https://cal-access.sos.ca.gov/x", root=tmp_path)
         assert got == snap
         assert "could not be read" in note and why in note
         assert "landing page" not in note
-        # `vg calaccess cite` shows it red, as the old "no dollar figures" note was
+        # `provenance calaccess cite` shows it red, as the old "no dollar figures" note was
         assert calaccess.unusable(note)
 
     # and every other note keeps the colour it had
@@ -1512,7 +1512,7 @@ def test_contributions_count_each_gift_once(tmp_path):
     twelve times over, and a dozen donors landed on one identical inflated total. Real rows,
     real amounts, fabricated sums — and no snippet check can catch it, because there is no
     page to read."""
-    from vgpipe import calaccess
+    from provenance import calaccess
 
     root = _fake_export(tmp_path)
     calaccess.build(root)
@@ -1529,7 +1529,7 @@ def test_a_transaction_a_later_amendment_dropped_is_not_counted(tmp_path):
     """An amendment restates the whole filing, so a transaction missing from the latest
     amendment was withdrawn. Keying "latest" per (FILING_ID, TRAN_ID) kept it alive from the
     older amendment — 387,606 receipt rows in the real export, across 4,722 filings."""
-    from vgpipe import calaccess, queries
+    from provenance import calaccess, queries
 
     root = _fake_export(tmp_path)
     calaccess.build(root)
@@ -1572,7 +1572,7 @@ def test_a_rekeyed_expenditure_counts_once_for_whom_the_latest_amendment_says(tm
     The latest amendment alone is right, and that goes for the cover too: amendment 2 is
     against Robin Delacroix, so none of it is Dana Ko support. In the real export, a
     candidate's all-years support total carried other candidates' money this way."""
-    from vgpipe import calaccess, queries
+    from provenance import calaccess, queries
 
     root = _filing_9990002(tmp_path)
     calaccess.build(root)
@@ -1593,24 +1593,24 @@ def test_a_database_without_cover_amend_ids_says_it_needs_a_rebuild(tmp_path):
     Degrading silently is how a candidate's support total carried other candidates' money.
     A warning alone would still let that total re-run and render green, so the citable query
     refuses; the listing, a finding aid, keeps working under the warning."""
-    from vgpipe import calaccess, queries
-    from vgpipe.models import QueryCitation
-    from vgpipe.verify import verify_source
+    from provenance import calaccess, queries
+    from provenance.models import QueryCitation
+    from provenance.verify import verify_source
 
     root = _filing_9990002(tmp_path, cover_amend_ids=False)
     with pytest.warns(calaccess.DegradedDatabaseWarning):
         calaccess.build(root)
 
     params = {"candidate_last": "Ko", "first": "Dana", "stance": "support"}
-    with pytest.warns(calaccess.DegradedDatabaseWarning, match="vg calaccess build"), \
-            pytest.raises(calaccess.DegradedDatabase, match="vg calaccess build"):
+    with pytest.warns(calaccess.DegradedDatabaseWarning, match="provenance calaccess build"), \
+            pytest.raises(calaccess.DegradedDatabase, match="provenance calaccess build"):
         queries.run("calaccess.ie_total", params, root)
 
     cited = src(query=QueryCitation(name="calaccess.ie_total", params=params, expected="2750"))
     with pytest.warns(calaccess.DegradedDatabaseWarning):
         out = verify_source(cited, root)
     assert out.verification.status != "verified", "a degraded database must not verify a total"
-    assert "vg calaccess build" in out.verification.reason
+    assert "provenance calaccess build" in out.verification.reason
 
     with pytest.warns(calaccess.DegradedDatabaseWarning):
         assert calaccess.independent_expenditures(root, "Delacroix", first="Robin")
@@ -1622,7 +1622,7 @@ def test_a_database_built_before_a_view_fix_still_gets_the_fix(tmp_path):
     database was built with the per-transaction view; connect() must shadow it."""
     import sqlite3
 
-    from vgpipe import calaccess
+    from provenance import calaccess
 
     root = _fake_export(tmp_path)
     calaccess.build(root)
@@ -1649,7 +1649,7 @@ def test_no_amend_id_means_no_latest_view(tmp_path):
     import sqlite3
     import zipfile
 
-    from vgpipe import calaccess
+    from provenance import calaccess
 
     (tmp_path / "cache" / "calaccess").mkdir(parents=True, exist_ok=True)
     receipts = ('FILING_ID\tTRAN_ID\tCTRIB_NAML\tRCPT_DATE\tAMOUNT\n'
@@ -1690,7 +1690,7 @@ def test_an_amendment_that_restates_no_receipts_does_not_erase_them(tmp_path):
     export, 123 filings whose latest amendment's explanation names some other change (a
     signature, a date, other schedules) would lose $36.0M that way. So "latest" is per
     fact table."""
-    from vgpipe import calaccess, queries
+    from provenance import calaccess, queries
 
     receipts = ('FILING_ID\tAMEND_ID\tTRAN_ID\tLINE_ITEM\tCTRIB_NAML\tCTRIB_NAMF\tCTRIB_EMP'
                 '\tCTRIB_OCC\tRCPT_DATE\tAMOUNT\tFORM_TYPE\n'
@@ -1722,7 +1722,7 @@ def test_an_amendment_that_restates_no_expenditures_does_not_zero_them(tmp_path)
     "latest" from the cover would report no expenditure for a $1,086,420 buy the filer says it
     updated, not withdrew. The per-table rule keeps amendment 0's row. Whether that is the
     updated amount is #31's to flag; the export cannot say."""
-    from vgpipe import calaccess, queries
+    from provenance import calaccess, queries
 
     ies = ('FILING_ID\tAMEND_ID\tTRAN_ID\tLINE_ITEM\tAMOUNT\tEXP_DATE\tEXPN_DSCR\n'
            '9990003\t0\tEDT2\t1\t1086420\t4/16/2026 12:00:00 AM\tdigital ads\n')
@@ -1761,7 +1761,7 @@ def _dated_receipts(tmp_path):
 def test_contributions_since_compares_dates_not_strings(tmp_path):
     """RCPT_DATE is "M/D/YYYY 12:00:00 AM" text. Compared as a string against 2025-01-01,
     10/14/2025 sorted before it and was dropped, while 3/1/2010 sorted after it and was kept."""
-    from vgpipe import calaccess
+    from provenance import calaccess
 
     root = _dated_receipts(tmp_path)
     calaccess.build(root)
@@ -1776,7 +1776,7 @@ def test_contributions_since_compares_dates_not_strings(tmp_path):
 def test_contributions_since_keeps_a_gift_it_cannot_date(tmp_path):
     """A blank RCPT_DATE cannot be placed before or after `since`. Dropping it silently would
     be a missing donation; it stays in the list, with its date showing blank."""
-    from vgpipe import calaccess
+    from provenance import calaccess
 
     root = _dated_receipts(tmp_path)
     calaccess.build(root)
@@ -1809,7 +1809,7 @@ def test_contributions_since_keeps_a_gift_it_cannot_date(tmp_path):
 def test_contributions_since_filters_before_the_limit(tmp_path):
     """Filtering after LIMIT took the top N of ALL years and then discarded the old ones, so
     the largest recent gifts never made the list — here, an empty list."""
-    from vgpipe import calaccess
+    from provenance import calaccess
 
     root = _dated_receipts(tmp_path)
     calaccess.build(root)
@@ -1823,7 +1823,7 @@ def test_contributions_since_refuses_a_date_it_cannot_compare(tmp_path):
     silently. Refuse it rather than return a plausible-looking list."""
     import typer
 
-    from vgpipe import calaccess, cli
+    from provenance import calaccess, cli
 
     root = _dated_receipts(tmp_path)
     calaccess.build(root)
@@ -1838,9 +1838,9 @@ def test_query_citation_verifies_by_rerunning_not_by_text(tmp_path, monkeypatch)
     """⌘F is the wrong verification for a database: a contribution total is not a string on a
     page, and forcing it to be one is what pushed researchers onto third-party mirrors. A
     query citation is checked by re-running it — reproducible, and no page to go stale."""
-    from vgpipe import queries
-    from vgpipe.models import QueryCitation
-    from vgpipe.verify import verify_source
+    from provenance import queries
+    from provenance.models import QueryCitation
+    from provenance.verify import verify_source
 
     monkeypatch.setitem(
         queries.REGISTRY, "test.total",
@@ -1851,7 +1851,7 @@ def test_query_citation_verifies_by_rerunning_not_by_text(tmp_path, monkeypatch)
     out = verify_source(s, tmp_path)
     assert out.verification.status == "verified"
     assert "re-running the query" in out.verification.reason
-    assert "uv run vg query test.total" in out.verification.reason
+    assert "uv run provenance query test.total" in out.verification.reason
 
     wrong = src(query=QueryCitation(name="test.total", params={"filer_id": "1"},
                                     expected="99999"))
@@ -1861,9 +1861,9 @@ def test_query_citation_verifies_by_rerunning_not_by_text(tmp_path, monkeypatch)
 def test_a_query_miss_is_not_a_zero(tmp_path, monkeypatch):
     """A slightly-wrong donor name returned 0.0, which reads as 'this donor gave nothing' — a
     false finding dressed as a verified one. A miss must be None, with suggestions."""
-    from vgpipe import queries
-    from vgpipe.models import QueryCitation
-    from vgpipe.verify import verify_source
+    from provenance import queries
+    from provenance.models import QueryCitation
+    from provenance.verify import verify_source
 
     monkeypatch.setitem(
         queries.REGISTRY, "test.miss",
@@ -1901,7 +1901,7 @@ def test_ie_total_finds_the_name_however_the_filer_split_it(tmp_path):
     """The committee that spent $612,345.67 against Dana Ko put the whole name in the
     LAST-name field. A (last='Ko', first='Dana') filter therefore returned $0.00 — a
     confident "nobody spent against her", which is the worst error this project can make."""
-    from vgpipe import calaccess, queries
+    from provenance import calaccess, queries
 
     root = _ie_export(tmp_path)
     calaccess.build(root)
@@ -1917,7 +1917,7 @@ def test_ie_total_finds_the_name_however_the_filer_split_it(tmp_path):
 
 def test_ie_total_never_reports_an_absence_as_zero(tmp_path):
     """SUM() over no rows is 0.0, and a zero reads as a finding. It must be None."""
-    from vgpipe import calaccess, queries
+    from provenance import calaccess, queries
 
     root = _ie_export(tmp_path)
     calaccess.build(root)
@@ -1933,7 +1933,7 @@ def test_ie_total_date_window_separates_races(tmp_path):
     """Unfiltered, a candidate's old legislative race and current statewide race sum together
     — a figure that answers neither. EXP_DATE is M/D/YYYY text, so string comparison won't do
     it."""
-    from vgpipe import calaccess, queries
+    from provenance import calaccess, queries
 
     root = _ie_export(tmp_path)
     calaccess.build(root)
@@ -1986,7 +1986,7 @@ def _ie_dated_export(tmp_path):
     ("2025-07", "2026-04", None),
 ])
 def test_ie_total_compares_each_bound_at_its_own_precision(tmp_path, since, until, want):
-    from vgpipe import calaccess, queries
+    from provenance import calaccess, queries
 
     root = _ie_dated_export(tmp_path)
     calaccess.build(root)
@@ -2000,7 +2000,7 @@ def test_ie_total_window_leaves_out_a_row_it_cannot_date_and_says_so(tmp_path):
     """An undated expenditure cannot be placed inside a window. The old BETWEEN kept it out;
     comparing only `until` would let '' <= '2026-12' count it in a figure about 2026. Leaving
     it out is only honest if the result says so: silently, it is a missing expenditure."""
-    from vgpipe import calaccess, queries
+    from provenance import calaccess, queries
 
     root = _ie_dated_export(tmp_path)
     calaccess.build(root)
@@ -2052,9 +2052,9 @@ def test_ie_total_never_reports_an_unreadable_amount_as_zero(tmp_path, capsys, u
     not a plain decimal is money nobody stated: left out of the sum and the count, and named."""
     import sqlite3
 
-    from vgpipe import calaccess, cli, queries
-    from vgpipe.models import QueryCitation
-    from vgpipe.verify import verify_source
+    from provenance import calaccess, cli, queries
+    from provenance.models import QueryCitation
+    from provenance.verify import verify_source
 
     root = _ie_dated_export(tmp_path)
     calaccess.build(root)
@@ -2101,7 +2101,7 @@ def test_ie_total_counts_a_stated_zero(tmp_path, zero):
     the real export has 155 of them -- and counts as one."""
     import sqlite3
 
-    from vgpipe import calaccess, queries
+    from provenance import calaccess, queries
 
     root = _ie_dated_export(tmp_path)
     calaccess.build(root)
@@ -2127,9 +2127,9 @@ def test_ie_total_refuses_a_date_it_cannot_compare(tmp_path, bound, value):
     """A bound that is not a real ISO date bounded a window nobody asked for, silently — and a
     total from that window still matched its own recorded `expected`, so it rendered
     verified. until="2025-00" quietly ended the window at 2024."""
-    from vgpipe import calaccess, queries
-    from vgpipe.models import QueryCitation
-    from vgpipe.verify import verify_source
+    from provenance import calaccess, queries
+    from provenance.models import QueryCitation
+    from provenance.verify import verify_source
 
     root = _ie_dated_export(tmp_path)
     calaccess.build(root)
@@ -2150,7 +2150,7 @@ def test_ie_total_refuses_a_date_it_cannot_compare(tmp_path, bound, value):
 def test_ie_total_refuses_a_window_that_ends_before_it_starts(tmp_path, since, until):
     """No date satisfies it, so it came back as a well-formed "no expenditures in this
     window" — a finding made out of a typo."""
-    from vgpipe import calaccess, queries
+    from provenance import calaccess, queries
 
     root = _ie_dated_export(tmp_path)
     calaccess.build(root)
@@ -2164,7 +2164,7 @@ def test_ie_total_refuses_a_window_that_ends_before_it_starts(tmp_path, since, u
 
 
 def test_check_date_accepts_every_real_iso_date():
-    from vgpipe import calaccess
+    from provenance import calaccess
 
     for ok in ("", "2025", "2025-12", "2024-02-29", "2026-05-24"):
         assert calaccess.check_date(ok, "since") == ok
@@ -2175,7 +2175,7 @@ def test_ie_listing_prints_iso_dates(tmp_path, capsys):
     """The listing sliced the raw EXP_DATE to 10 characters, which cuts "9/1/2026 12:00:00 AM"
     partway through its time: "9/1/2026 1". It gives the ISO date, as contributions_to() does,
     and a date it cannot read as it was filed."""
-    from vgpipe import calaccess, cli
+    from provenance import calaccess, cli
 
     root = _ie_dated_export(tmp_path)
     calaccess.build(root)
@@ -2204,7 +2204,7 @@ def test_top_contributor_does_not_merge_donors_by_surname(tmp_path):
     donors into one contributor — a contributor that does not exist."""
     import zipfile
 
-    from vgpipe import calaccess, queries
+    from provenance import calaccess, queries
 
     (tmp_path / "cache" / "calaccess").mkdir(parents=True, exist_ok=True)
     receipts = ('FILING_ID\tAMEND_ID\tTRAN_ID\tLINE_ITEM\tCTRIB_NAML\tCTRIB_NAMF\tCTRIB_EMP'
@@ -2228,7 +2228,7 @@ def test_an_organizations_own_endorsement_is_not_a_mirror():
     """secondary_host asks whether a primary document is cited from somewhere other than the
     issuing authority. For an endorsement the endorsing organization IS the authority, so
     flagging the party's own site told a run to "repair" genuine primary sources."""
-    from vgpipe.verify import secondary_host
+    from provenance.verify import secondary_host
 
     own = src(url="https://examplecountyparty.example/endorsements/2030",
               publisher="Example County Party", author="Example County Party",
@@ -2246,15 +2246,15 @@ def test_query_citations_survive_revalidation(tmp_path, monkeypatch):
     """A query citation has no cached page by design — that is the point of it, since
     cal-access is unfetchable. revalidate_from_cache() looked for one anyway and discarded
     every query source at build, which also wiped the fresh verifier's judgment each time."""
-    from vgpipe import queries
-    from vgpipe.models import QueryCitation
-    from vgpipe.verify import revalidate_from_cache
+    from provenance import queries
+    from provenance.models import QueryCitation
+    from provenance.verify import revalidate_from_cache
 
     monkeypatch.setitem(
         queries.REGISTRY, "test.total",
         queries.Query(lambda root, **kw: queries.QueryResult(value=45678.21, detail="57 gifts"),
                       ("filer_id",), "test", 1))
-    monkeypatch.setattr("vgpipe.verify.load_cached", lambda root, url: None)
+    monkeypatch.setattr("provenance.verify.load_cached", lambda root, url: None)
 
     s = src(query=QueryCitation(name="test.total", params={"filer_id": "1"},
                                 expected="45678.21"))
@@ -2282,7 +2282,7 @@ def test_one_gift_reported_on_two_forms_counts_once(tmp_path):
     TRAN_IDs share a base after the form prefix."""
     import zipfile
 
-    from vgpipe import calaccess, queries
+    from provenance import calaccess, queries
 
     (tmp_path / "cache" / "calaccess").mkdir(parents=True, exist_ok=True)
     receipts = ('FILING_ID\tAMEND_ID\tTRAN_ID\tLINE_ITEM\tCTRIB_NAML\tCTRIB_NAMF\tCTRIB_EMP'
@@ -2310,7 +2310,7 @@ def test_ie_total_refuses_a_bare_surname(tmp_path):
     """Asked for a surname alone, it summed another candidate with that surname, in another
     county and year, into the total. A surname is not a candidate, and nothing downstream can
     catch it."""
-    from vgpipe import queries
+    from provenance import queries
 
     with pytest.raises(ValueError, match="needs first"):
         queries.run("calaccess.ie_total", {"candidate_last": "Ko"}, tmp_path)
@@ -2322,7 +2322,7 @@ def test_an_individual_donor_needs_a_first_name(tmp_path):
     their whole name sits in CTRIB_NAML."""
     import zipfile
 
-    from vgpipe import calaccess, queries
+    from provenance import calaccess, queries
 
     (tmp_path / "cache" / "calaccess").mkdir(parents=True, exist_ok=True)
     receipts = ('FILING_ID\tAMEND_ID\tTRAN_ID\tLINE_ITEM\tCTRIB_NAML\tCTRIB_NAMF\tCTRIB_EMP'
@@ -2359,7 +2359,7 @@ def test_sid_covers_the_query_so_a_verdict_cannot_outlive_it():
     `supports` verdict carry from "Brennan Holdings and Affiliated Entities" to
     "R. Quinn Halvorsen" with url and snippet untouched: a verifier checked one number, the row
     vouched for another."""
-    from vgpipe.models import QueryCitation
+    from provenance.models import QueryCitation
 
     def q(expected="X", params=None, name="calaccess.top_contributor"):
         return src(query=QueryCitation(name=name, params=params or {"filer_id": "1"},
@@ -2385,7 +2385,7 @@ def test_a_duplicated_cover_row_does_not_double_the_facts(tmp_path):
     database without cover AMEND_IDs refuses instead, tested above)."""
     import zipfile
 
-    from vgpipe import calaccess, queries
+    from provenance import calaccess, queries
 
     (tmp_path / "cache" / "calaccess").mkdir(parents=True, exist_ok=True)
     ies = ('FILING_ID\tAMEND_ID\tTRAN_ID\tLINE_ITEM\tAMOUNT\tEXP_DATE\tEXPN_DSCR\n'
@@ -2410,7 +2410,7 @@ def test_top_contributor_reports_a_tie_instead_of_picking_one(tmp_path):
     rightly rejected a "largest contributor" that was a two-way tie."""
     import zipfile
 
-    from vgpipe import calaccess, queries
+    from provenance import calaccess, queries
 
     (tmp_path / "cache" / "calaccess").mkdir(parents=True, exist_ok=True)
     receipts = ('FILING_ID\tAMEND_ID\tTRAN_ID\tLINE_ITEM\tCTRIB_NAML\tCTRIB_NAMF\tCTRIB_EMP'
@@ -2435,7 +2435,7 @@ def test_a_conclusion_is_not_verified_while_its_inputs_are_not():
     """A comparison inherits the weakness of what it compares. If the candidate's housing
     position is human_review, "their housing position falls short of the platform" is not
     verified either, however well the platform's own text is cited."""
-    from vgpipe.verify import check_inputs
+    from provenance.verify import check_inputs
 
     ok = Claim(question_id="q17", question="?", answer="a", sources=[_verified()])
     check_corroboration(ok)
@@ -2468,7 +2468,7 @@ def test_every_listed_contribution_names_a_filing_to_cite(tmp_path):
     row must still name a filing, and the earliest is where the gift was first reported."""
     import zipfile
 
-    from vgpipe import calaccess
+    from provenance import calaccess
 
     (tmp_path / "cache" / "calaccess").mkdir(parents=True, exist_ok=True)
     # one gift, restated under three filing ids with a stable TRAN_ID
@@ -2501,19 +2501,19 @@ def test_every_listed_contribution_names_a_filing_to_cite(tmp_path):
 
 
 def test_a_stuck_lock_holder_stops_a_verdict_write_loudly(tmp_path, monkeypatch):
-    """Verifier agents record through `vg judge`. Blocked forever behind a stuck process, they
+    """Verifier agents record through `provenance judge`. Blocked forever behind a stuck process, they
     would report nothing, and silence from a verifier reads as nothing to report."""
     import fcntl
     import os
 
-    from vgpipe import judgments
+    from provenance import judgments
 
     judgments.record(tmp_path, "q1", src().sid, "supports")
     monkeypatch.setattr(judgments, "LOCK_TIMEOUT", 0.2)
     fd = os.open(tmp_path / "judgments", os.O_RDONLY)
     try:
         fcntl.flock(fd, fcntl.LOCK_SH)      # a reader that never lets go
-        with pytest.raises(judgments.UnreadableJudgments, match="locked by another vg process"):
+        with pytest.raises(judgments.UnreadableJudgments, match="locked by another provenance process"):
             judgments.record(tmp_path, "q1", src(url="https://news.example/b").sid, "topic_only")
     finally:
         os.close(fd)
@@ -2556,7 +2556,7 @@ UNREADABLE_ENTRIES = [
     # json.loads keeps the last of two equal keys, so one verdict would vanish unread
     pytest.param(_shard_with()[:-2] + b', {"sid": "abc123def456", "verdict": "supports", '
                                       b'"verdict": "contradicts"}]', id="entry-repeated-key"),
-    # these used to load and then crash `vg judgments` or is_stale() with a traceback
+    # these used to load and then crash `provenance judgments` or is_stale() with a traceback
     pytest.param(_shard_with({"sid": "abc123def456", "verdict": "supports", "note": 7}),
                  id="entry-numeric-note"),
     pytest.param(_shard_with({"sid": "abc123def456", "verdict": "supports",
@@ -2576,7 +2576,7 @@ def test_an_unreadable_judgments_file_is_an_error_not_unreviewed(tmp_path, body)
     parsed to a non-list. A hand-repaired, dict-shaped shard from a live run therefore
     vanished: every source in it read as unreviewed, which says "nobody judged this" when the
     truth is "the verdicts are unreadable"."""
-    from vgpipe import judgments
+    from provenance import judgments
 
     p = judgments.path_for(tmp_path, "q1")
     p.parent.mkdir(parents=True)
@@ -2595,7 +2595,7 @@ def test_an_unreadable_verdict_entry_is_an_error_not_unreviewed(tmp_path, body):
     """Refusing a whole unreadable file left the same bug one level down: load() skipped any
     single entry it could not read — a typo'd key, a verdict outside VERDICTS, a second verdict
     for one source — without a word, and every source it judged read as unreviewed."""
-    from vgpipe import judgments
+    from provenance import judgments
 
     p = judgments.path_for(tmp_path, "q1")
     p.parent.mkdir(parents=True)
@@ -2610,7 +2610,7 @@ def test_an_unreadable_verdict_entry_is_an_error_not_unreviewed(tmp_path, body):
 
 def test_every_unreadable_entry_is_named_at_once(tmp_path):
     """One refusal per bad entry would make repairing a shard a loop of re-runs."""
-    from vgpipe import judgments
+    from provenance import judgments
 
     p = judgments.path_for(tmp_path, "q1")
     p.parent.mkdir(parents=True)
@@ -2634,10 +2634,10 @@ def test_every_unreadable_entry_is_named_at_once(tmp_path):
 @pytest.mark.parametrize("bad", [pytest.param("", id="empty-sid"),
                                  pytest.param(7, id="numeric-note")])
 def test_record_will_not_write_a_verdict_load_would_refuse(tmp_path, bad):
-    """`vg judge q1 "" supports` wrote an entry the reader refuses, which would stop every
+    """`provenance judge q1 "" supports` wrote an entry the reader refuses, which would stop every
     command that reads the shard until someone repaired it by hand. The writer holds itself to
     the reader's rule."""
-    from vgpipe import judgments
+    from provenance import judgments
 
     judgments.record(tmp_path, "q1", "0123456789ab", "supports", "fine")
     p = judgments.path_for(tmp_path, "q1")
@@ -2660,7 +2660,7 @@ def test_a_refusal_prints_the_bad_value_as_written(tmp_path, capsys, run):
     very value the operator has to fix."""
     import typer
 
-    from vgpipe import cli
+    from provenance import cli
 
     s, p = _run_with_unreadable_judgments(
         tmp_path, _shard_with({"sid": "abc123def456", "verdict": "[/]"},
@@ -2675,7 +2675,7 @@ def test_a_refusal_prints_the_bad_value_as_written(tmp_path, capsys, run):
 def test_recording_into_an_unreadable_judgments_file_leaves_it_untouched(tmp_path, body):
     """record() loads, adds one verdict, and rewrites the file — so reading a malformed file as
     empty replaced every verdict in it with the single new one."""
-    from vgpipe import judgments
+    from provenance import judgments
 
     p = judgments.path_for(tmp_path, "q1")
     p.parent.mkdir(parents=True)
@@ -2687,7 +2687,7 @@ def test_recording_into_an_unreadable_judgments_file_leaves_it_untouched(tmp_pat
 
 def _run_with_unreadable_judgments(tmp_path, body):
     """A run whose q1 verdict file is unreadable, with the claim it judges on disk."""
-    from vgpipe import judgments
+    from provenance import judgments
 
     s = src()
     (tmp_path / "claims").mkdir()
@@ -2717,12 +2717,12 @@ def test_every_command_that_reads_verdicts_names_an_unreadable_file_and_stops(
     traceback, and not a run that carries on as though the verdicts did not exist."""
     import typer
 
-    from vgpipe import cli
+    from provenance import cli
 
     def no_fetch(*a, **kw):
         raise AssertionError("must refuse before fetching anything")
 
-    monkeypatch.setattr("vgpipe.verify.fetch", no_fetch)
+    monkeypatch.setattr("provenance.verify.fetch", no_fetch)
     s, p = _run_with_unreadable_judgments(tmp_path, body)
     claims_before = {f.name: f.read_bytes() for f in (tmp_path / "claims").iterdir()}
     with pytest.raises(typer.Exit) as exc:
@@ -2741,7 +2741,7 @@ def test_verify_reads_every_verdict_file_before_fetching_anything(tmp_path, monk
     long run's network time spent on a run that was always going to refuse."""
     import typer
 
-    from vgpipe import cli, judgments
+    from provenance import cli, judgments
 
     (tmp_path / "claims").mkdir()
     for qid, s in (("q1", src()), ("q2", src(url="https://sacbee.com/b"))):
@@ -2754,7 +2754,7 @@ def test_verify_reads_every_verdict_file_before_fetching_anything(tmp_path, monk
     def no_fetch(*a, **kw):
         raise AssertionError("q1's page was fetched before q2's verdicts were read")
 
-    monkeypatch.setattr("vgpipe.verify.fetch", no_fetch)
+    monkeypatch.setattr("provenance.verify.fetch", no_fetch)
     with pytest.raises(typer.Exit) as exc:
         cli.verify(data=tmp_path)
     assert exc.value.exit_code == 1
@@ -2765,7 +2765,7 @@ def unsearchable_judgments(tmp_path):
     """A run whose judgments/ directory exists but cannot be listed or entered."""
     import os
 
-    from vgpipe import judgments
+    from provenance import judgments
 
     if os.geteuid() == 0:
         pytest.skip("root ignores directory permissions")
@@ -2781,7 +2781,7 @@ def test_a_verdict_file_behind_a_permission_error_is_unreadable_not_absent(
     """load() asked `exists()` before its try block. On 3.12 a permission error there escaped
     as a traceback; on 3.13+ `exists()` swallows it and returns False, which reads the shard
     as absent — "nobody judged this" again. Only a file that is really not there is empty."""
-    from vgpipe import judgments
+    from provenance import judgments
 
     with pytest.raises(ValueError, match=re.escape(str(judgments.path_for(tmp_path, "q1")))):
         judgments.load(tmp_path, "q1")
@@ -2791,7 +2791,7 @@ def test_an_unlistable_judgments_directory_is_unreadable_not_empty(
         tmp_path, unsearchable_judgments):
     """pathlib's glob ignores a directory it cannot list, so load_every() — whose promise is
     that it has read every shard — returned {} for a directory full of verdicts."""
-    from vgpipe import judgments
+    from provenance import judgments
 
     with pytest.raises(ValueError, match=re.escape(str(unsearchable_judgments))):
         judgments.load_every(tmp_path)
@@ -2802,7 +2802,7 @@ def test_a_writer_that_cannot_lock_the_judgments_directory_refuses(
     """The writer locks the directory before reading it. Opening it for the lock is the first
     thing to meet a permission error, and it must name the directory rather than escape as a
     traceback — or, as an `is_dir()` check would on 3.13+, quietly skip the lock and write."""
-    from vgpipe import judgments
+    from provenance import judgments
 
     with pytest.raises(judgments.UnreadableJudgments,
                        match=re.escape(str(unsearchable_judgments))):
@@ -2826,15 +2826,15 @@ def _interrupt_writes(monkeypatch):
     def full_disk(fd):
         raise OSError("No space left on device")
 
-    monkeypatch.setattr("vgpipe.judgments.os.fsync", full_disk)
+    monkeypatch.setattr("provenance.judgments.os.fsync", full_disk)
 
 
 def test_an_interrupted_verdict_write_leaves_the_shard_whole(tmp_path, monkeypatch):
     """record() wrote the shard in place, so a write that died halfway left a truncated file.
     That used to read as empty; now it refuses every command until someone repairs it — and a
-    background `vg judge` can be mid-write while `vg build` reads. A shard must only ever be
+    background `provenance judge` can be mid-write while `provenance build` reads. A shard must only ever be
     replaced whole."""
-    from vgpipe import judgments
+    from provenance import judgments
 
     s1, s2 = src(), src(url="https://sacbee.com/b")
     judgments.record(tmp_path, "q1", s1.sid, "supports", "kept")
@@ -2857,18 +2857,18 @@ def test_a_verdict_write_is_on_disk_before_it_replaces_the_shard(tmp_path, monke
     empty."""
     import os
 
-    from vgpipe import judgments
+    from provenance import judgments
 
     order: list[str] = []
     real_replace = os.replace
-    monkeypatch.setattr("vgpipe.judgments.os.fsync", lambda fd: order.append("fsync"))
-    monkeypatch.setattr("vgpipe.judgments.os.replace",
+    monkeypatch.setattr("provenance.judgments.os.fsync", lambda fd: order.append("fsync"))
+    monkeypatch.setattr("provenance.judgments.os.replace",
                         lambda a, b: (order.append("replace"), real_replace(a, b)))
     judgments.record(tmp_path, "q1", src().sid, "supports", "durable")
     assert order == ["fsync", "replace"]
 
 
-# `vg judge` takes its question id from the command line, and verifier agents have Bash.
+# `provenance judge` takes its question id from the command line, and verifier agents have Bash.
 ESCAPING_QUESTION_IDS = [
     pytest.param(lambda root: "../x", id="parent"),
     pytest.param(lambda root: "../../elsewhere", id="grandparent"),
@@ -2888,8 +2888,8 @@ def _tree(root):
 def test_a_question_id_cannot_reach_outside_the_judgments_directory(tmp_path, escaping):
     """path_for() joined the id straight onto judgments/, and record() then created parent
     directories and replaced whatever was there. The claim schema constrains question ids, but
-    `vg judge` never passes through the schema, so `../claims/q7` rewrote a claim file."""
-    from vgpipe import judgments
+    `provenance judge` never passes through the schema, so `../claims/q7` rewrote a claim file."""
+    from provenance import judgments
 
     run = tmp_path / "run"
     judgments.record(run, "q1", src().sid, "supports", "already here")
@@ -2913,11 +2913,11 @@ def test_a_question_id_cannot_reach_outside_the_judgments_directory(tmp_path, es
 
 
 @pytest.mark.parametrize("escaping", ESCAPING_QUESTION_IDS)
-def test_vg_judge_refuses_an_escaping_question_id_without_a_traceback(tmp_path, escaping):
+def test_provenance_judge_refuses_an_escaping_question_id_without_a_traceback(tmp_path, escaping):
     """The caller is an agent: the refusal has to reach it as a message it can act on."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     run = tmp_path / "run"
     s = src()
@@ -2925,7 +2925,7 @@ def test_vg_judge_refuses_an_escaping_question_id_without_a_traceback(tmp_path, 
     (run / "claims" / "q1.json").write_text(
         Claim(question_id="q1", question="?", answer="a", sources=[s]).model_dump_json())
     _cache_judged_page(run, s.url)   # or even a valid id is refused, for an uncached page
-    # ...or for a source `vg verify` has given no context
+    # ...or for a source `provenance verify` has given no context
     assert CliRunner().invoke(cli.app, ["verify", "--data", str(run)]).exit_code == 0
 
     def judge(qid):
@@ -2942,12 +2942,12 @@ def test_vg_judge_refuses_an_escaping_question_id_without_a_traceback(tmp_path, 
     assert _tree(tmp_path) == before, "a refused id must write nothing, anywhere"
 
 
-def test_vg_judge_refuses_an_escaping_question_id_before_reading_claims(tmp_path):
+def test_provenance_judge_refuses_an_escaping_question_id_before_reading_claims(tmp_path):
     """The id is checked before anything is read, so an unrelated claims error can't stop the
     command first and send the agent off to fix the wrong thing."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     (tmp_path / "claims").mkdir()
     (tmp_path / "claims" / "q1.json").write_text("{")
@@ -2961,8 +2961,8 @@ def test_vg_judge_refuses_an_escaping_question_id_before_reading_claims(tmp_path
 def test_a_shard_already_on_disk_is_read_whatever_its_name(tmp_path):
     """The id check guards ids that come from outside. A shard found by listing judgments/ is
     inside it by construction, so one named before the check existed must still be read —
-    refusing it would stop `vg judgments` and `vg build` over a file that escapes nothing."""
-    from vgpipe import judgments
+    refusing it would stop `provenance judgments` and `provenance build` over a file that escapes nothing."""
+    from provenance import judgments
 
     s = src()
     judgments.record(tmp_path, "q1", s.sid, "supports", "legacy")
@@ -2972,12 +2972,12 @@ def test_a_shard_already_on_disk_is_read_whatever_its_name(tmp_path):
     assert every["old id"][s.sid].note == "legacy"
 
 
-def test_vg_judgments_finds_an_unreadable_shard_no_claim_points_at(tmp_path, capsys):
-    """`vg judgments` is the command that shows the gaps, but it only opened shards named after
+def test_provenance_judgments_finds_an_unreadable_shard_no_claim_points_at(tmp_path, capsys):
+    """`provenance judgments` is the command that shows the gaps, but it only opened shards named after
     current claims — so a malformed shard left under an old id passed as healthy."""
     import typer
 
-    from vgpipe import cli, judgments
+    from provenance import cli, judgments
 
     (tmp_path / "claims").mkdir()
     (tmp_path / "claims" / "q1.json").write_text(
@@ -2998,8 +2998,8 @@ def test_an_escaped_copy_of_the_page_does_not_break_uniqueness():
     article. It lands in the DOM dump as a second copy of every sentence, so uniqueness — the
     check that makes ⌘F meaningful — failed on 20 good citations at once. Falsely: a human
     pressing ⌘F on the real page gets one hit."""
-    from vgpipe.fetch import _drop_escaped_markup
-    from vgpipe.normalize import find_all
+    from provenance.fetch import _drop_escaped_markup
+    from provenance.normalize import find_all
 
     article = ("She opposes a harbor levy, saying it would drive small shipping lines "
                "to look for another port.")
@@ -3021,7 +3021,7 @@ def test_a_stray_cache_directory_does_not_reroute_the_pipeline(tmp_path):
     unrelated stray ./cache at the repo root silently redirected everything to a root with no
     CAL-ACCESS database — and 14 query citations failed with "not found" on a file that
     existed. A root inferred from a directory's existence fails open."""
-    from vgpipe.cli import _cache_root
+    from provenance.cli import _cache_root
 
     (tmp_path / "data" / "cache").mkdir(parents=True)
     (tmp_path / "data" / "questions.json").write_text("[]")
@@ -3051,7 +3051,7 @@ def test_a_stray_candidate_cache_does_not_fork_the_shared_one(tmp_path, monkeypa
 
     from rich.console import Console
 
-    from vgpipe import cli
+    from provenance import cli
 
     out = io.StringIO()
     monkeypatch.setattr(cli, "con", Console(file=out, width=10_000, color_system=None))
@@ -3105,10 +3105,10 @@ def test_a_stray_candidate_cache_does_not_fork_the_shared_one(tmp_path, monkeypa
 
 
 def test_calaccess_commands_share_the_cache_root_with_queries(tmp_path, monkeypatch):
-    """`vg query` resolves the CAL-ACCESS database through _cache_root, and so must every
-    `vg calaccess` command. Otherwise `vg calaccess build --data data/<candidate>` writes 1.5 GB
+    """`provenance query` resolves the CAL-ACCESS database through _cache_root, and so must every
+    `provenance calaccess` command. Otherwise `provenance calaccess build --data data/<candidate>` writes 1.5 GB
     into a stray candidate cache that queries then ignore — the database hidden again."""
-    from vgpipe import calaccess, cli
+    from provenance import calaccess, cli
 
     root = tmp_path / "data"
     cand = root / "cand"
@@ -3126,7 +3126,7 @@ def test_calaccess_commands_share_the_cache_root_with_queries(tmp_path, monkeypa
                         lambda url, root=None, **k: seen.append(root) or (None, "none"))
     from types import SimpleNamespace
 
-    from vgpipe import queries
+    from provenance import queries
     monkeypatch.setattr(queries, "run", lambda name, params, r: seen.append(r)
                         or SimpleNamespace(found=True, value=1, note="", version=1,
                                            export_date="", unsettled="", unrestated=[],
@@ -3144,7 +3144,7 @@ def test_calaccess_commands_share_the_cache_root_with_queries(tmp_path, monkeypa
     assert seen == [root] * 6
 
     # and every one of them takes --cache: the commands a reviewer re-checks a figure with must
-    # reach the database `vg verify --cache` checked it against
+    # reach the database `provenance verify --cache` checked it against
     seen.clear()
     every_command(cache=tmp_path / "shared")
     assert seen == [tmp_path / "shared"] * 6
@@ -3160,14 +3160,14 @@ def test_a_verdict_does_not_outlive_the_text_it_judged(tmp_path, monkeypatch):
     REMOVED the supporting text would ship a green row nobody checked. Same mechanism."""
     from datetime import UTC, datetime, timedelta
 
-    from vgpipe import judgments
-    from vgpipe.models import EXTRACTOR_VERSION, PageCache
+    from provenance import judgments
+    from provenance.models import EXTRACTOR_VERSION, PageCache
 
     s = src()
     page = PageCache(url=s.url, final_url=s.url, status=200, content_type="text/html",
                      text="roster only", fetched_at=datetime.now(UTC),
                      extractor_version=EXTRACTOR_VERSION)
-    monkeypatch.setattr("vgpipe.fetch.load_cached", lambda root, url: page)
+    monkeypatch.setattr("provenance.fetch.load_cached", lambda root, url: page)
 
     judgments.record(tmp_path, "q1", s.sid, "topic_only", "roster-only, no bill number",
                      page_fetched_at=str(page.fetched_at),
@@ -3194,19 +3194,19 @@ def test_a_verdict_does_not_outlive_the_text_it_judged(tmp_path, monkeypatch):
     assert len(stale) == 1 and "re-extracted" in stale[0]
 
 
-# --- vg judgments: the unjudged count -------------------------------------------------
+# --- provenance judgments: the unjudged count -------------------------------------------------
 
 
 def _judgments_fixture(tmp_path):
-    """Two questions, five cited sources, verified the way `vg verify` would against pages in
+    """Two questions, five cited sources, verified the way `provenance verify` would against pages in
     the cache: two fresh verdicts, one source never judged, and one stale verdict of each kind
     (page re-fetched since; page re-extracted since). Plus a verdict whose citation has since
     changed, which must not count toward anything."""
     from datetime import timedelta
 
-    from vgpipe import judgments
-    from vgpipe.fetch import cache_path
-    from vgpipe.models import EXTRACTOR_VERSION
+    from provenance import judgments
+    from provenance.fetch import cache_path
+    from provenance.models import EXTRACTOR_VERSION
 
     data = tmp_path / "data"
     now = datetime.now(UTC)
@@ -3246,14 +3246,14 @@ def _judgments_output(data, *args):
 
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     res = CliRunner().invoke(cli.app, ["judgments", "--data", str(data), *args])
     return res.exit_code, re.sub(r"\x1b\[[0-9;]*m", "", res.output)
 
 
 def _unjudged(data, question_id="", cache=None):
-    """(need a verdict, total, stale, blocked), read off what `vg judgments` prints: the gate
+    """(need a verdict, total, stale, blocked), read off what `provenance judgments` prints: the gate
     line, and the line for sources a verifier can't judge yet (0 when it isn't printed)."""
     import re
 
@@ -3269,12 +3269,12 @@ def _unjudged(data, question_id="", cache=None):
 
 
 def _built_unreviewed(data):
-    """{url: status} for every source `vg build` writes out without a verdict."""
+    """{url: status} for every source `provenance build` writes out without a verdict."""
     import json
 
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     res = CliRunner().invoke(cli.app, ["build", "--data", str(data)])
     assert res.exit_code == 0, res.output
@@ -3294,8 +3294,8 @@ def _edit_claim(data, qid, i, **verification):
 
 def _rewrite_page(data, url, text):
     """The cached copy changes under a recorded verification, fetch time unchanged."""
-    from vgpipe.fetch import cache_path
-    from vgpipe.models import PageCache
+    from provenance.fetch import cache_path
+    from provenance.models import PageCache
 
     page = PageCache.model_validate_json(cache_path(data, url).read_text())
     page.text = text
@@ -3326,17 +3326,17 @@ def test_judgments_never_prints_done_for_nothing_or_for_what_it_could_not_read(t
     code, out = _judgments_output(data)
     assert code == 1
     assert "1 claim(s) could not be read" in out and "q3" in out
-    # not even a red "0 of M": `vg judgments | tail -1` loses the exit status to the pipe
+    # not even a red "0 of M": `provenance judgments | tail -1` loses the exit status to the pipe
     assert "need a verdict" not in out
     assert _unjudged(data, "q1") == (2, 3, 1, 0), "a filter that excludes it is unaffected"
 
 
 def test_judgments_count_treats_a_stale_verdict_as_no_verdict(tmp_path):
-    """`vg build` drops a verdict that predates its page and the source reverts to unreviewed.
+    """`provenance build` drops a verdict that predates its page and the source reverts to unreviewed.
     A count that trusts any recorded verdict says 0 left while build shows pending rows —
     the same fixture, judged by `apply_to()` itself, must give the same number."""
-    from vgpipe import judgments
-    from vgpipe.cli import load_claims
+    from provenance import judgments
+    from provenance.cli import load_claims
 
     data = _judgments_fixture(tmp_path)
     claims = load_claims(data / "claims", trust_machine_fields=True)
@@ -3379,7 +3379,7 @@ def test_only_a_source_with_confirmed_context_is_waiting_on_a_verdict(tmp_path):
 
 def test_judgments_classifies_by_what_build_revalidates_not_by_the_claim_file(tmp_path,
                                                                             monkeypatch):
-    """The claim file's status is `vg verify`'s last word; build re-checks it against the cache
+    """The claim file's status is `provenance verify`'s last word; build re-checks it against the cache
     and can disagree. A source build discards (its quote no longer reproduces) shows no verdict
     whatever was judged, and one whose context moved since verify loses its verdict until
     verify re-runs. Neither is a verifier's to close, so neither is in the gate — but both are
@@ -3397,17 +3397,17 @@ def test_judgments_classifies_by_what_build_revalidates_not_by_the_claim_file(tm
                                        "https://calmatters.org/e": "verified"}
     assert _unjudged(data) == (2, 5, 2, 3)          # c and e wait on a verdict; a, b, d can't use one
 
-    from vgpipe import cli
+    from provenance import cli
 
     monkeypatch.setattr(cli.con, "_width", 200)     # read a table cell, so don't let it wrap
     code, out = _judgments_output(data)
-    assert "unreviewed (run vg verify)" in out      # d reads as a verify job, not a judging one
+    assert "unreviewed (run provenance verify)" in out      # d reads as a verify job, not a judging one
 
 
 def test_judgments_marks_stale_rows_and_loads_each_question_once(tmp_path, monkeypatch):
     import json
 
-    from vgpipe import judgments
+    from provenance import judgments
 
     data = _judgments_fixture(tmp_path)
     shard = data / "judgments" / "q1.json"
@@ -3426,7 +3426,7 @@ def test_judgments_marks_stale_rows_and_loads_each_question_once(tmp_path, monke
 
 
 def test_a_support_verdict_in_the_claim_file_is_not_a_verdict(tmp_path):
-    """`vg build` loads claim files trusting machine fields, and `apply_to()` only ever wrote
+    """`provenance build` loads claim files trusting machine fields, and `apply_to()` only ever wrote
     over them. So a `support` already in the file, written by hand, by an agent, or left from
     before verdicts moved out, rendered as judged whenever `data/judgments/` had no usable
     verdict for that source. That is the judgment pass self-certified, and it made the count
@@ -3447,9 +3447,9 @@ def test_a_support_verdict_in_the_claim_file_is_not_a_verdict(tmp_path):
 
 
 def _stamped(s, page):
-    """Give `s` exactly the verification fields a `vg verify` of `page` would have written,
+    """Give `s` exactly the verification fields a `provenance verify` of `page` would have written,
     so the only thing wrong with the row is whatever the test puts there."""
-    from vgpipe.normalize import context_window
+    from provenance.normalize import context_window
 
     start = page.text.index(s.snippet)
     excerpt, rs, re_ = context_window(page.text, start, start + len(s.snippet))
@@ -3462,17 +3462,17 @@ def _stamped(s, page):
 
 
 def _build_one(root, monkeypatch, s, pages):
-    """Run `vg build` over a single claim file and return the claim as it reached render."""
+    """Run `provenance build` over a single claim file and return the claim as it reached render."""
     import json
 
-    from vgpipe import cli
+    from provenance import cli
 
     claims_dir = root / "claims"
     claims_dir.mkdir(parents=True, exist_ok=True)
     (claims_dir / "q1.json").write_text(Claim(
         question_id="q1", question="?", answer="a", sources=[s]).model_dump_json())
     # Both lookups: revalidation reads pages through verify, the verdict check through fetch.
-    for where in ("vgpipe.verify.load_cached", "vgpipe.fetch.load_cached"):
+    for where in ("provenance.verify.load_cached", "provenance.fetch.load_cached"):
         monkeypatch.setattr(where, lambda root, url: pages.get(url))
     rendered = []
 
@@ -3486,11 +3486,11 @@ def _build_one(root, monkeypatch, s, pages):
 
 
 def test_a_verdict_written_into_the_claim_file_does_not_render(tmp_path, monkeypatch):
-    """Verdicts live in data/judgments/, never in the claim file. `vg build` trusts the file's
+    """Verdicts live in data/judgments/, never in the claim file. `provenance build` trusts the file's
     machine fields in order to re-check them, but apply_to() only overwrote sources that HAD a
     recorded judgment — so `support: supports` in a claim file (a hand edit, or a retry
     followed by build without verify) rendered as judged with no verifier having run."""
-    from vgpipe import judgments
+    from provenance import judgments
 
     page = _page()
     s = _stamped(src(), page)
@@ -3515,10 +3515,10 @@ def test_a_verdict_written_into_the_claim_file_does_not_render(tmp_path, monkeyp
 @pytest.mark.parametrize("case", ["excluded aggregator", "blog", "soft 404", "line break"])
 def test_build_rechecks_everything_verify_checks(case, tmp_path, monkeypatch):
     """Build's re-check used to ask only whether the snippet was uniquely on the cached page,
-    so a forged `verified` rode through wherever `vg verify` would have refused it for a
+    so a forged `verified` rode through wherever `provenance verify` would have refused it for a
     different reason. Each row here has its snippet uniquely on its cached page and a recorded
     `supports` verdict — everything but the one rule it breaks says green."""
-    from vgpipe import judgments
+    from provenance import judgments
 
     page, s = {
         "excluded aggregator": (
@@ -3554,7 +3554,7 @@ def test_a_forged_paywall_row_cannot_corroborate(tmp_path, monkeypatch):
     check_corroboration() counts it as usable evidence. A hand-written paywall status on an
     excluded aggregator then stood as an adversarial claim's independent second source."""
     gate = _page(url="https://ocregister.com/x", status=403, text="Subscribe to continue reading.")
-    monkeypatch.setattr("vgpipe.verify.load_cached", lambda root, url: {
+    monkeypatch.setattr("provenance.verify.load_cached", lambda root, url: {
         "https://calmatters.org/a": _page(), gate.url: gate}.get(url))
     real = _stamped(src(), _page())
     forged = src(url="https://grokipedia.com/dana-ko", publisher="Grokipedia")
@@ -3582,7 +3582,7 @@ def test_a_forged_paywall_row_cannot_corroborate(tmp_path, monkeypatch):
 
     # ...and one claiming a gate its cached page doesn't have is not a paywall row at all —
     # even where the page reads fine and holds the quote: build never promotes a row into a
-    # match, it sends it back to `vg verify`.
+    # match, it sends it back to `provenance verify`.
     for snippet in ("a quote that is nowhere here", "she opposed the Harbor Levy Act"):
         open_page = src(url="https://calmatters.org/a", snippet=snippet)
         open_page.verification.status = "could_not_verify_paywall"
@@ -3595,7 +3595,7 @@ def test_build_renders_the_status_the_cached_page_gives_now(tmp_path, monkeypatc
     claim file's recorded status describes. Revalidation used the check only as a gate and
     kept the file's status, so a row recorded as a normalized match stayed one — warning the
     human that Cmd-F may miss — after the cached page came to match it exactly."""
-    monkeypatch.setattr("vgpipe.verify.load_cached", lambda root, url: _page())
+    monkeypatch.setattr("provenance.verify.load_cached", lambda root, url: _page())
     s = src()
     s.verification.status = "normalized_match"
     s.verification.reason = "matched only after normalizing whitespace/quotes/dashes"
@@ -3609,7 +3609,7 @@ def test_an_archive_row_says_how_its_snapshot_matched(tmp_path, monkeypatch):
     a hand-written one could claim anything, and dropping the normalization note would hide
     that Cmd-F in the snapshot may miss."""
     snap = "https://web.archive.org/web/2026/https://ocregister.com/x"
-    monkeypatch.setattr("vgpipe.verify.load_cached", lambda root, url: {
+    monkeypatch.setattr("provenance.verify.load_cached", lambda root, url: {
         snap: _page(url=snap, text="the state paid “$120,000” to settle"),
         "https://ocregister.com/x": _gated("https://ocregister.com/x")}.get(url))
     s = src(url="https://ocregister.com/x", publisher="OC Register", archive_url=snap,
@@ -3623,15 +3623,15 @@ def test_an_archive_row_says_how_its_snapshot_matched(tmp_path, monkeypatch):
 
 
 def test_status_does_not_need_a_race_to_summarize(tmp_path, monkeypatch, capsys):
-    """`vg status` is a read-only summary. Loading the race's source lists must not make it
+    """`provenance status` is a read-only summary. Loading the race's source lists must not make it
     raise where there is more than one race and no --race was given."""
-    from vgpipe import cli
+    from provenance import cli
 
     def _ambiguous(name=None, races_dir=None):
         raise ValueError("multiple races (a, b); pass --race")
 
     monkeypatch.setattr(cli, "load_race", _ambiguous)
-    monkeypatch.setattr("vgpipe.races.load", _ambiguous)
+    monkeypatch.setattr("provenance.races.load", _ambiguous)
     claims_dir = tmp_path / "claims"
     claims_dir.mkdir()
     (claims_dir / "q1.json").write_text(Claim(
@@ -3646,8 +3646,8 @@ def test_a_reproduced_query_does_not_carry_the_claim_files_evidence(tmp_path, mo
     """Revalidating a query citation checked only that the number reproduced, then kept every
     other verification field from the claim file — so a forged `verified_via_archive` and a
     fabricated excerpt rode through under a query that happened to match."""
-    from vgpipe import queries
-    from vgpipe.models import QueryCitation
+    from provenance import queries
+    from provenance.models import QueryCitation
 
     monkeypatch.setitem(
         queries.REGISTRY, "test.total",
@@ -3680,7 +3680,7 @@ def _argv_in_a_real_shell(cmd: str, cwd: Path) -> list[str]:
     import subprocess
     import sys
 
-    prefix = "uv run vg query "
+    prefix = "uv run provenance query "
     assert cmd.startswith(prefix)
     show_argv = f"{shlex.quote(sys.executable)} -c 'import json, sys; print(json.dumps(sys.argv[1:]))'"
     out = subprocess.run(["sh", "-c", f"{show_argv} {cmd[len(prefix):]}"],
@@ -3706,12 +3706,12 @@ def test_the_printed_query_command_passes_every_parameter_as_inert_data(value, t
     delivered by the verification step itself."""
     import shlex
 
-    from vgpipe import queries
+    from provenance import queries
 
     cmd = queries.human_command("calaccess.contributor_total",
                                 {"filer_id": "9990001", "contributor": value})
     want = ["--param", "filer_id=9990001", "--param", f"contributor={value}"]
-    assert shlex.split(cmd) == ["uv", "run", "vg", "query", "calaccess.contributor_total",
+    assert shlex.split(cmd) == ["uv", "run", "provenance", "query", "calaccess.contributor_total",
                                 *want], "each parameter must come back as one argument"
     (tmp_path / "decoy").write_text("")  # something for an unquoted * to expand to
     assert _argv_in_a_real_shell(cmd, tmp_path) == ["calaccess.contributor_total", *want], (
@@ -3730,11 +3730,11 @@ UNSAFE_QUERIES = [
     *[("calaccess.contributor_total", {"contributor": f"Ko{ch}"})
       for ch in ("‮", "​", "\xa0", "ㅤ", "⠀", "͏", "️",
                  "\U000e0100", "\U000e0041")],
-    # A name starting with '-' is an option to `vg query`, however it is quoted.
+    # A name starting with '-' is an option to `provenance query`, however it is quoted.
     ("--data=/elsewhere", {"filer_id": "1"}),
     ("-h", {}),
     ("x; echo INJECTED", {}),
-    # `vg query` splits '--param a=b=c' at the first '=', verification did not.
+    # `provenance query` splits '--param a=b=c' at the first '=', verification did not.
     ("calaccess.filer_total", {"filer_id=1": "2"}),
     ("calaccess.filer_total", {"k`id`": "1"}),
 ]
@@ -3744,7 +3744,7 @@ UNSAFE_QUERIES = [
 def test_a_query_that_cannot_be_pasted_safely_prints_no_command(name, params):
     """No real filer id, name or date needs any of these, so there is nothing to print: the
     review page shows no command rather than a dangerous one, and echoes none of the text."""
-    from vgpipe import queries
+    from provenance import queries
 
     assert queries.human_command(name, params) == ""
 
@@ -3753,7 +3753,7 @@ def test_a_real_name_with_accents_still_prints_a_command():
     """The invisible-character check must not catch ordinary non-ASCII names."""
     import shlex
 
-    from vgpipe import queries
+    from provenance import queries
 
     for name in ("Peña", "José Muñoz", "Nguyễn", "O'Brien-Smith & Co."):
         cmd = queries.human_command("calaccess.contributor_total", {"contributor": name})
@@ -3762,7 +3762,7 @@ def test_a_real_name_with_accents_still_prints_a_command():
 
 def test_a_mistyped_query_name_still_lists_the_real_ones(tmp_path):
     """The charset rule must not pre-empt the more useful message for a plain typo."""
-    from vgpipe import queries
+    from provenance import queries
 
     with pytest.raises(ValueError, match="known: .*calaccess.ie_total"):
         queries.run("calaccess.ie-total", {}, tmp_path)
@@ -3771,8 +3771,8 @@ def test_a_mistyped_query_name_still_lists_the_real_ones(tmp_path):
 @pytest.mark.parametrize("name,params", UNSAFE_QUERIES)
 def test_a_query_citation_that_cannot_be_pasted_safely_is_refused_at_load(name, params):
     """Checked on the model, like _http_only, so no consumer of a loaded claim has to
-    remember to — and `vg check-claim` fails the researcher on it."""
-    from vgpipe.models import QueryCitation
+    remember to — and `provenance check-claim` fails the researcher on it."""
+    from provenance.models import QueryCitation
 
     with pytest.raises(ValueError):
         QueryCitation(name=name, params=params, expected="1")
@@ -3783,9 +3783,9 @@ def test_an_unsafe_query_citation_built_without_validation_still_does_not_verify
     """The backstop for a citation changed after the model checked it (pydantic does not
     re-validate a mutated dict): run() refuses it too, so it cannot go green even where the
     query would ignore the stray character (`stance` keeps only its first letter) and match."""
-    from vgpipe import queries
-    from vgpipe.models import QueryCitation
-    from vgpipe.verify import revalidate_from_cache, verify_source
+    from provenance import queries
+    from provenance.models import QueryCitation
+    from provenance.verify import revalidate_from_cache, verify_source
 
     monkeypatch.setitem(
         queries.REGISTRY, "test.total",
@@ -3805,12 +3805,12 @@ def test_an_unsafe_query_citation_built_without_validation_still_does_not_verify
     assert revalidate_from_cache(claimed, tmp_path).verification.status == "human_review"
 
 
-def test_vg_query_prints_the_value_researchers_copy_verbatim(tmp_path, monkeypatch, capsys):
-    """researcher.md says to record `expected` exactly as `vg query` prints it, and matching
+def test_provenance_query_prints_the_value_researchers_copy_verbatim(tmp_path, monkeypatch, capsys):
+    """researcher.md says to record `expected` exactly as `provenance query` prints it, and matching
     is now exact — so rich markup must not eat a contributor's brackets on the way out."""
     import re
 
-    from vgpipe import cli, queries
+    from provenance import cli, queries
 
     # markup, an emoji code, and long enough to wrap at rich's 80-column non-terminal default
     value = "Yes on [b] PAC :smile: | " + "Committee for a Very Long Name | " * 3
@@ -3828,7 +3828,7 @@ def test_a_query_figure_must_reproduce_to_the_cent():
     """A 0.5% relative tolerance let $615,000 verify against a true $612,345.67: a figure
     wrong by $2,654.33 wearing a green badge. A query citation exists to make a number
     reproducible exactly, so figures now match to the cent and only float noise is absorbed."""
-    from vgpipe import queries
+    from provenance import queries
 
     assert not queries.matches("$615,000", 612345.67)
     assert not queries.matches("612345.68", 612345.67), "a cent off is wrong"
@@ -3844,7 +3844,7 @@ def test_a_query_figure_must_reproduce_to_the_cent():
 
 def test_an_integer_count_matches_exactly():
     """Counts are whole numbers: '12.004' is not a count of 12, whatever the tolerance."""
-    from vgpipe import queries
+    from provenance import queries
 
     assert queries.matches("12", 12)
     assert queries.matches("1,200", 1200)
@@ -3855,7 +3855,7 @@ def test_an_integer_count_matches_exactly():
 def test_a_text_result_compares_as_text_even_when_it_looks_numeric():
     """The query's return type picks the comparison. A string that happens to parse as a
     number is still text, so it gets no dollar tolerance: '100.004' is not '100.00'."""
-    from vgpipe import queries
+    from provenance import queries
 
     assert not queries.matches("100.004", "100.00")
     assert queries.matches("100.00", "100.00")
@@ -3877,15 +3877,15 @@ def _genuine(url, publisher="CalMatters"):
 
 
 def _build_all(root, monkeypatch, claims, pages):
-    """Run `vg build` over these claims, one file each; return them as they reached render."""
-    from vgpipe import cli
+    """Run `provenance build` over these claims, one file each; return them as they reached render."""
+    from provenance import cli
 
     claims_dir = root / "claims"
     claims_dir.mkdir(parents=True, exist_ok=True)
     for c in claims:
         (claims_dir / f"{c.question_id}.json").write_text(c.model_dump_json())
     # Both lookups: revalidation reads pages through verify, the verdict check through fetch.
-    for where in ("vgpipe.verify.load_cached", "vgpipe.fetch.load_cached"):
+    for where in ("provenance.verify.load_cached", "provenance.fetch.load_cached"):
         monkeypatch.setattr(where, lambda root, url: pages.get(url))
     rendered = {}
 
@@ -3905,7 +3905,7 @@ def test_a_downgrade_in_this_build_reaches_every_claim_derived_from_it(tmp_path,
     file claimed it: q36 (derives from q17) rendered verified while q17 was downgraded to
     human_review later in the same build. It was also one pass in file order, so q9 (derives
     from q36) read q36 before q36's own inputs had been checked."""
-    from vgpipe import cli, judgments
+    from provenance import cli, judgments
 
     s17, _ = _genuine("https://calmatters.org/q17")
     s36, p36 = _genuine("https://calmatters.org/q36")
@@ -3926,7 +3926,7 @@ def test_a_downgrade_in_this_build_reaches_every_claim_derived_from_it(tmp_path,
     assert out["q9"].status == "human_review", "the downgrade must reach every step of the chain"
     assert out["q9"].unmet_inputs == ["q36 (human_review)"]
 
-    # `vg status` promises to show what build renders, so it must settle inputs the same way.
+    # `provenance status` promises to show what build renders, so it must settle inputs the same way.
     capsys.readouterr()
     cli.status(data=tmp_path)
     rows = {line.split()[0]: line for line in capsys.readouterr().out.splitlines()
@@ -3935,11 +3935,11 @@ def test_a_downgrade_in_this_build_reaches_every_claim_derived_from_it(tmp_path,
 
 
 def test_a_stale_corroboration_ok_does_not_carry_through_check_inputs(tmp_path, monkeypatch):
-    """`corroboration_ok: true` in the claim file is from the last `vg verify`, before the
+    """`corroboration_ok: true` in the claim file is from the last `provenance verify`, before the
     verifier judged one of q17's two outlets topic_only — so q17 is one usable source short of
     corroborated. Checking inputs before check_corroboration() re-ran read the stale true, and
     q36 rendered verified on an adversarial input that failed corroboration."""
-    from vgpipe import judgments
+    from provenance import judgments
 
     a, pa = _genuine("https://calmatters.org/q17")
     b, pb = _genuine("https://sacbee.com/q17", publisher="Sacramento Bee")
@@ -3962,7 +3962,7 @@ def test_a_stale_corroboration_ok_does_not_carry_through_check_inputs(tmp_path, 
 def test_check_inputs_replaces_a_stale_unmet_list():
     """unmet_inputs is recomputed for every claim, including one whose inputs are all fine now
     — a value carried in from the claim file must not outlive the check."""
-    from vgpipe.verify import check_inputs
+    from provenance.verify import check_inputs
 
     ok = _claim("q17", _verified(), corroboration_ok=True)
     ok.sources[0].verification.support = "supports"
@@ -3974,10 +3974,10 @@ def test_check_inputs_replaces_a_stale_unmet_list():
 
 
 def test_unmet_inputs_is_stripped_on_ingest():
-    """unmet_inputs is pipeline-owned. `vg verify` loads with stripping on and writes the claim
+    """unmet_inputs is pipeline-owned. `provenance verify` loads with stripping on and writes the claim
     back, so a list an agent wrote, or one left over, would otherwise sit in the file as
     pipeline state no pipeline pass produced."""
-    from vgpipe.models import strip_machine_fields
+    from provenance.models import strip_machine_fields
 
     raw = {"question_id": "q36", "question": "?", "answer": "a", "derives_from": ["q17"],
            "unmet_inputs": ["q17 (pending)"]}
@@ -3988,7 +3988,7 @@ def test_unmet_inputs_is_stripped_on_ingest():
 def test_a_derives_from_cycle_is_reported_not_looped():
     """Claims resting on each other are no foundation for any of them, and settling inputs in
     dependency order has no order to follow through a cycle. Report it and mark it unmet."""
-    from vgpipe.verify import check_inputs
+    from provenance.verify import check_inputs
 
     def good(qid, **kw):
         c = _claim(qid, _verified(), corroboration_ok=True, **kw)
@@ -4014,7 +4014,7 @@ def test_a_long_derives_from_chain_does_not_hit_the_recursion_limit():
     only the failure at the bottom — reached in dependency order — can make the top unmet."""
     import sys
 
-    from vgpipe.verify import check_inputs
+    from provenance.verify import check_inputs
 
     n = sys.getrecursionlimit() + 500
     chain = []
@@ -4049,7 +4049,7 @@ def test_a_mechanical_failure_outranks_pending():
     mixed.sources[0].verification.support = "topic_only"
     assert mixed.status == "human_review"
 
-    # Nor does a paywalled source, or one `vg verify` hasn't reached yet: either would leave
+    # Nor does a paywalled source, or one `provenance verify` hasn't reached yet: either would leave
     # the failed citation behind a yellow badge or "waiting", out of the review filter.
     for other in ("could_not_verify_paywall", "pending"):
         beside = _claim("q5", src(url="https://ocregister.com/x", publisher="OC Register"),
@@ -4068,7 +4068,7 @@ def test_a_mechanical_failure_outranks_pending():
 
     # With nothing failed, waiting on a verdict is still `pending`.
     assert _claim("q3", _verified(), corroboration_ok=True).status == "pending"
-    not_yet_run = _claim("q4", src())      # `vg verify` hasn't checked it: not a failure
+    not_yet_run = _claim("q4", src())      # `provenance verify` hasn't checked it: not a failure
     assert not_yet_run.status == "pending"
 
 
@@ -4078,8 +4078,8 @@ def test_every_verify_status_is_usable_failed_or_pending():
     classified exactly once."""
     from typing import get_args
 
-    from vgpipe.models import MECHANICAL_FAILURES, VerifyStatus
-    from vgpipe.verify import USABLE
+    from provenance.models import MECHANICAL_FAILURES, VerifyStatus
+    from provenance.verify import USABLE
 
     groups = [set(USABLE), set(MECHANICAL_FAILURES), {"pending"}]
     assert set().union(*groups) == set(get_args(VerifyStatus))
@@ -4090,7 +4090,7 @@ def test_a_broken_absence_claim_is_not_listed_as_deliberate(tmp_path):
     """The review app lists not_found claims under "deliberate, not failure". A not_found claim
     carrying a broken citation is human_review now, so selecting that section by confidence
     put a failure under a heading telling the reviewer it isn't one."""
-    from vgpipe.report import render
+    from provenance.report import render
 
     broken = _claim("q7", src(), confidence="not_found")
     broken.sources[0].verification.status = "snippet_not_found"
@@ -4105,22 +4105,22 @@ def test_a_broken_absence_claim_is_not_listed_as_deliberate(tmp_path):
 
 
 def _candidate_run(tmp_path):
-    """A per-candidate run as `vg new-candidate` lays it out: claims and verdicts under
+    """A per-candidate run as `provenance new-candidate` lays it out: claims and verdicts under
     data/<candidate>, the page cache shared at data/cache. One cited page, cached and verified
-    before judging — `vg judgments` only gates on sources with confirmed context."""
+    before judging — `provenance judgments` only gates on sources with confirmed context."""
     from datetime import timedelta
 
     from typer.testing import CliRunner
 
-    from vgpipe import cli
-    from vgpipe.fetch import cache_path
-    from vgpipe.models import EXTRACTOR_VERSION
+    from provenance import cli
+    from provenance.fetch import cache_path
+    from provenance.models import EXTRACTOR_VERSION
 
     data, cand, s = tmp_path / "data", tmp_path / "data" / "cand", src()
     cache_path(data, s.url).write_text(
         _page(fetched_at=datetime.now(UTC) - timedelta(hours=6),
               extractor_version=EXTRACTOR_VERSION).model_dump_json())
-    # The question the claim answers: `vg build` and `vg status` check claims against it.
+    # The question the claim answers: `provenance build` and `provenance status` check claims against it.
     (data / "questions.json").write_text(json.dumps([{"id": "q1", "text": "?"}]))
     (cand / "claims").mkdir(parents=True)
     (cand / "claims" / "q1.json").write_text(
@@ -4133,11 +4133,11 @@ def _candidate_run(tmp_path):
 
 
 def _ctx(run, sid, qid="q1", cache=None):
-    """`--context <token>` for `sid` in the hand-off the claim file gives now: what `vg handoff`
-    (with the run's --cache, when judge is given one) prints beside it, and what `vg judge`
+    """`--context <token>` for `sid` in the hand-off the claim file gives now: what `provenance handoff`
+    (with the run's --cache, when judge is given one) prints beside it, and what `provenance judge`
     checks every verdict against."""
-    from vgpipe import judgments
-    from vgpipe.cli import _apply_archive_rows, _cache_root, _handed, load_claims
+    from provenance import judgments
+    from provenance.cli import _apply_archive_rows, _cache_root, _handed, load_claims
 
     run = Path(run)
     root = _cache_root(run, None if cache is None else Path(cache))
@@ -4148,8 +4148,8 @@ def _ctx(run, sid, qid="q1", cache=None):
 
 
 def _refetch_shared(data, s):
-    from vgpipe.fetch import cache_path
-    from vgpipe.models import EXTRACTOR_VERSION
+    from provenance.fetch import cache_path
+    from provenance.models import EXTRACTOR_VERSION
 
     cache_path(data, s.url).write_text(
         _page(fetched_at=datetime.now(UTC), extractor_version=EXTRACTOR_VERSION)
@@ -4157,7 +4157,7 @@ def _refetch_shared(data, s):
 
 
 def test_a_candidate_run_checks_staleness_in_the_shared_cache(tmp_path):
-    """`vg judge` stamps a verdict from the shared page cache, but the check looked the page up
+    """`provenance judge` stamps a verdict from the shared page cache, but the check looked the page up
     under the candidate dir (data/<candidate>/cache), where it normally isn't — and a missing page
     reads as "not stale". So in every per-candidate run a re-fetch into the shared cache left
     every verdict applied: a `supports` could outlive the text it judged, and nothing said so."""
@@ -4165,7 +4165,7 @@ def test_a_candidate_run_checks_staleness_in_the_shared_cache(tmp_path):
 
     from typer.testing import CliRunner
 
-    from vgpipe import cli, judgments
+    from provenance import cli, judgments
 
     data, cand, s = _candidate_run(tmp_path)
     res = CliRunner().invoke(cli.app, ["judge", "q1", s.sid, "supports", "--data", str(cand),
@@ -4185,7 +4185,7 @@ def test_a_candidate_run_checks_staleness_in_the_shared_cache(tmp_path):
     assert claim.sources[0].verification.support == "unreviewed", (
         "a verdict about the page as it was must not be applied to the page as it is")
     # Stale — and not a verifier's to close yet: the context it would be given was built from
-    # the old copy, so `vg judge` refuses until `vg verify` rebuilds it. Then it waits.
+    # the old copy, so `provenance judge` refuses until `provenance verify` rebuilds it. Then it waits.
     assert _unjudged(cand) == (0, 1, 0, 1)
     assert CliRunner().invoke(cli.app, ["verify", "--data", str(cand)]).exit_code == 0
     assert _unjudged(cand) == (1, 1, 1, 0)
@@ -4206,7 +4206,7 @@ def test_every_command_reads_verdict_pages_from_the_shared_cache_and_creates_non
     it, and the check itself forked the candidate off the shared cache it was meant to read."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli, judgments
+    from provenance import cli, judgments
 
     data, cand, s = _candidate_run(tmp_path)
     looked_in: list[Path] = []
@@ -4219,8 +4219,8 @@ def test_every_command_reads_verdict_pages_from_the_shared_cache_and_creates_non
         res = CliRunner().invoke(cli.app, [*args, "--data", str(cand)])
         assert res.exit_code == 0, (args, res.output)
         assert looked_in and set(looked_in) == {data}, (
-            f"`vg {args[0]}` looked for the judged page in {set(looked_in)}")
-        assert not (cand / "cache").exists(), f"`vg {args[0]}` created {cand / 'cache'}"
+            f"`provenance {args[0]}` looked for the judged page in {set(looked_in)}")
+        assert not (cand / "cache").exists(), f"`provenance {args[0]}` created {cand / 'cache'}"
     assert cli._cache_root(cand, None) == data
 
     # and the lookup itself, against a root with no cache at all: it creates nothing, and a
@@ -4235,7 +4235,7 @@ def test_an_explicit_cache_is_the_one_both_sides_use(tmp_path):
     verdict is stamped from one copy of a page and checked against another."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     data, cand, s = _candidate_run(tmp_path)
     moved = tmp_path / "moved"
@@ -4248,7 +4248,7 @@ def test_an_explicit_cache_is_the_one_both_sides_use(tmp_path):
     assert res.exit_code == 0, res.output
     assert _unjudged(cand, cache=moved) == (0, 1, 0, 0)
     _refetch_shared(moved, s)
-    assert _unjudged(cand, cache=moved) == (0, 1, 0, 1)   # blocked on `vg verify`
+    assert _unjudged(cand, cache=moved) == (0, 1, 0, 1)   # blocked on `provenance verify`
     res = CliRunner().invoke(cli.app, ["verify", "--data", str(cand), "--cache", str(moved)])
     assert res.exit_code == 0, res.output
     assert _unjudged(cand, cache=moved) == (1, 1, 1, 0)
@@ -4297,7 +4297,7 @@ def _server_error(request):
 
 def _seed_cache(root, **kw):
     """A good page, cached under an older extractor, so the next fetch() re-fetches it."""
-    from vgpipe.models import EXTRACTOR_VERSION
+    from provenance.models import EXTRACTOR_VERSION
 
     kw.setdefault("extractor_version", EXTRACTOR_VERSION - 1)
     page = _page(**kw)
@@ -4315,7 +4315,7 @@ def test_a_failed_refetch_never_replaces_a_good_page(tmp_path, monkeypatch, capl
     """An extractor bump re-fetches every cached page, to improve them. For a host that now
     blocks us, writing the failure over the cached page would send every source citing it to
     fetch_failed: the bump meant to fix pages would destroy them instead, silently."""
-    from vgpipe.models import EXTRACTOR_VERSION
+    from provenance.models import EXTRACTOR_VERSION
 
     good = _seed_cache(tmp_path)
     hits = _serve(monkeypatch, handler)
@@ -4351,7 +4351,7 @@ def test_a_miss_on_a_kept_page_blames_the_page_not_the_citation(tmp_path, monkey
                       rules=RULES).verification
     assert v.status == "snippet_not_found"
     assert "snippet does not appear" in v.reason and "older extraction" in v.reason
-    # `vg verify` prints only the head of a reason, so the note leads.
+    # `provenance verify` prints only the head of a reason, so the note leads.
     assert "re-fetch failed" in v.reason[:70]
 
 
@@ -4381,7 +4381,7 @@ def test_a_kept_page_is_not_refetched_on_every_run(tmp_path, monkeypatch, caplog
 def test_a_failed_refresh_of_a_current_page_keeps_warning(tmp_path, monkeypatch, caplog):
     """A page already on the current extractor never re-fetches on its own, so after a failed
     --refresh the recorded failure is the latest word on it: say so on later runs too."""
-    from vgpipe.models import EXTRACTOR_VERSION
+    from provenance.models import EXTRACTOR_VERSION
 
     good = _seed_cache(tmp_path, extractor_version=EXTRACTOR_VERSION)
     hits = _serve(monkeypatch, _server_error)
@@ -4395,12 +4395,12 @@ def test_a_failed_refresh_of_a_current_page_keeps_warning(tmp_path, monkeypatch,
     assert "HTTP 500" in caplog.text and "older extraction" not in caplog.text
 
 
-def test_vg_fetch_says_when_a_refresh_failed(tmp_path, monkeypatch, capsys):
-    """`vg fetch --refresh` is the retry the warning suggests. A kept page carries its OLD
+def test_provenance_fetch_says_when_a_refresh_failed(tmp_path, monkeypatch, capsys):
+    """`provenance fetch --refresh` is the retry the warning suggests. A kept page carries its OLD
     status and text, so a failed retry would otherwise print exactly like a success."""
     import re
 
-    from vgpipe import cli
+    from provenance import cli
 
     good = _seed_cache(tmp_path)
     _serve(monkeypatch, _bot_wall)
@@ -4415,7 +4415,7 @@ def test_a_thinner_good_refetch_still_replaces(tmp_path, monkeypatch):
     block a bump from the pages it was meant to fix, with no --refresh override."""
     import httpx
 
-    from vgpipe.models import EXTRACTOR_VERSION
+    from provenance.models import EXTRACTOR_VERSION
 
     good = _seed_cache(tmp_path)
     _serve(monkeypatch, lambda request: httpx.Response(200, html=(
@@ -4430,7 +4430,7 @@ def test_a_thinner_good_refetch_still_replaces(tmp_path, monkeypatch):
 def test_the_next_extractor_bump_retries_a_kept_page(tmp_path, monkeypatch):
     import httpx
 
-    from vgpipe.models import EXTRACTOR_VERSION, RefetchFailure
+    from provenance.models import EXTRACTOR_VERSION, RefetchFailure
 
     good = _seed_cache(tmp_path, extractor_version=EXTRACTOR_VERSION - 2)
     good.refetch_failure = RefetchFailure(attempted_at=datetime.now(UTC), status=403,
@@ -4462,8 +4462,8 @@ def test_a_verdict_on_a_kept_page_still_applies(tmp_path, monkeypatch):
     """A kept page keeps its older extractor version and its text. A verdict stamped with that
     version is about exactly that text, so it must apply — comparing it to the CURRENT
     extractor instead made it stale on arrival, and the source could never be judged."""
-    from vgpipe import judgments
-    from vgpipe.models import EXTRACTOR_VERSION
+    from provenance import judgments
+    from provenance.models import EXTRACTOR_VERSION
 
     good = _seed_cache(tmp_path)
     _serve(monkeypatch, _bot_wall)
@@ -4532,7 +4532,7 @@ def test_an_image_only_pdf_is_a_missing_text_layer_not_a_bad_citation(tmp_path, 
     assert marker.verification.status == "snippet_not_found"
     assert "page locator" in marker.verification.reason
 
-    # Read-time, so `vg build` classifies the same cached page the same way, offline — and so
+    # Read-time, so `provenance build` classifies the same cached page the same way, offline — and so
     # does every page cached before this existed, with no extractor bump.
     forged = _pdf_src()
     forged.verification.status = "verified"
@@ -4550,7 +4550,7 @@ def test_a_page_with_only_whitespace_is_not_a_missing_snippet(stub, tmp_path):
 def test_an_image_only_snapshot_upgrades_nothing(stub, tmp_path):
     """The archive re-check must use the same test for "is there text": a snippet matching
     one of our own page markers would otherwise verify against a scan of anything."""
-    from vgpipe.verify import verify_against_archive
+    from provenance.verify import verify_against_archive
 
     url = "https://ocregister.com/x.pdf"
     snap = f"https://web.archive.org/web/2026/{url}"
@@ -4571,7 +4571,7 @@ def test_an_image_only_snapshot_upgrades_nothing(stub, tmp_path):
 def test_a_scanned_snapshot_is_unconfirmed_not_unusable(stub, tmp_path):
     """Nothing to search in a capture is no evidence it isn't the page. "The snippet is not in
     the snapshot" would call a scan of the right document junk."""
-    from vgpipe.verify import apply_archive
+    from provenance.verify import apply_archive
 
     records = {PAYWALLED: {"snapshot": SNAP, "error": None}}
     stub[SNAP] = _page(url=SNAP, text=MARKERS_ONLY, is_pdf=True, content_type="application/pdf")
@@ -4580,12 +4580,12 @@ def test_a_scanned_snapshot_is_unconfirmed_not_unusable(stub, tmp_path):
     assert "no text layer" in out.archive_note
 
 
-def test_vg_check_on_an_image_only_pdf_does_not_say_do_not_cite(tmp_path, monkeypatch):
-    """Researchers self-check with `vg check`. "Not on the page. Do not cite this." about a
+def test_provenance_check_on_an_image_only_pdf_does_not_say_do_not_cite(tmp_path, monkeypatch):
+    """Researchers self-check with `provenance check`. "Not on the page. Do not cite this." about a
     scanned filing is the same false verdict, one step earlier."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     _image_only_pdf(monkeypatch)
     res = CliRunner().invoke(cli.app, ["check", "https://lao.ca.gov/r.pdf",
@@ -4595,18 +4595,18 @@ def test_vg_check_on_an_image_only_pdf_does_not_say_do_not_cite(tmp_path, monkey
     assert "no text layer" in out
     assert "Do not cite" not in out
 
-    # `vg fetch` shows the markers as if they were text; it must say what they mean.
+    # `provenance fetch` shows the markers as if they were text; it must say what they mean.
     res = CliRunner().invoke(cli.app, ["fetch", "https://lao.ca.gov/r.pdf",
                                        "--cache", str(tmp_path)])
     assert "no text layer" in " ".join(res.output.split())
 
 
-def test_vg_check_triages_a_page_as_vg_verify_does(tmp_path, monkeypatch):
-    """`vg check` runs the verifier's own check. A dead URL is a failure (and exits non-zero,
+def test_provenance_check_triages_a_page_as_provenance_verify_does(tmp_path, monkeypatch):
+    """`provenance check` runs the verifier's own check. A dead URL is a failure (and exits non-zero,
     so it can't read like the harmless scan case); a paywall is flagged, never failed."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     def check(url, snippet="The Board voted to approve"):
         res = CliRunner().invoke(cli.app, ["check", url, snippet, "--cache", str(tmp_path)])
@@ -4621,8 +4621,8 @@ def test_vg_check_triages_a_page_as_vg_verify_does(tmp_path, monkeypatch):
     code, out = check("https://ocregister.com/x")
     assert code == 0 and "could_not_verify_paywall" in out
 
-    # The verifier's snippet rules too: this one is on the page, and `vg verify` still fails
-    # it, so `vg check` must not say OK. It needs no fetch to say so.
+    # The verifier's snippet rules too: this one is on the page, and `provenance verify` still fails
+    # it, so `provenance check` must not say OK. It needs no fetch to say so.
     hits = _serve(monkeypatch, _raise)
     cached = _page(text="The Board  voted to approve the lease.",
                    extractor_version=fetch_mod.EXTRACTOR_VERSION)
@@ -4633,7 +4633,7 @@ def test_vg_check_triages_a_page_as_vg_verify_does(tmp_path, monkeypatch):
 
 
 def test_has_text_ignores_only_our_markers():
-    from vgpipe.fetch import has_text
+    from provenance.fetch import has_text
 
     assert not has_text(_page(text=MARKERS_ONLY))
     assert not has_text(_page(text=" \n\t "))
@@ -4676,7 +4676,7 @@ def test_a_snippet_of_our_own_page_marker_does_not_verify(stub, tmp_path):
         s = verify_source(_pdf_src(snippet=snippet), tmp_path, rules=RULES)
         assert s.verification.status == "snippet_not_found", snippet
 
-    # `vg build` re-derives it offline: a claim file saying `verified` does not ride through.
+    # `provenance build` re-derives it offline: a claim file saying `verified` does not ride through.
     forged = _pdf_src(snippet="[[page 7]]")
     forged.verification.status = "verified"
     assert revalidate_from_cache(forged, tmp_path, rules=RULES).verification.status == \
@@ -4685,7 +4685,7 @@ def test_a_snippet_of_our_own_page_marker_does_not_verify(stub, tmp_path):
 
 def test_a_marker_snippet_upgrades_no_snapshot(stub, tmp_path):
     """The archive re-check searches with the same locator, so a marker can't verify there."""
-    from vgpipe.verify import verify_against_archive
+    from provenance.verify import verify_against_archive
 
     url = "https://ocregister.com/x.pdf"
     snap = f"https://web.archive.org/web/2026/{url}"
@@ -4699,10 +4699,10 @@ def test_a_marker_snippet_upgrades_no_snapshot(stub, tmp_path):
         assert verify_against_archive(s, tmp_path).verification.status == want, snippet
 
 
-def test_vg_check_refuses_a_marker_snippet(tmp_path, monkeypatch):
+def test_provenance_check_refuses_a_marker_snippet(tmp_path, monkeypatch):
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     hits = _serve(monkeypatch, _raise)
     res = CliRunner().invoke(cli.app, ["check", "https://lao.ca.gov/r.pdf", "[[page 7]]",
@@ -4717,7 +4717,7 @@ def test_check_claim_prints_the_marker_it_refused(tmp_path, monkeypatch):
     as '[]' and the reason as "snippet contains [], a page locator" — naming nothing."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     _serve(monkeypatch, _raise)
     path = tmp_path / "q1.json"
@@ -4742,7 +4742,7 @@ def _partly_scanned(**kw):
 
 
 def test_pages_without_text_is_has_text_page_by_page():
-    from vgpipe.fetch import has_text, pages_without_text
+    from provenance.fetch import has_text, pages_without_text
 
     assert pages_without_text(_partly_scanned()) == [2, 3, 4, 6]
     assert pages_without_text(_page(text=MARKERS_ONLY, is_pdf=True)) == [1, 2]
@@ -4784,7 +4784,7 @@ def test_a_quote_on_a_scanned_page_of_a_partly_scanned_pdf_is_not_fabricated(stu
                        rules=RULES)
     assert ok.verification.status == "verified" and ok.page == 1
 
-    # Read-time, so `vg build` classifies the cached page the same way, offline.
+    # Read-time, so `provenance build` classifies the cached page the same way, offline.
     forged = _pdf_src(snippet=quote, page=3)
     forged.verification.status = "verified"
     out = revalidate_from_cache(forged, tmp_path, rules=RULES)
@@ -4808,12 +4808,12 @@ def test_a_paywall_phrase_on_a_typed_page_does_not_hide_a_scanned_one(stub, tmp_
     assert s.verification.status == "could_not_verify_paywall"
 
 
-def test_vg_fetch_shows_the_page_markers(tmp_path, monkeypatch):
-    """Researchers pick `page` from what `vg fetch` prints. Rich read "[[page 1]]" as markup and
+def test_provenance_fetch_shows_the_page_markers(tmp_path, monkeypatch):
+    """Researchers pick `page` from what `provenance fetch` prints. Rich read "[[page 1]]" as markup and
     printed "[]", and dropped "[sic]" from the text, so a snippet copied from it was wrong."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     _serve(monkeypatch, _raise)
     # Markup, an emoji shortcode, and a line longer than the 80 columns Rich wraps at.
@@ -4831,19 +4831,19 @@ def test_vg_fetch_shows_the_page_markers(tmp_path, monkeypatch):
 
 def test_a_long_page_list_is_capped():
     """A duplex scan with every back page blank would put 150 numbers in every miss reason."""
-    from vgpipe.verify import page_list
+    from provenance.verify import page_list
 
     assert page_list([3]) == "page 3"
     assert page_list([2, 3, 4, 6]) == "pages 2–4, 6"
     assert page_list(list(range(2, 301, 2))) == "pages 2, 4, 6, 8, 10, 12, 14, 16 and 142 more"
 
 
-def test_vg_check_takes_the_page_a_quote_is_on(tmp_path, monkeypatch):
-    """`vg check` triages as `vg verify` does, and `vg verify` reads the source's `page` — so
+def test_provenance_check_takes_the_page_a_quote_is_on(tmp_path, monkeypatch):
+    """`provenance check` triages as `provenance verify` does, and `provenance verify` reads the source's `page` — so
     without --page a researcher's self-check would fail a quote the verifier only flags."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     _serve(monkeypatch, _raise)
     cached = _partly_scanned(extractor_version=fetch_mod.EXTRACTOR_VERSION)
@@ -4863,7 +4863,7 @@ def test_vg_check_takes_the_page_a_quote_is_on(tmp_path, monkeypatch):
 def test_a_partly_scanned_snapshot_is_unconfirmed_when_the_quote_is_on_a_scan(stub, tmp_path):
     """The snapshot check's own miss: "the snippet is not in the snapshot" would call a capture
     of the right document junk because the cited page is a scan."""
-    from vgpipe.verify import apply_archive
+    from provenance.verify import apply_archive
 
     records = {PAYWALLED: {"snapshot": SNAP, "error": None}}
     stub[SNAP] = _page(url=SNAP, text=PARTLY_SCANNED, is_pdf=True,
@@ -4886,7 +4886,7 @@ def test_a_partly_scanned_snapshot_keeps_its_link_when_page_is_unset(stub, tmp_p
     capture with text-less pages and no `page` was archive_unusable, which drops the link:
     the same false verdict again, in the archive path. Unconfirmed vouches for nothing, so unlike
     check_page() there is no fabricated-quote check to protect by letting the miss stand."""
-    from vgpipe.verify import apply_archive, verify_against_archive
+    from provenance.verify import apply_archive, verify_against_archive
 
     url = "https://ocregister.com/x.pdf"
     snap = f"https://web.archive.org/web/2026/{url}"
@@ -4942,7 +4942,7 @@ def test_a_404_at_a_pdf_url_says_404(tmp_path, monkeypatch):
 
 
 def test_the_build_notes_a_page_kept_after_the_last_verify(tmp_path, monkeypatch):
-    """`vg fetch --refresh` can keep a page after the last `vg verify`, and `vg build` only
+    """`provenance fetch --refresh` can keep a page after the last `provenance verify`, and `provenance build` only
     revalidates from the cache. The green row must still say its page could not be
     re-fetched — once, however many builds run — and stop saying so once a re-fetch works."""
     import httpx
@@ -4971,8 +4971,8 @@ def test_the_build_notes_a_page_kept_after_the_last_verify(tmp_path, monkeypatch
 
 
 def test_archive_verification_notes_a_kept_snapshot(stub, tmp_path):
-    from vgpipe.models import RefetchFailure
-    from vgpipe.verify import verify_against_archive
+    from provenance.models import RefetchFailure
+    from provenance.verify import verify_against_archive
 
     snap = "https://web.archive.org/web/2026/https://ocregister.com/x"
     stub[snap] = _page(url=snap, final_url=snap, refetch_failure=RefetchFailure(
@@ -4991,7 +4991,7 @@ def test_a_concurrent_good_refetch_is_not_undone(tmp_path, monkeypatch):
     under the current extractor — so it would never be retried."""
     import httpx
 
-    from vgpipe.models import EXTRACTOR_VERSION
+    from provenance.models import EXTRACTOR_VERSION
 
     good = _seed_cache(tmp_path)
     newer = _page(text=PAGE_TEXT + "\nAdded by the other run.", extractor_version=EXTRACTOR_VERSION,
@@ -5018,18 +5018,18 @@ def test_cache_writes_leave_no_partial_file(tmp_path, monkeypatch):
         fetch_mod.cache_path(tmp_path, good.url).name]
 
 
-def test_vg_check_says_when_a_page_was_kept(tmp_path, monkeypatch, capsys):
-    """`vg check` is the researcher's self-check. On a page kept under an older extraction,
+def test_provenance_check_says_when_a_page_was_kept(tmp_path, monkeypatch, capsys):
+    """`provenance check` is the researcher's self-check. On a page kept under an older extraction,
     "Not on the page. Do not cite this." alone would have them drop a real citation."""
     import re
 
     import typer
 
-    from vgpipe import cli
+    from provenance import cli
 
     good = _seed_cache(tmp_path)
     _serve(monkeypatch, _bot_wall)
-    with pytest.raises(typer.Exit):   # a miss is a failure, and `vg check` exits non-zero
+    with pytest.raises(typer.Exit):   # a miss is a failure, and `provenance check` exits non-zero
         cli.check(good.url, "a sentence the old extraction dropped", data=tmp_path,
                   cache=tmp_path)
     out = " ".join(re.sub(r"\x1b\[[0-9;]*m", "", capsys.readouterr().out).split())  # rich wraps
@@ -5054,11 +5054,11 @@ def _paywalled(**kw):
 
 
 def _run_archive(tmp_path, monkeypatch, sources, saved):
-    """Run `vg archive` over one claim with Save Page Now answering `saved` (url → snapshot;
+    """Run `provenance archive` over one claim with Save Page Now answering `saved` (url → snapshot;
     a missing url is a failed save). Returns the written sources."""
     import json
 
-    from vgpipe import cli
+    from provenance import cli
 
     (tmp_path / "claims").mkdir(exist_ok=True)
     (tmp_path / "claims" / "q1.json").write_text(json.dumps(
@@ -5079,7 +5079,7 @@ def test_snapshot_must_be_a_capture_of_the_cited_url():
     """The host pin says who serves a snapshot, not which page it captured. Only the scheme,
     a default port, one trailing slash, host case and the fragment fold; anything else is a
     different page."""
-    from vgpipe.archive import snapshot_of
+    from provenance.archive import snapshot_of
 
     cited = "https://ocregister.com/politics/x?id=7"
     for same in ("https://web.archive.org/web/2026/https://ocregister.com/politics/x?id=7",
@@ -5112,7 +5112,7 @@ def test_snapshot_must_be_a_capture_of_the_cited_url():
 def test_snapshot_of_a_different_url_never_verifies(stub, tmp_path):
     """Anyone can Save Page Now a page holding their own quote. A snapshot of some
     other URL must never earn verified_via_archive, and a claimed one must not survive build."""
-    from vgpipe.verify import verify_against_archive
+    from provenance.verify import verify_against_archive
 
     stub[FORGED] = _page(url=FORGED)          # the attacker's page carries the snippet
     stub[PAYWALLED] = _gated(PAYWALLED)
@@ -5128,7 +5128,7 @@ def test_snapshot_of_a_different_url_never_verifies(stub, tmp_path):
 
 def test_only_a_served_real_page_can_verify_via_archive(stub, tmp_path, monkeypatch):
     """An error page or a bot check can echo the snippet. Neither is the article."""
-    from vgpipe.verify import verify_against_archive
+    from provenance.verify import verify_against_archive
 
     quote = "Blocked: she opposed the Harbor Levy Act"
     for junk in (_page(url=SNAP, status=404, text=quote),
@@ -5141,7 +5141,7 @@ def test_only_a_served_real_page_can_verify_via_archive(stub, tmp_path, monkeypa
 
 def test_archive_rechecks_a_row_verified_against_an_earlier_snapshot(stub, tmp_path,
                                                                      monkeypatch, capsys):
-    """verified_via_archive was earned against the snapshot recorded then. When `vg archive`
+    """verified_via_archive was earned against the snapshot recorded then. When `provenance archive`
     replaces it with one that no longer holds the quote, the status must not ride along."""
     import re
 
@@ -5171,7 +5171,7 @@ def test_archive_rechecks_a_row_verified_against_an_earlier_snapshot(stub, tmp_p
 
 
 def test_agent_authored_archive_url_is_discarded_when_the_save_fails(stub, tmp_path, monkeypatch):
-    """cal-access always fails Save Page Now, and `vg archive` used to keep whatever
+    """cal-access always fails Save Page Now, and `provenance archive` used to keep whatever
     archive_url the claim file carried — then verify the paywalled quote against it."""
     fetched: list[str] = []
 
@@ -5179,7 +5179,7 @@ def test_agent_authored_archive_url_is_discarded_when_the_save_fails(stub, tmp_p
         fetched.append(url)
         return stub.get(url, _page(url=url, status=404, text="", error="not found"))
 
-    monkeypatch.setattr("vgpipe.verify.fetch", tracking_fetch)
+    monkeypatch.setattr("provenance.verify.fetch", tracking_fetch)
     stub[FORGED] = _page(url=FORGED)
     [out] = _run_archive(tmp_path, monkeypatch, [{
         "url": PAYWALLED, "publisher": "OC Register", "author": "R",
@@ -5197,7 +5197,7 @@ def test_bot_check_snapshot_is_unusable(stub, tmp_path, monkeypatch):
     """SPN reported success on a cal-access page and captured the bot check. A junk
     snapshot is worse than none on a row whose live page can't be read — it looks like
     evidence — so it is badged, named, and not offered as a link."""
-    from vgpipe.verify import bot_check
+    from provenance.verify import bot_check
 
     url = "https://cal-access.sos.ca.gov/PDFGen/pdfgen.prg?filingid=9990013&amendid=0"
     snap = f"https://web.archive.org/web/20260814093512/{url}"
@@ -5227,7 +5227,7 @@ def test_bot_check_snapshot_is_unusable(stub, tmp_path, monkeypatch):
 
 
 def test_good_snapshot_is_archived(stub, tmp_path, monkeypatch):
-    from vgpipe.archive import load_records
+    from provenance.archive import load_records
 
     stub[SNAP] = _page(url=SNAP)
     stub[PAYWALLED] = _gated(PAYWALLED)
@@ -5245,7 +5245,7 @@ def test_good_snapshot_is_archived(stub, tmp_path, monkeypatch):
 def test_snapshot_the_wayback_machine_would_not_serve_is_unchecked_not_junk(stub, tmp_path):
     """A timeout or a 503 from the Wayback Machine says nothing about what the capture holds.
     Calling it unusable would hide a possibly good link for a reason that isn't about it."""
-    from vgpipe.verify import apply_archive
+    from provenance.verify import apply_archive
 
     records = {PAYWALLED: {"snapshot": SNAP, "error": None}}
     for down in (_page(url=SNAP, status=0, text="", error="ConnectTimeout: timed out"),
@@ -5283,8 +5283,8 @@ def test_paywalled_row_whose_snapshot_lacks_the_snippet_stays_unverified(stub, t
 def test_query_citation_snapshot_is_compared_with_the_live_page(stub, tmp_path):
     """A query citation's snippet describes the lookup and need not be on the page, so its
     snapshot is compared with the page the pipeline fetched live."""
-    from vgpipe.models import QueryCitation
-    from vgpipe.verify import apply_archive
+    from provenance.models import QueryCitation
+    from provenance.verify import apply_archive
 
     url = "https://cal-access.sos.ca.gov/Campaign/Committees/Detail.aspx?id=9990001"
     snap = f"https://web.archive.org/web/2026/{url}"
@@ -5332,7 +5332,7 @@ def test_query_citation_snapshot_is_compared_with_the_live_page(stub, tmp_path):
 def test_an_earlier_capture_is_never_recorded_as_a_fresh_save(monkeypatch):
     """save() falls back to the closest existing capture when the save fails; that must stay
     visible, or a stale capture reads as the fresh snapshot CLAUDE.md insists on."""
-    from vgpipe import archive as arch
+    from provenance import archive as arch
 
     old = "https://web.archive.org/web/2019/https://ocregister.com/x"
 
@@ -5348,13 +5348,13 @@ def test_an_earlier_capture_is_never_recorded_as_a_fresh_save(monkeypatch):
     assert err and "earlier capture" in err
 
 
-def test_vg_archive_survives_damage_and_interruption(stub, tmp_path, monkeypatch):
-    """The records file is rebuilt by `vg archive`, so a damaged one must not stop it; and a
+def test_provenance_archive_survives_damage_and_interruption(stub, tmp_path, monkeypatch):
+    """The records file is rebuilt by `provenance archive`, so a damaged one must not stop it; and a
     run interrupted partway keeps what it already saved."""
     import json
 
-    from vgpipe import archive as arch
-    from vgpipe import cli
+    from provenance import archive as arch
+    from provenance import cli
 
     (tmp_path / "archives.json").write_text("{not json")
     stub[SNAP] = _page(url=SNAP)
@@ -5392,8 +5392,8 @@ def test_vg_archive_survives_damage_and_interruption(stub, tmp_path, monkeypatch
 
 def test_a_cached_wayback_failure_is_retried_not_final(stub, tmp_path, monkeypatch):
     """fetch() caches whatever came back. A timeout cached for a snapshot must not decide it
-    for good: when a save fails, `vg archive` keeps the earlier snapshot and checks it again."""
-    from vgpipe.verify import apply_archive
+    for good: when a save fails, `provenance archive` keeps the earlier snapshot and checks it again."""
+    from provenance.verify import apply_archive
 
     calls: list[bool] = []
     good = _page(url=SNAP)
@@ -5402,7 +5402,7 @@ def test_a_cached_wayback_failure_is_retried_not_final(stub, tmp_path, monkeypat
         calls.append(refresh)
         return good
 
-    monkeypatch.setattr("vgpipe.verify.fetch", fetch)
+    monkeypatch.setattr("provenance.verify.fetch", fetch)
     stub[SNAP] = _page(url=SNAP, status=0, text="", error="ReadTimeout")   # what the cache holds
     out = apply_archive(src(url=PAYWALLED), {PAYWALLED: {"snapshot": SNAP}}, tmp_path,
                         fetch_missing=True)
@@ -5411,12 +5411,12 @@ def test_a_cached_wayback_failure_is_retried_not_final(stub, tmp_path, monkeypat
 
 
 def test_verify_rerun_keeps_an_archive_verification(stub, tmp_path):
-    """verify_source resets a paywalled row; with its snapshot cached, `vg verify` re-earns
-    verified_via_archive rather than dropping it until the next (slow) `vg archive`."""
+    """verify_source resets a paywalled row; with its snapshot cached, `provenance verify` re-earns
+    verified_via_archive rather than dropping it until the next (slow) `provenance archive`."""
     import json
 
-    from vgpipe import archive as arch
-    from vgpipe import cli
+    from provenance import archive as arch
+    from provenance import cli
 
     stub[PAYWALLED] = _page(url=PAYWALLED, status=403, text="", paywall_suspected=True)
     stub[SNAP] = _page(url=SNAP)
@@ -5435,15 +5435,15 @@ def test_verify_rerun_keeps_an_archive_verification(stub, tmp_path):
 
 def test_review_app_badges_an_unusable_snapshot_and_hides_an_unrecorded_one(tmp_path,
                                                                            monkeypatch, capsys):
-    """The badge is the point of the check; and `vg build` must not render an archive link
+    """The badge is the point of the check; and `provenance build` must not render an archive link
     the pipeline never recorded, whatever the claim file says."""
     import json
 
-    from vgpipe import archive as arch
-    from vgpipe import cli
+    from provenance import archive as arch
+    from provenance import cli
 
     pages = {SNAP: _page(url=SNAP, title=None, text=INCAPSULA)}
-    monkeypatch.setattr("vgpipe.verify.load_cached", lambda root, url: pages.get(url))
+    monkeypatch.setattr("provenance.verify.load_cached", lambda root, url: pages.get(url))
     (tmp_path / "claims").mkdir()
     (tmp_path / "claims" / "q1.json").write_text(json.dumps({
         "question_id": "q1", "question": "?", "answer": "a",
@@ -5459,7 +5459,7 @@ def test_review_app_badges_an_unusable_snapshot_and_hides_an_unrecorded_one(tmp_
     import re
 
     said = " ".join(re.sub(r"\x1b\[[0-9;]*m", "", capsys.readouterr().out).split())
-    assert "1 source(s) carry an archive_url no `vg archive` run recorded" in said, (
+    assert "1 source(s) carry an archive_url no `provenance archive` run recorded" in said, (
         "dropping it is said out loud")
     html = (tmp_path / "out" / "review.html").read_text()
     assert "snapshot unusable" in html and "Incapsula" in html
@@ -5473,7 +5473,7 @@ def test_no_command_reads_an_archive_field_from_a_claim_file(tmp_path):
     command that forgot apply_archive() shows none rather than the file's."""
     import json
 
-    from vgpipe.cli import load_claims
+    from provenance.cli import load_claims
 
     (tmp_path / "q1.json").write_text(json.dumps({
         "question_id": "q1", "question": "?", "answer": "a", "sources": [{
@@ -5494,7 +5494,7 @@ def test_verify_says_when_it_drops_unrecorded_snapshots(stub, tmp_path, capsys):
     import json
     import re
 
-    from vgpipe import cli
+    from provenance import cli
 
     (tmp_path / "claims").mkdir()
     (tmp_path / "claims" / "q1.json").write_text(json.dumps({
@@ -5504,12 +5504,12 @@ def test_verify_says_when_it_drops_unrecorded_snapshots(stub, tmp_path, capsys):
             "archive_url": SNAP}]}))
     cli.verify(data=tmp_path)
     said = " ".join(re.sub(r"\x1b\[[0-9;]*m", "", capsys.readouterr().out).split())
-    assert "1 source(s) carry an archive_url no `vg archive` run recorded" in said
+    assert "1 source(s) carry an archive_url no `provenance archive` run recorded" in said
 
 
 def test_archive_output_survives_markup_in_a_cited_url(stub, tmp_path, monkeypatch):
     """Cited URLs, publishers and notes are agent-authored, and Rich reads [..] as markup: a
-    URL holding `[/b]` crashed `vg archive` after the records were saved but before any claim
+    URL holding `[/b]` crashed `provenance archive` after the records were saved but before any claim
     file got its results."""
     url = "https://x.example/a[/b]"
     [out] = _run_archive(tmp_path, monkeypatch, [{
@@ -5545,7 +5545,7 @@ def test_verified_via_archive_needs_a_live_page_that_is_actually_gated(stub, tmp
 
 def test_archive_does_not_upgrade_a_paywall_status_the_live_page_contradicts(stub, tmp_path,
                                                                              monkeypatch):
-    """`vg archive` loads trusted, so a could_not_verify_paywall written into the claim file
+    """`provenance archive` loads trusted, so a could_not_verify_paywall written into the claim file
     reached verify_against_archive, which upgraded it from the snapshot without asking
     whether the live page is gated at all."""
     stub[PAYWALLED] = _page(url=PAYWALLED, text=REMOVED)
@@ -5562,14 +5562,14 @@ def test_a_failed_save_keeps_our_snapshot_over_the_fallback_capture(stub, tmp_pa
     """When SPN fails, save() hands back the closest existing capture. Nothing has checked
     it, and it can be another URL's (a www. variant, which the target check refuses), so it
     must not replace a snapshot the pipeline saved and checked itself."""
-    from vgpipe import archive as arch
+    from provenance import archive as arch
 
     www = "https://web.archive.org/web/2027/https://www.ocregister.com/x"
     stub[SNAP] = _page(url=SNAP)
     stub[PAYWALLED] = _gated(PAYWALLED)
     arch.save_records(tmp_path, {PAYWALLED: {"snapshot": SNAP, "error": None}})
 
-    from vgpipe import cli
+    from provenance import cli
 
     def fallback(urls, *, delay=3.0, progress=None):
         for u in urls:
@@ -5602,8 +5602,8 @@ def test_a_failed_save_replaces_our_snapshot_once_it_is_known_junk(stub, tmp_pat
     known junk — and still kept when there is no fallback, so its badge and note survive."""
     import json
 
-    from vgpipe import archive as arch
-    from vgpipe import cli
+    from provenance import archive as arch
+    from provenance import cli
 
     older = f"https://web.archive.org/web/2019/{PAYWALLED}"
     stub[SNAP] = _page(url=SNAP, title=None, text=INCAPSULA)   # what SPN captured last time
@@ -5649,7 +5649,7 @@ def test_a_snapshot_is_judged_by_where_its_fetch_ended_up(stub, tmp_path):
     """Fetches follow redirects, and the Wayback Machine redirects to the nearest capture,
     which replays whatever that capture recorded — including a redirect to another page. A
     snapshot URL naming the cited page proves nothing about the page that came back."""
-    from vgpipe.verify import apply_archive, verify_against_archive
+    from provenance.verify import apply_archive, verify_against_archive
 
     elsewhere = "https://web.archive.org/web/20260101000000/https://ocregister.com/subscribe"
     stub[PAYWALLED] = _gated(PAYWALLED)
@@ -5678,8 +5678,8 @@ def _judged(root, s, *, page_at=None, version=None, judged_at=None):
     optionally back-date when it was judged."""
     import json
 
-    from vgpipe import judgments
-    from vgpipe.models import EXTRACTOR_VERSION
+    from provenance import judgments
+    from provenance.models import EXTRACTOR_VERSION
 
     judgments.record(root, "q1", s.sid, "supports", "fine",
                      page_fetched_at="" if page_at is None else page_at,
@@ -5697,8 +5697,8 @@ def test_a_stamped_verdict_whose_page_is_gone_is_stale(tmp_path):
     """`is_stale()` returned "" as soon as the page lookup came back empty, so a deleted page,
     a moved or mistyped cache root, or a page file that no longer parsed each applied the
     verdict with no comparison behind it. Nothing to compare against is not evidence of fresh."""
-    from vgpipe import judgments
-    from vgpipe.fetch import cache_path
+    from provenance import judgments
+    from provenance.fetch import cache_path
 
     s = src()
     _cache_judged_page(tmp_path, s.url)
@@ -5718,10 +5718,10 @@ def test_a_stamped_verdict_whose_page_is_gone_is_stale(tmp_path):
         assert claim.sources[0].verification.support == "unreviewed", gone
 
 
-def test_vg_judgments_counts_a_verdict_whose_page_is_gone_as_stale(tmp_path):
+def test_provenance_judgments_counts_a_verdict_whose_page_is_gone_as_stale(tmp_path):
     """The gate has to agree with build: a stamped `supports` whose page has left the cache is
     stale, so it is counted as needing a verdict rather than as done."""
-    from vgpipe.fetch import cache_path
+    from provenance.fetch import cache_path
 
     data = _judgments_fixture(tmp_path)
     assert _unjudged(data, "q2") == (1, 2, 1, 0)
@@ -5732,7 +5732,7 @@ def test_vg_judgments_counts_a_verdict_whose_page_is_gone_as_stale(tmp_path):
     _, out = _judgments_output(data, "--question-id", "q2")
     assert "2 verdict(s) no longer describe what they judged" in out
     assert "has no cached page to check against" in out, out
-    # and with no page, revalidation has no context either: it waits on `vg verify`, not on a
+    # and with no page, revalidation has no context either: it waits on `provenance verify`, not on a
     # verifier, so it is blocked rather than in the count
     assert _unjudged(data, "q2") == (1, 2, 1, 1)
 
@@ -5743,8 +5743,8 @@ def test_page_times_are_compared_as_times_not_text(tmp_path):
     judged — a merged stray, a restored backup — is a different copy too."""
     from datetime import timedelta
 
-    from vgpipe import judgments
-    from vgpipe.fetch import cache_path
+    from provenance import judgments
+    from provenance.fetch import cache_path
 
     s = src()
     fetched = datetime(2026, 9, 1, 12, 0, 0, tzinfo=UTC)
@@ -5771,8 +5771,8 @@ def test_a_legacy_unstamped_verdict_is_checked_against_when_it_was_judged(tmp_pa
     no later is the one that was cached then; one fetched after is not."""
     from datetime import timedelta
 
-    from vgpipe import judgments
-    from vgpipe.fetch import cache_path
+    from provenance import judgments
+    from provenance.fetch import cache_path
 
     s = src()
     judged = datetime(2026, 8, 22, 18, 0, 0, tzinfo=UTC)
@@ -5806,8 +5806,8 @@ def test_a_query_citation_verdict_needs_no_page(tmp_path, monkeypatch):
     """A query citation has no page by design, so "no page" must not make its verdict stale:
     what it judged is the query's result, which build re-runs every time. (What does make it
     stale is another query definition, so this one is stamped with the current one.)"""
-    from vgpipe import judgments, queries
-    from vgpipe.models import QueryCitation
+    from provenance import judgments, queries
+    from provenance.models import QueryCitation
 
     monkeypatch.setitem(queries.REGISTRY, "test.total", queries.Query(
         lambda root, **kw: queries.QueryResult(value=12345.0), ("filer_id",), "test", 1))
@@ -5819,15 +5819,15 @@ def test_a_query_citation_verdict_needs_no_page(tmp_path, monkeypatch):
     assert claim.sources[0].verification.support == "supports"
 
 
-# --- `vg judge` refuses a verdict nothing would read --------------------------------------
+# --- `provenance judge` refuses a verdict nothing would read --------------------------------------
 
 
-def _vg(*args):
+def _provenance(*args):
     import re
 
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     width = cli.con.width
     cli.con.width = 10_000   # rich folds a long tmp path mid-word at 80 columns
@@ -5845,18 +5845,18 @@ def _shard_files(run):
 
 
 def test_judge_refuses_a_question_id_no_claim_has(tmp_path):
-    """`vg judge q07 <sid>` for claim q7 wrote judgments/q07.json and printed success: a shard
+    """`provenance judge q07 <sid>` for claim q7 wrote judgments/q07.json and printed success: a shard
     nothing reads, and a judgment pass that looks done when it isn't. On a case-insensitive
-    disk `Q1` is worse — build reads Q1.json as q1.json while `vg judgments` misses it — so the
+    disk `Q1` is worse — build reads Q1.json as q1.json while `provenance judgments` misses it — so the
     id must match a claim's exactly, case included."""
     _, cand, s = _candidate_run(tmp_path)
     for typo in ("q01", "Q1"):
-        code, out = _vg("judge", typo, s.sid, "supports", "--data", cand)
+        code, out = _provenance("judge", typo, s.sid, "supports", "--data", cand)
         assert code == 1 and f"no claim has question id {typo}" in out, out
         assert "did you mean q1?" in out, out
-        assert _shard_files(cand) == {}, f"`vg judge {typo}` wrote a verdict"
+        assert _shard_files(cand) == {}, f"`provenance judge {typo}` wrote a verdict"
 
-    code, out = _vg("judge", "q1", s.sid, "supports", "--data", cand, *_ctx(cand, s.sid))
+    code, out = _provenance("judge", "q1", s.sid, "supports", "--data", cand, *_ctx(cand, s.sid))
     assert code == 0 and "supports recorded for q1" in out, out
     assert list(_shard_files(cand)) == ["q1.json"]
 
@@ -5869,9 +5869,9 @@ def test_judge_refuses_a_source_the_named_claim_does_not_cite(tmp_path):
     (cand / "claims" / "q2.json").write_text(
         Claim(question_id="q2", question="?", answer="b", sources=[other]).model_dump_json())
 
-    code, out = _vg("judge", "q1", other.sid, "supports", "--data", cand)
+    code, out = _provenance("judge", "q1", other.sid, "supports", "--data", cand)
     assert code == 1 and f"claim q1 does not cite source {other.sid}; q2 does" in out, out
-    code, out = _vg("judge", "q1", "0123456789ab", "supports", "--data", cand)
+    code, out = _provenance("judge", "q1", "0123456789ab", "supports", "--data", cand)
     assert code == 1 and "no current claim cites it" in out, out
     assert _shard_files(cand) == {}
 
@@ -5882,31 +5882,31 @@ def test_judge_refuses_when_the_claim_it_names_cannot_be_read(tmp_path):
     _, cand, s = _candidate_run(tmp_path)
     (cand / "claims" / "q2.json").write_text('{"question_id": "q2"}')   # fails the schema
 
-    code, out = _vg("judge", "q2", s.sid, "supports", "--data", cand)
+    code, out = _provenance("judge", "q2", s.sid, "supports", "--data", cand)
     assert code == 1 and "claim q2 could not be read" in out, out
     # an id matching nothing readable may be the unreadable one, so that refuses too
     (cand / "claims" / "q2.json").write_text('{"question_id": ""}')     # id not in the file
-    code, out = _vg("judge", "q9", s.sid, "supports", "--data", cand)
+    code, out = _provenance("judge", "q9", s.sid, "supports", "--data", cand)
     assert code == 1 and "it may be one of those" in out, out
     # ...without losing the hint for a typo of a claim that WAS read
-    code, out = _vg("judge", "Q1", s.sid, "supports", "--data", cand)
+    code, out = _provenance("judge", "Q1", s.sid, "supports", "--data", cand)
     assert code == 1 and "did you mean q1?" in out and "could not be read" in out, out
     assert _shard_files(cand) == {}
 
-    code, _ = _vg("judge", "q1", s.sid, "supports", "--data", cand, *_ctx(cand, s.sid))
+    code, _ = _provenance("judge", "q1", s.sid, "supports", "--data", cand, *_ctx(cand, s.sid))
     assert code == 0, "an unreadable claim elsewhere does not block a checkable verdict"
 
 
 def test_judge_refuses_a_page_that_is_not_cached(tmp_path):
     """An uncached page stamped ("", 0), and both staleness checks were guarded by truthiness —
     so a verdict judged before its page was fetched could never go stale, however often the
-    page changed afterwards. Refused instead, pointing at `vg verify`."""
-    from vgpipe.fetch import cache_path
+    page changed afterwards. Refused instead, pointing at `provenance verify`."""
+    from provenance.fetch import cache_path
 
     data, cand, s = _candidate_run(tmp_path)
     cache_path(data, s.url).unlink()
-    code, out = _vg("judge", "q1", s.sid, "supports", "--data", cand)
-    assert code == 1 and "is not in the page cache" in out and "vg verify" in out, out
+    code, out = _provenance("judge", "q1", s.sid, "supports", "--data", cand)
+    assert code == 1 and "is not in the page cache" in out and "provenance verify" in out, out
     assert _shard_files(cand) == {}
 
 
@@ -5914,17 +5914,17 @@ def test_judge_success_line_prints_a_note_as_written(tmp_path):
     """The success line printed the agent's note as rich markup, after the verdict was on disk:
     `[/]` in a note raised, and the command exited non-zero — which verifiers are told means
     nothing was recorded, so they would record it again or report a failure."""
-    from vgpipe import judgments
+    from provenance import judgments
 
     _, cand, s = _candidate_run(tmp_path)
-    code, out = _vg("judge", "q1", s.sid, "topic_only", "--note", "roster only [/] no [sic]",
+    code, out = _provenance("judge", "q1", s.sid, "topic_only", "--note", "roster only [/] no [sic]",
                     "--data", cand, *_ctx(cand, s.sid))
     assert code == 0 and "roster only [/] no [sic]" in out, out
     assert judgments.load(cand, "q1")[s.sid].note == "roster only [/] no [sic]"
 
 
 def _register_test_total(monkeypatch):
-    from vgpipe import queries
+    from provenance import queries
 
     monkeypatch.setitem(queries.REGISTRY, "test.total", queries.Query(
         lambda root, **kw: queries.QueryResult(value=12345.0), ("filer_id",), "test", 1))
@@ -5932,17 +5932,17 @@ def _register_test_total(monkeypatch):
 
 def test_judge_records_a_query_citation_with_no_page(tmp_path, monkeypatch):
     """A query citation has no page by design: refusing it for want of one would leave its
-    claim unjudgeable. (It does need a `vg verify` run under the current definition.)"""
-    from vgpipe import judgments
-    from vgpipe.models import QueryCitation
+    claim unjudgeable. (It does need a `provenance verify` run under the current definition.)"""
+    from provenance import judgments
+    from provenance.models import QueryCitation
 
     _register_test_total(monkeypatch)
     q = src(query=QueryCitation(name="test.total", params={"filer_id": "1"}, expected="12345"))
     (tmp_path / "claims").mkdir()
     (tmp_path / "claims" / "q1.json").write_text(
         Claim(question_id="q1", question="?", answer="a", sources=[q]).model_dump_json())
-    assert _vg("verify", "--data", tmp_path)[0] == 0
-    code, out = _vg("judge", "q1", q.sid, "supports", "--data", tmp_path, *_ctx(tmp_path, q.sid))
+    assert _provenance("verify", "--data", tmp_path)[0] == 0
+    code, out = _provenance("judge", "q1", q.sid, "supports", "--data", tmp_path, *_ctx(tmp_path, q.sid))
     assert code == 0, out
     assert judgments.load(tmp_path, "q1")[q.sid].verdict == "supports"
 
@@ -5957,12 +5957,12 @@ def test_a_cache_directory_given_as_the_root_is_refused(tmp_path, cmd):
     data, cand, s = _candidate_run(tmp_path)
     before = _shard_files(cand)
     args = [a.replace("{sid}", s.sid).replace("{url}", s.url) for a in cmd]
-    code, out = _vg(*args, "--data", cand, "--cache", data / "cache")
+    code, out = _provenance(*args, "--data", cand, "--cache", data / "cache")
     assert code == 1 and f"this looks like --cache {data}" in out, out
     assert not (data / "cache" / "cache").exists(), "a second cache was created"
     assert _shard_files(cand) == before
 
-    code, out = _vg(*args, "--data", cand, "--cache", data)   # the right root still works
+    code, out = _provenance(*args, "--data", cand, "--cache", data)   # the right root still works
     assert "cache directory itself" not in out, out
 
 
@@ -5974,7 +5974,7 @@ def test_a_cache_root_with_no_cache_is_refused_by_the_readers(tmp_path, cmd):
     _, cand, s = _candidate_run(tmp_path)
     before = _shard_files(cand)
     args = [a.replace("{sid}", s.sid) for a in cmd]
-    code, out = _vg(*args, "--data", cand, "--cache", tmp_path / "typo")
+    code, out = _provenance(*args, "--data", cand, "--cache", tmp_path / "typo")
     assert code == 1 and "holds no cache/ directory" in out, out
     assert not (tmp_path / "typo").exists()
     assert _shard_files(cand) == before
@@ -5983,8 +5983,8 @@ def test_a_cache_root_with_no_cache_is_refused_by_the_readers(tmp_path, cmd):
 def test_a_cache_root_holding_only_the_calaccess_database_is_accepted(tmp_path, monkeypatch):
     """A run citing only queries needs the CAL-ACCESS database and no pages, so the readers ask
     for a cache/, not for cache/pages."""
-    from vgpipe import judgments
-    from vgpipe.models import QueryCitation
+    from provenance import judgments
+    from provenance.models import QueryCitation
 
     _register_test_total(monkeypatch)
     q = src(query=QueryCitation(name="test.total", params={"filer_id": "1"}, expected="12345"))
@@ -5993,8 +5993,8 @@ def test_a_cache_root_holding_only_the_calaccess_database_is_accepted(tmp_path, 
     (run / "claims" / "q1.json").write_text(
         Claim(question_id="q1", question="?", answer="a", sources=[q]).model_dump_json())
     (root / "cache" / "calaccess").mkdir(parents=True)
-    assert _vg("verify", "--data", run, "--cache", root)[0] == 0
-    code, out = _vg("judge", "q1", q.sid, "supports", "--data", run, "--cache", root,
+    assert _provenance("verify", "--data", run, "--cache", root)[0] == 0
+    code, out = _provenance("judge", "q1", q.sid, "supports", "--data", run, "--cache", root,
                     *_ctx(run, q.sid, cache=root))
     assert code == 0, out
     assert judgments.load(run, "q1")[q.sid].verdict == "supports"
@@ -6005,31 +6005,31 @@ def test_a_missing_default_cache_is_named_not_silent(tmp_path):
     so these warn rather than refuse. Every page verdict then reads stale, and the warning is
     what says why."""
     data, cand, s = _candidate_run(tmp_path)
-    code, _ = _vg("judge", "q1", s.sid, "supports", "--data", cand, *_ctx(cand, s.sid))
+    code, _ = _provenance("judge", "q1", s.sid, "supports", "--data", cand, *_ctx(cand, s.sid))
     assert code == 0
     (data / "cache").rename(tmp_path / "gone")
     for cmd in ("judgments", "build", "status"):
-        _, out = _vg(cmd, "--data", cand)
+        _, out = _provenance(cmd, "--data", cand)
         assert f"no cache at {data / 'cache'}" in out, (cmd, out)
 
 
-def test_vg_judgments_reports_verdicts_under_an_id_no_claim_has(tmp_path):
-    """`vg judgments` only looked for orphans inside shards named after current claims, so a
+def test_provenance_judgments_reports_verdicts_under_an_id_no_claim_has(tmp_path):
+    """`provenance judgments` only looked for orphans inside shards named after current claims, so a
     shard under a mistyped id was invisible to every command."""
     import shutil
 
-    from vgpipe import judgments
+    from provenance import judgments
 
     _, cand, s = _candidate_run(tmp_path)
     judgments.record(cand, "q1", s.sid, "supports", "fine")
     shutil.copy(judgments.path_for(cand, "q1"), cand / "judgments" / "q01.json")
-    _, out = _vg("judgments", "--data", cand)
+    _, out = _provenance("judgments", "--data", cand)
     assert "1 verdict(s) sit in judgments/ under an id no claim has (q01.json)" in out, out
 
 
-def test_vg_judgments_reads_a_miscased_shard_as_build_does(tmp_path):
-    """On a case-insensitive disk `vg build` opens Q1.json for claim q1 and applies it, while
-    `vg judgments` keyed shards by exact stem and counted q1 as unjudged — and re-judging as
+def test_provenance_judgments_reads_a_miscased_shard_as_build_does(tmp_path):
+    """On a case-insensitive disk `provenance build` opens Q1.json for claim q1 and applies it, while
+    `provenance judgments` keyed shards by exact stem and counted q1 as unjudged — and re-judging as
     q1 wrote into Q1.json, whose name never changes, so the count could never reach 0. The two
     must agree on either kind of disk, and the shard must be named so it can be fixed."""
     import json
@@ -6043,12 +6043,12 @@ def test_vg_judgments_reads_a_miscased_shard_as_build_does(tmp_path):
 
     folds_case = (cand / "judgments" / "q1.json").exists()   # asked of this disk, as the code does
     need, _, stale, _ = _unjudged(cand)
-    assert need == len(_built_unreviewed(cand)), "vg judgments and vg build disagree"
+    assert need == len(_built_unreviewed(cand)), "provenance judgments and provenance build disagree"
     # Unstamped, so it judged no answer anyone can name and is stale wherever it is read
     # (#74): read as q1's only where the disk opens Q1.json for it.
     assert (need, stale) == (1, 1 if folds_case else 0)
 
-    _, out = _vg("judgments", "--data", cand)
+    _, out = _provenance("judgments", "--data", cand)
     if folds_case:
         # build applies it as q1's, and so does the count
         assert "Q1.json differ from a claim's id only in case, and this disk opens" in out, out
@@ -6062,7 +6062,7 @@ def test_vg_judgments_reads_a_miscased_shard_as_build_does(tmp_path):
     (cand / "judgments" / "tmp.json").rename(cand / "judgments" / "q1.json")
     assert list(_shard_files(cand)) == ["q1.json"] and _shard_files(cand) == {
         "q1.json": before["Q1.json"]}
-    _, out = _vg("judgments", "--data", cand)
+    _, out = _provenance("judgments", "--data", cand)
     assert "only in case" not in out and "no claim has" not in out, out
     assert _unjudged(cand)[::2] == (1, 1), "q1's now on either disk, and still unstamped"
 
@@ -6075,7 +6075,7 @@ def _dated_export(root, when=(2026, 9, 20, 3, 0, 0)):
     """The IE export from `_ie_export`, its entries dated `when` as SOS dates them, built."""
     import zipfile
 
-    from vgpipe import calaccess
+    from provenance import calaccess
 
     staging = _ie_export(root / "staging")
     zp = calaccess.zip_path(root)
@@ -6097,8 +6097,8 @@ OPPOSE_KO = {"candidate_last": "Ko", "first": "Dana", "stance": "oppose",
 
 
 def _ie_citation(expected="612345.67"):
-    from vgpipe.calaccess import filing_url
-    from vgpipe.models import QueryCitation
+    from provenance.calaccess import filing_url
+    from provenance.models import QueryCitation
 
     return src(url=filing_url(1), publisher="California Secretary of State",
                author="California Secretary of State", source_type="official_record",
@@ -6114,7 +6114,7 @@ def test_calaccess_build_records_which_export_it_was_built_from(tmp_path):
     import sqlite3
     import zipfile
 
-    from vgpipe import calaccess
+    from provenance import calaccess
 
     root = _dated_export(tmp_path)
     info = calaccess.export_info(root)
@@ -6163,8 +6163,8 @@ def test_a_query_citation_is_stamped_with_what_it_was_checked_against(tmp_path):
     import html
     import shlex
 
-    from vgpipe import queries
-    from vgpipe.report import render
+    from provenance import queries
+    from provenance.report import render
 
     root = _dated_export(tmp_path / "shared")
     s = verify_source(_ie_citation(), root)
@@ -6185,7 +6185,7 @@ def test_a_query_citation_is_stamped_with_what_it_was_checked_against(tmp_path):
     page = html.unescape(render([claim], tmp_path / "out")[0].read_text())
     assert f"calaccess.ie_total v{v.query_run.version}" in page
     assert "CAL-ACCESS export of 2026-09-20" in page
-    assert f"uv run vg query calaccess.ie_total --cache {shlex.quote(str(root))}" in page
+    assert f"uv run provenance query calaccess.ie_total --cache {shlex.quote(str(root))}" in page
 
 
 def test_the_stamp_is_the_pipelines_to_write(tmp_path):
@@ -6194,8 +6194,8 @@ def test_the_stamp_is_the_pipelines_to_write(tmp_path):
     discards from agent-authored claims, and a trusted load re-derives it at build."""
     import json
 
-    from vgpipe import cli, queries
-    from vgpipe.models import strip_machine_fields
+    from provenance import cli, queries
+    from provenance.models import strip_machine_fields
 
     root = _dated_export(tmp_path)
     forged = json.loads(Claim(question_id="q1", question="?", answer="a",
@@ -6223,8 +6223,8 @@ def test_a_stamped_cache_root_cannot_smuggle_text_into_the_command():
     neutralize, quote the rest."""
     import shlex
 
-    from vgpipe import queries
-    from vgpipe.models import QueryRun
+    from provenance import queries
+    from provenance.models import QueryRun
 
     for bad in ("data\n", "data\x1b[201~", "da‮ta"):
         with pytest.raises(ValueError):
@@ -6240,8 +6240,8 @@ def test_a_stamped_cache_root_cannot_smuggle_text_into_the_command():
 
 
 def test_a_query_verified_with_cache_reproduces_as_printed(tmp_path):
-    """`vg verify --cache X` checked the figure against X's database, but the review page
-    printed `vg query …` with no --cache, which resolved `data/` — a different database or
+    """`provenance verify --cache X` checked the figure against X's database, but the review page
+    printed `provenance query …` with no --cache, which resolved `data/` — a different database or
     none. The green row could not be reproduced by the command printed next to it."""
     import html
     import json
@@ -6250,7 +6250,7 @@ def test_a_query_verified_with_cache_reproduces_as_printed(tmp_path):
 
     from typer.testing import CliRunner
 
-    from vgpipe import cli, queries
+    from provenance import cli, queries
 
     shared = _dated_export(tmp_path / "shared")
     data = tmp_path / "data"
@@ -6266,8 +6266,8 @@ def test_a_query_verified_with_cache_reproduces_as_printed(tmp_path):
     assert built["verification"]["query_run"]["cache_root"] == str(shared)
 
     page = html.unescape((data / "out" / "review.html").read_text())
-    argv = shlex.split(re.search(r"uv run vg query [^<\n]*", page).group(0))
-    assert argv[:3] == ["uv", "run", "vg"] and "--cache" in argv
+    argv = shlex.split(re.search(r"uv run provenance query [^<\n]*", page).group(0))
+    assert argv[:3] == ["uv", "run", "provenance"] and "--cache" in argv
     res = CliRunner().invoke(cli.app, argv[3:], terminal_width=200)
     assert res.exit_code == 0, res.output
     out = _plain(res.output)
@@ -6288,7 +6288,7 @@ def test_every_re_check_command_takes_cache(command):
     ended up on a different database than the one a figure was verified against."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     res = CliRunner().invoke(cli.app, [*command, "--help"], terminal_width=200)
     assert res.exit_code == 0 and "--cache" in _plain(res.output), res.output
@@ -6298,8 +6298,8 @@ def _query_run_with_verdict(tmp_path, monkeypatch, version=1):
     """A run citing `test.total` (at `version`), verified and judged through the CLI."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli, queries
-    from vgpipe.models import QueryCitation
+    from provenance import cli, queries
+    from provenance.models import QueryCitation
 
     monkeypatch.setitem(queries.REGISTRY, "test.total", queries.Query(
         lambda root, **kw: queries.QueryResult(value=12345.0, detail="2 gift(s)"),
@@ -6324,7 +6324,7 @@ def test_bumping_a_query_version_flags_its_citations_and_stales_its_verdicts(tmp
     is about the definition it was formed under; bumping the version retires it."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli, judgments, queries
+    from provenance import cli, judgments, queries
 
     data, s = _query_run_with_verdict(tmp_path, monkeypatch)
     j = judgments.load(data, "q1")[s.sid]
@@ -6341,7 +6341,7 @@ def test_bumping_a_query_version_flags_its_citations_and_stales_its_verdicts(tmp
     assert len(stale) == 1 and "test.total v1" in stale[0] and "v2" in stale[0]
     assert claim.sources[0].verification.support == "unreviewed"
 
-    # vg verify re-runs the figure under v2 and flags the verdict for re-judging
+    # provenance verify re-runs the figure under v2 and flags the verdict for re-judging
     res = CliRunner().invoke(cli.app, ["verify", "--data", str(data)], terminal_width=200)
     assert res.exit_code == 0, res.output
     out = _plain(res.output)
@@ -6352,8 +6352,8 @@ def test_bumping_a_query_version_flags_its_citations_and_stales_its_verdicts(tmp
     assert _unjudged(data) == (1, 1, 1, 0)
 
     # re-judging under v2 settles it; a checkout that only knows v1 does not trust it — and
-    # since its claim file was verified under v2 too, the row waits on `vg verify`, not on a
-    # verifier (`vg judge` would refuse it), so it is blocked rather than counted in N
+    # since its claim file was verified under v2 too, the row waits on `provenance verify`, not on a
+    # verifier (`provenance judge` would refuse it), so it is blocked rather than counted in N
     res = CliRunner().invoke(cli.app, ["judge", "q1", s.sid, "supports", "--data", str(data),
                                        *_ctx(data, s.sid)])
     assert res.exit_code == 0, res.output
@@ -6371,8 +6371,8 @@ def test_a_query_verdict_from_before_versioning_is_stale(tmp_path, monkeypatch):
     unstamped verdict follows its own rule instead, which this leaves alone."""
     from datetime import timedelta
 
-    from vgpipe import judgments
-    from vgpipe.fetch import cache_path
+    from provenance import judgments
+    from provenance.fetch import cache_path
 
     data, s = _query_run_with_verdict(tmp_path, monkeypatch)
     judgments.record(data, "q1", s.sid, "supports", "recorded before versions existed",
@@ -6398,7 +6398,7 @@ def test_an_older_export_is_reported_but_the_verdict_stands(tmp_path):
     calculation. Say the data moved; don't discard a judgment that still holds."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli, judgments
+    from provenance import cli, judgments
 
     root = _dated_export(tmp_path, when=(2026, 9, 1, 3, 0, 0))
     s = _ie_citation()
@@ -6435,7 +6435,7 @@ def _definition_fingerprint(name):
     import inspect
     import textwrap
 
-    from vgpipe import calaccess, queries
+    from provenance import calaccess, queries
 
     def code(obj):
         if isinstance(obj, str):
@@ -6477,14 +6477,14 @@ def _definition_fingerprint(name):
 # What cannot change a value a query returns: display, messages, listings (finding aids, not
 # citations), the export metadata, and the comparison and command a result is checked with.
 _NOT_A_DEFINITION = {
-    "vgpipe.queries": {"AS_FILED", "LATE_SHOWN", "LEFT_OUT", "LateReport", "NOT_COMPLETE",
+    "provenance.queries": {"AS_FILED", "LATE_SHOWN", "LEFT_OUT", "LateReport", "NOT_COMPLETE",
                        "Query", "QueryResult", "REGISTRY", "SPLIT", "UNSETTLED_SHOWN",
                        "_contender_line", "_elsewhere", "_identity", "_late_names", "_late_note",
                        "_late_part", "_listed", "_name_line", "_names_note", "_other_schedules",
                        "_schedule_label", "_unread", "_whereabouts", "dataset",
                        "describe_export", "export_date", "human_command", "late_text",
                        "left_out_text", "matches", "share_text"},
-    "vgpipe.calaccess": {"COVER_FALLBACK", "Contribution", "DegradedDatabaseWarning",
+    "provenance.calaccess": {"COVER_FALLBACK", "Contribution", "DegradedDatabaseWarning",
                          "EMPTY_COVERS", "EXPORT_META", "EXPORT_URL", "LATE_FALLBACK",
                          "NO_COVERS", "Reattributed", "SCHEDULE_FALLBACK", "_UNUSABLE",
                          "_export_date", "_read_export_info", "citable_snapshot",
@@ -6533,7 +6533,7 @@ def test_a_query_definition_cannot_change_unnoticed():
     what the query returns for ANY input the previous version accepted, bump its version in
     `queries.REGISTRY`. Either way, set its entry in QUERY_DEFINITIONS to what this test prints.
     A shared helper moves every fingerprint at once; decide for each query."""
-    from vgpipe import queries
+    from provenance import queries
 
     got = {name: (q.version, _definition_fingerprint(name))
            for name, q in queries.REGISTRY.items()}
@@ -6548,7 +6548,7 @@ def test_a_query_definition_cannot_change_unnoticed():
 def test_the_fingerprint_sees_a_shared_helper_change(monkeypatch):
     """A change to a helper every query shares must move every fingerprint, or the gate above
     would pass a change that redefines all of them at once."""
-    from vgpipe import queries
+    from provenance import queries
 
     before = {n: _definition_fingerprint(n) for n in queries.REGISTRY}
     monkeypatch.setattr(queries, "DEDUPED_RECEIPTS", queries.DEDUPED_RECEIPTS + " LIMIT 1")
@@ -6556,13 +6556,13 @@ def test_the_fingerprint_sees_a_shared_helper_change(monkeypatch):
 
 
 def test_judge_refuses_a_query_verdict_the_last_run_did_not_produce(tmp_path, monkeypatch):
-    """The verifier judged the context `vg verify` wrote. Stamping the registry's newer version
+    """The verifier judged the context `provenance verify` wrote. Stamping the registry's newer version
     over an older run's context would make a verdict about the old calculation read as current,
     and stamping today's export over an older export's context would hide that the data moved.
-    So `vg judge` records a query verdict only when the claim's recorded run matches."""
+    So `provenance judge` records a query verdict only when the claim's recorded run matches."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli, judgments, queries
+    from provenance import cli, judgments, queries
 
     data, s = _query_run_with_verdict(tmp_path, monkeypatch)
     fn, required, desc, _ = queries.REGISTRY["test.total"]
@@ -6572,7 +6572,7 @@ def test_judge_refuses_a_query_verdict_the_last_run_did_not_produce(tmp_path, mo
                              terminal_width=200)
     assert res.exit_code == 1
     out = _plain(res.output)
-    assert "last verified under v1" in out and "is now v2" in out and "vg verify" in out
+    assert "last verified under v1" in out and "is now v2" in out and "provenance verify" in out
     assert judgments.load(data, "q1")[s.sid].query_version == 1, "nothing recorded"
 
     # the export moved under the claim: same refusal, naming both exports
@@ -6592,12 +6592,12 @@ def test_judge_refuses_a_query_verdict_the_last_run_did_not_produce(tmp_path, mo
 
 
 def test_verify_lists_the_verdicts_its_own_re_fetch_made_stale(tmp_path, monkeypatch):
-    """The stale list printed at the end of `vg verify` has to describe the cache as the run
+    """The stale list printed at the end of `provenance verify` has to describe the cache as the run
     left it: a --refresh is exactly what makes a verdict stale, and a list computed before the
     fetches would say nothing to re-judge."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli, fetch as fetch_module
+    from provenance import cli, fetch as fetch_module
 
     data, cand, s = _candidate_run(tmp_path)
     res = CliRunner().invoke(cli.app, ["judge", "q1", s.sid, "supports", "--data", str(cand),
@@ -6609,7 +6609,7 @@ def test_verify_lists_the_verdicts_its_own_re_fetch_made_stale(tmp_path, monkeyp
         _refetch_shared(root, s)
         return fetch_module.load_cached(root, url)
 
-    monkeypatch.setattr("vgpipe.verify.fetch", refetch)
+    monkeypatch.setattr("provenance.verify.fetch", refetch)
     res = CliRunner().invoke(cli.app, ["verify", "--data", str(cand), "--refresh"],
                              terminal_width=200)
     assert res.exit_code == 0, res.output
@@ -6630,7 +6630,7 @@ def test_a_red_query_row_prints_the_builds_own_root(tmp_path):
 
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     shared = _dated_export(tmp_path / "shared")
     data = tmp_path / "data"
@@ -6649,15 +6649,15 @@ def test_a_red_query_row_prints_the_builds_own_root(tmp_path):
     assert built["verification"]["status"] == "snippet_not_found"
     assert built["verification"]["query_run"] is None
     page = html.unescape((data / "out" / "review.html").read_text())
-    argv = shlex.split(re.search(r"uv run vg query [^<\n]*", page).group(0))
+    argv = shlex.split(re.search(r"uv run provenance query [^<\n]*", page).group(0))
     assert argv[argv.index("--cache") + 1] == str(shared)
     assert str(tmp_path / "crafted") not in page
 
 
 def test_export_info_reads_a_broken_database_as_unknown(tmp_path):
     """An interrupted build leaves a file that is not a database. Reading its export date only
-    annotates, so it must not stop `vg judge` or `vg build`; the query itself fails loudly."""
-    from vgpipe import calaccess
+    annotates, so it must not stop `provenance judge` or `provenance build`; the query itself fails loudly."""
+    from provenance import calaccess
 
     calaccess.db_path(tmp_path).parent.mkdir(parents=True)
     calaccess.db_path(tmp_path).write_bytes(b"not a database, just half a download")
@@ -6669,7 +6669,7 @@ def test_an_interrupted_build_carries_no_export_date(tmp_path):
     first table, so a rebuild stopped partway answered queries from missing tables under a full
     export date — ie_total returned 612345.67 stamped 'the CAL-ACCESS export of 2026-09-20'.
     It is written last now, so a build that stops early reads as undated."""
-    from vgpipe import calaccess
+    from provenance import calaccess
 
     root = _dated_export(tmp_path)
     assert calaccess.export_info(root)["export_date"] == "2026-09-20"
@@ -6687,7 +6687,7 @@ def test_a_stale_query_verdict_is_not_reported_as_standing(tmp_path):
     and not applied, so counting it there would tell the reviewer two contradictory things."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli, judgments
+    from provenance import cli, judgments
 
     root = _dated_export(tmp_path, when=(2026, 9, 1, 3, 0, 0))
     s = _ie_citation()
@@ -6711,7 +6711,7 @@ def test_the_fingerprint_covers_helpers_nobody_listed(monkeypatch):
     """The first gate hashed a hand-kept list of helpers and missed the date-window helpers
     added later, so a change to how `until` bounds a window would have passed unbumped.
     Everything a module defines now counts unless it is named as unable to change a result."""
-    from vgpipe import calaccess, queries
+    from provenance import calaccess, queries
 
     before = _definition_fingerprint("calaccess.ie_total")
     monkeypatch.setattr(queries, "date_window_sql", lambda iso_col, since, until: ("1", []))
@@ -6732,7 +6732,7 @@ def test_judge_checks_the_run_of_the_question_it_records_for(tmp_path, monkeypat
     refused because the other hadn't been — or the reverse could record a stale verdict."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli, judgments, queries
+    from provenance import cli, judgments, queries
 
     data, s = _query_run_with_verdict(tmp_path, monkeypatch)
     (data / "claims" / "q2.json").write_text(
@@ -6756,7 +6756,7 @@ def test_judge_refuses_a_run_read_from_another_database(tmp_path, monkeypatch):
     root is what tells them apart: a verdict stamped from B is not about the context A gave."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli, judgments
+    from provenance import cli, judgments
 
     data, s = _query_run_with_verdict(tmp_path, monkeypatch)   # verified under root `data`
     other = tmp_path / "other"
@@ -6770,9 +6770,9 @@ def test_judge_refuses_a_run_read_from_another_database(tmp_path, monkeypatch):
 
 def test_an_unprintable_cache_root_fails_the_row_not_the_run(tmp_path, monkeypatch):
     """The stamp refuses a root no pasted command could name. That refusal used to escape as a
-    ValidationError partway through `vg verify`, losing every claim the run had already done."""
-    from vgpipe import queries
-    from vgpipe.models import QueryCitation
+    ValidationError partway through `provenance verify`, losing every claim the run had already done."""
+    from provenance import queries
+    from provenance.models import QueryCitation
 
     monkeypatch.setitem(queries.REGISTRY, "test.total", queries.Query(
         lambda root, **kw: queries.QueryResult(value=12345.0), ("filer_id",), "test", 1))
@@ -6788,15 +6788,15 @@ def test_an_unprintable_cache_root_fails_the_row_not_the_run(tmp_path, monkeypat
 
 
 def test_a_query_row_judge_would_refuse_is_blocked_not_waiting(tmp_path, monkeypatch):
-    """`vg judgments` counted a query row as needing a verdict when its claim file predates the
-    current definition or export — the rows `vg judge` refuses. The gate could not reach 0 by
+    """`provenance judgments` counted a query row as needing a verdict when its claim file predates the
+    current definition or export — the rows `provenance judge` refuses. The gate could not reach 0 by
     judging; re-verifying is what closes it, so the row is listed with the blocked ones."""
     import json
 
     from typer.testing import CliRunner
 
-    from vgpipe import cli, queries
-    from vgpipe.models import QueryCitation
+    from provenance import cli, queries
+    from provenance.models import QueryCitation
 
     monkeypatch.setitem(queries.REGISTRY, "test.total", queries.Query(
         lambda root, **kw: queries.QueryResult(value=12345.0), ("filer_id",), "test", 1))
@@ -6821,7 +6821,7 @@ def test_a_page_verdict_is_written_in_the_format_older_code_reads(tmp_path, monk
     included, which never use them. They are written only when set."""
     import json
 
-    from vgpipe import judgments
+    from provenance import judgments
 
     judgments.record(tmp_path, "q1", src().sid, "supports", "a page verdict",
                      page_fetched_at="2026-09-01T00:00:00+00:00", extractor_version=3)
@@ -6841,9 +6841,9 @@ SNAP_B = f"https://web.archive.org/web/20260920000000/{PAYWALLED}"
 
 
 def _cache(root, url, fetched_at, **kw):
-    """Cache `url` under the current extractor, so `vg verify` serves it without the network."""
-    from vgpipe.fetch import cache_path
-    from vgpipe.models import EXTRACTOR_VERSION
+    """Cache `url` under the current extractor, so `provenance verify` serves it without the network."""
+    from provenance.fetch import cache_path
+    from provenance.models import EXTRACTOR_VERSION
 
     page = _page(url=url, fetched_at=fetched_at, extractor_version=EXTRACTOR_VERSION, **kw)
     cache_path(root, url).write_text(page.model_dump_json())
@@ -6851,17 +6851,17 @@ def _cache(root, url, fetched_at, **kw):
 
 
 def _verification(data):
-    from vgpipe.cli import load_claims
+    from provenance.cli import load_claims
 
     return load_claims(data / "claims", trust_machine_fields=True)[0].sources[0].verification
 
 
 def _archive_verified_run(tmp_path):
-    """A run whose one source is paywalled live and verified against snapshot A, as `vg verify`
+    """A run whose one source is paywalled live and verified against snapshot A, as `provenance verify`
     leaves it: the stub and the snapshot both cached, the snapshot in the run's records."""
     from datetime import timedelta
 
-    from vgpipe import archive as arch
+    from provenance import archive as arch
 
     data, now = tmp_path / "data", datetime.now(UTC)
     _cache(data, PAYWALLED, now - timedelta(days=3), status=403, text="", paywall_suspected=True)
@@ -6871,15 +6871,15 @@ def _archive_verified_run(tmp_path):
     (data / "claims").mkdir(parents=True)
     (data / "claims" / "q1.json").write_text(
         Claim(question_id="q1", question="?", answer="a", sources=[s]).model_dump_json())
-    code, out = _vg("verify", "--data", data)
+    code, out = _provenance("verify", "--data", data)
     assert code == 0, out
     return data, s
 
 
 def test_verify_names_the_copy_each_context_came_from(stub, tmp_path):
-    """`vg judge` stamps the copy the context was built from, so verify has to say which one
+    """`provenance judge` stamps the copy the context was built from, so verify has to say which one
     that was; revalidation re-derives it from the page it checked, whatever the file said."""
-    from vgpipe.models import PageCopy
+    from provenance.models import PageCopy
 
     page = _page()
     stub[page.url] = page
@@ -6903,18 +6903,18 @@ def test_verify_names_the_copy_each_context_came_from(stub, tmp_path):
 
 
 def test_judge_stamps_an_archive_verified_source_from_its_snapshot(tmp_path):
-    """The verifier read context from the Wayback snapshot, but `vg judge` stamped the
+    """The verifier read context from the Wayback snapshot, but `provenance judge` stamped the
     paywall stub at the cited URL. The stub never changes, so the stamp described nothing the
     verifier read, and no re-archive could ever make the verdict stale."""
-    from vgpipe import judgments
-    from vgpipe.fetch import load_cached
+    from provenance import judgments
+    from provenance.fetch import load_cached
 
     data, s = _archive_verified_run(tmp_path)
     v = _verification(data)
     assert v.status == "verified_via_archive"
     assert v.context_page.url == SNAP_A, "verify names the copy the context came from"
 
-    code, out = _vg("judge", "q1", s.sid, "supports", "--data", data, *_ctx(data, s.sid))
+    code, out = _provenance("judge", "q1", s.sid, "supports", "--data", data, *_ctx(data, s.sid))
     assert code == 0, out
     j = judgments.load(data, "q1")[s.sid]
     snap, stub_page = load_cached(data, SNAP_A), load_cached(data, PAYWALLED)
@@ -6922,20 +6922,20 @@ def test_judge_stamps_an_archive_verified_source_from_its_snapshot(tmp_path):
     assert j.page_fetched_at != str(stub_page.fetched_at)
     # written, so an older checkout refuses the shard rather than check it against the stub
     assert f'"page_url": "{SNAP_A}"' in judgments.path_for(data, "q1").read_text()
-    # `vg judgments` used to discard every archive row as "no snapshot recorded": it never
+    # `provenance judgments` used to discard every archive row as "no snapshot recorded": it never
     # applied the run's records, so the row read as blocked whatever was judged
     assert _unjudged(data) == (0, 1, 0, 0)
     assert _built_unreviewed(data) == {}
 
 
 def test_a_re_archive_makes_an_archive_verified_verdict_stale(tmp_path, monkeypatch, capsys):
-    """`vg archive` saves a fresh snapshot every run, so a verdict about snapshot A's text
+    """`provenance archive` saves a fresh snapshot every run, so a verdict about snapshot A's text
     was applied to snapshot B's with no staleness signal: the check compared the stub, which
-    never changes. Stale in apply_to(), in `vg judgments`, and not applied by `vg build`."""
-    from vgpipe import cli, judgments
+    never changes. Stale in apply_to(), in `provenance judgments`, and not applied by `provenance build`."""
+    from provenance import cli, judgments
 
     data, s = _archive_verified_run(tmp_path)
-    assert _vg("judge", "q1", s.sid, "supports", "--data", data, *_ctx(data, s.sid))[0] == 0
+    assert _provenance("judge", "q1", s.sid, "supports", "--data", data, *_ctx(data, s.sid))[0] == 0
 
     _cache(data, SNAP_B, datetime.now(UTC))           # the same article, captured again
 
@@ -6948,7 +6948,7 @@ def test_a_re_archive_makes_an_archive_verified_verdict_stale(tmp_path, monkeypa
     cli.archive(data=data, delay=0)
     v = _verification(data)
     assert (v.status, v.context_page.url) == ("verified_via_archive", SNAP_B)
-    # `vg archive` runs after the judgment pass, so it has to say the pass is due again
+    # `provenance archive` runs after the judgment pass, so it has to say the pass is due again
     said = " ".join(re.sub(r"\x1b\[[0-9;]*m", "", capsys.readouterr().out).split())
     assert "1 verdict(s) on archive-verified sources were about a snapshot this run replaced" in said, said
 
@@ -6963,55 +6963,55 @@ def test_a_re_archive_makes_an_archive_verified_verdict_stale(tmp_path, monkeypa
     assert _built_unreviewed(data) == {PAYWALLED: "verified_via_archive"}, "not applied by build"
 
     # judging the context the new snapshot gave is what closes it
-    assert _vg("judge", "q1", s.sid, "supports", "--data", data, *_ctx(data, s.sid))[0] == 0
+    assert _provenance("judge", "q1", s.sid, "supports", "--data", data, *_ctx(data, s.sid))[0] == 0
     assert _unjudged(data) == (0, 1, 0, 0)
 
 
 def test_judge_refuses_when_the_page_was_re_fetched_after_verify(tmp_path):
-    """The page cache is shared, so another run can re-fetch a page between `vg verify`
-    and `vg judge`. The verdict was stamped from the new copy, read fresh against it, and after
-    the next verify `vg build` rendered `verified, supports` on text the verifier never saw."""
+    """The page cache is shared, so another run can re-fetch a page between `provenance verify`
+    and `provenance judge`. The verdict was stamped from the new copy, read fresh against it, and after
+    the next verify `provenance build` rendered `verified, supports` on text the verifier never saw."""
     data, cand, s = _candidate_run(tmp_path)
     judged = _verification(cand).context
     _cache(data, s.url, datetime.now(UTC), text=PAGE_TEXT.replace(
         "Levy Act,", "Levy Act [REFETCHED: this clause was repealed],"))
 
-    code, out = _vg("judge", "q1", s.sid, "supports", "--data", cand)
-    assert code == 1 and "the cache now holds one fetched" in out and "vg verify" in out, out
+    code, out = _provenance("judge", "q1", s.sid, "supports", "--data", cand)
+    assert code == 1 and "the cache now holds one fetched" in out and "provenance verify" in out, out
     assert _shard_files(cand) == {}, "refused, writing nothing"
 
     # the reproduction's last step: verify, then build. Nothing renders green on text no
     # verifier read.
-    assert _vg("verify", "--data", cand)[0] == 0
+    assert _provenance("verify", "--data", cand)[0] == 0
     assert "REFETCHED" in _verification(cand).context and "REFETCHED" not in judged
     assert _built_unreviewed(cand) == {s.url: "verified"}
 
     # the context verify gives now is what can be judged
-    code, out = _vg("judge", "q1", s.sid, "supports", "--data", cand, *_ctx(cand, s.sid))
+    code, out = _provenance("judge", "q1", s.sid, "supports", "--data", cand, *_ctx(cand, s.sid))
     assert code == 0, out
     assert _built_unreviewed(cand) == {}
     # The cited page goes unnamed on disk, as on every verdict from before `page_url`, so an
     # older checkout sharing this data/ still reads (and correctly checks) the shard.
     import json
 
-    from vgpipe import judgments
+    from provenance import judgments
 
     [raw] = json.loads(judgments.path_for(cand, "q1").read_text())
     assert "page_url" not in raw and raw["page_fetched_at"], raw
 
 
 def test_judge_refuses_a_snapshot_context_it_cannot_tie_to_the_run(tmp_path):
-    """The same rule for the snapshot. `vg judge` refuses, writing nothing, when the snapshot
-    the context came from is no longer the one the run's records name (a `vg archive` stopped
+    """The same rule for the snapshot. `provenance judge` refuses, writing nothing, when the snapshot
+    the context came from is no longer the one the run's records name (a `provenance archive` stopped
     between saving its records and rewriting the claims), was re-fetched since verify, or has
     left the cache (no page to compare against is no stamp)."""
-    from vgpipe import archive as arch
-    from vgpipe.fetch import cache_path
+    from provenance import archive as arch
+    from provenance.fetch import cache_path
 
     data, s = _archive_verified_run(tmp_path)
 
     def judge():
-        return _vg("judge", "q1", s.sid, "supports", "--data", data)
+        return _provenance("judge", "q1", s.sid, "supports", "--data", data)
 
     _cache(data, SNAP_B, datetime.now(UTC))
     arch.save_records(data, {PAYWALLED: {"snapshot": SNAP_B, "error": None}})
@@ -7034,14 +7034,14 @@ def test_judge_refuses_a_source_verify_gave_no_copy(tmp_path):
     page names no copy: a stamp either way would be a guess. And a copy the claim file names
     that is not where the context comes from can only refuse — here, a hand edit pointing an
     archive row back at its stub."""
-    from vgpipe.fetch import load_cached
+    from provenance.fetch import load_cached
 
     data, cand, s = _candidate_run(tmp_path)
     _edit_claim(cand, "q1", 0, context_page=None)
-    code, out = _vg("judge", "q1", s.sid, "supports", "--data", cand)
+    code, out = _provenance("judge", "q1", s.sid, "supports", "--data", cand)
     assert code == 1 and "has recorded no page" in out and "it is verified" in out, out
     _edit_claim(cand, "q1", 0, status="could_not_verify_paywall")
-    code, out = _vg("judge", "q1", s.sid, "supports", "--data", cand)
+    code, out = _provenance("judge", "q1", s.sid, "supports", "--data", cand)
     assert code == 1 and "it is could_not_verify_paywall" in out, out
     assert _shard_files(cand) == {}
 
@@ -7050,7 +7050,7 @@ def test_judge_refuses_a_source_verify_gave_no_copy(tmp_path):
     _edit_claim(data, "q1", 0, context_page={"url": PAYWALLED,
                                              "fetched_at": stub_page.fetched_at.isoformat(),
                                              "extractor_version": stub_page.extractor_version})
-    code, out = _vg("judge", "q1", s.sid, "supports", "--data", data)
+    code, out = _provenance("judge", "q1", s.sid, "supports", "--data", data)
     assert code == 1 and "judged against the cited page" in out, out
     assert _shard_files(data) == {}
 
@@ -7061,7 +7061,7 @@ def test_a_verdict_is_stale_once_the_context_comes_from_another_page(tmp_path):
     an archive row, the stub — so there it reads stale; so does one on an archive row with no
     snapshot recorded; and one judged against a snapshot is stale once the paywall comes down
     and the context comes from the live page."""
-    from vgpipe import cli, judgments
+    from provenance import cli, judgments
 
     data, s = _archive_verified_run(tmp_path)
     claim = cli.load_claims(data / "claims", trust_machine_fields=True)[0]
@@ -7104,27 +7104,27 @@ def test_judge_on_a_live_row_does_not_need_the_archive_records(tmp_path):
     must not stop verdicts on every other row of the run."""
     _, cand, s = _candidate_run(tmp_path)
     (cand / "archives.json").write_text("{not json")
-    code, out = _vg("judge", "q1", s.sid, "supports", "--data", cand, *_ctx(cand, s.sid))
+    code, out = _provenance("judge", "q1", s.sid, "supports", "--data", cand, *_ctx(cand, s.sid))
     assert code == 0, out
     assert _unjudged(cand) == (0, 1, 0, 0), "nor the gate, on a run with no archive row"
 
 
 def test_judgments_does_not_wait_on_a_verdict_judge_would_refuse(tmp_path, monkeypatch):
     """The gate counts only what the judgment pass can close. A source verified before verify
-    recorded its page is refused by `vg judge`, and so is one whose page was re-fetched since:
+    recorded its page is refused by `provenance judge`, and so is one whose page was re-fetched since:
     counted as waiting, the gate stays above 0 however many verifiers run."""
-    from vgpipe import cli
+    from provenance import cli
 
     data, cand, s = _candidate_run(tmp_path)
     monkeypatch.setattr(cli.con, "_width", 200)     # read a table cell, so don't let it wrap
     assert _unjudged(cand) == (1, 1, 0, 0)
     _edit_claim(cand, "q1", 0, context_page=None)
     assert _unjudged(cand) == (0, 1, 0, 1)
-    assert _vg("judge", "q1", s.sid, "supports", "--data", cand)[0] == 1, "judge agrees"
+    assert _provenance("judge", "q1", s.sid, "supports", "--data", cand)[0] == 1, "judge agrees"
 
-    assert _vg("verify", "--data", cand)[0] == 0
+    assert _provenance("verify", "--data", cand)[0] == 0
     assert _unjudged(cand) == (1, 1, 0, 0)
     _refetch_shared(data, s)                         # after verify: its copy is gone
     code, out = _judgments_output(cand)
-    assert "unreviewed (run vg verify)" in out, out
+    assert "unreviewed (run provenance verify)" in out, out
     assert _unjudged(cand) == (0, 1, 0, 1)

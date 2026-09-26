@@ -21,9 +21,9 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from vgpipe import calaccess, cli, queries
-from vgpipe.models import QueryCitation, Source, Verification
-from vgpipe.verify import revalidate_from_cache, verify_source
+from provenance import calaccess, cli, queries
+from provenance.models import QueryCitation, Source, Verification
+from provenance.verify import revalidate_from_cache, verify_source
 
 FILER = "8886100"
 COVERED_460 = "8886101"     # schedule A at amendment 0, with its cover
@@ -192,7 +192,7 @@ def test_a_cover_table_with_no_rows_is_refused_by_every_citable_query(empty):
                                  "complete export"):
             queries.run(name, params, empty)
         v = verify_source(cited(name, params, "1"), empty).verification
-        assert v.status != "verified" and "vg calaccess build" in v.reason, name
+        assert v.status != "verified" and "provenance calaccess build" in v.reason, name
 
 
 def test_the_listings_cannot_check_a_cover_table_with_no_rows(empty, monkeypatch):

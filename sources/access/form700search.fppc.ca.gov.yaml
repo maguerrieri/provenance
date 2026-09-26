@@ -29,7 +29,7 @@ recipes:
 
     JSON-encoded JSON (a string containing the document), so decode twice.
 
-    Wrapped as `vg form700 "<first>" "<last>"`.
+    Wrapped as `provenance form700 "<first>" "<last>"`.
 
     '
 manual_steps: "Retrieving the PDF (probed 2026-08-21). The portal's searchBundle.js reads the\n\
@@ -58,6 +58,6 @@ findings: |
   /Home/DownloadPdf?key=<hex>PdfDownloadSessionKey&fileName=..}. That link returns the PDF
   only to the cookie jar that minted it, and a 2.5KB error page to a fresh client. Nothing in
   the fetch layer replays the two steps: fppc.citable_url() names which filing is meant and
-  is not fetchable, so `vg check` on it caches the JSON envelope and never finds the snippet.
+  is not fetchable, so `provenance check` on it caches the JSON envelope and never finds the snippet.
   Treat manual_steps as authoritative: not_found plus a portal retrieval instruction, never a
   prior-year copy from another host.

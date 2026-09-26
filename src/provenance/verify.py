@@ -125,7 +125,7 @@ def verify_query_source(src: Source, root: Path) -> Source:
         src.verification = v
         return src
     if not result.found or not queries.matches(q.expected, result.value):
-        # Stamped on a mismatch too, for the re-run command in the reason and for `vg judge`.
+        # Stamped on a mismatch too, for the re-run command in the reason and for `provenance judge`.
         # The review page does not show it: build does not re-run a failed row, so it drops a
         # stamp it cannot vouch for (revalidate_from_cache) and prints its own root.
         v.query_run = run
@@ -183,7 +183,7 @@ def _mark_query_verified(v: Verification, q, result, run: QueryRun) -> None:
 
 
 # --- The offline check ---------------------------------------------------------------------
-# `vg verify` and `vg build` must agree on what a citation needs. Build's re-check used to ask
+# `provenance verify` and `provenance build` must agree on what a citation needs. Build's re-check used to ask
 # only whether the snippet was uniquely on the cached page, so a forged `verified` rode through
 # on an excluded aggregator, a blog, or a soft 404 echoing the quote — every rule verify
 # enforces beyond presence was one build never re-ran. Both now call these two functions, and
@@ -205,7 +205,7 @@ def citation_problem(src: Source,
 
 def snippet_problem(snippet: str) -> tuple[str, str] | None:
     """citation_problem()'s snippet-shape rules, which need neither a page nor the rest of the
-    citation — so `vg check` runs them on a bare snippet too."""
+    citation — so `provenance check` runs them on a bare snippet too."""
     # Normalized first, so "[[PAGE 7]]" and a marker with odd spacing are caught too. A part of
     # one ("page 7]]") is caught at search time instead: _locate() drops hits on a marker.
     if m := PDF_PAGE_MARKER.search(normalize(snippet)[0]):
@@ -308,7 +308,7 @@ def check_page(src: Source, page: PageCache) -> PageCheck:
     # A page kept after a failed re-fetch says so on the row. The review app and the retry
     # loop read the reason, not the log, and a miss against an older extraction would
     # otherwise read as a research failure rather than a stale page. First, not last:
-    # `vg verify` prints only the head of a reason.
+    # `provenance verify` prints only the head of a reason.
     if note := kept_copy_note(page):
         found.reason = f"{note} — {found.reason}" if found.reason else note
     return found
@@ -316,7 +316,7 @@ def check_page(src: Source, page: PageCache) -> PageCheck:
 
 def check_snippet(snippet: str, page: PageCache, *, pdf_page: int | None = None) -> PageCheck:
     """check_page() without the kept-copy note: everything it decides needs only the snippet,
-    and the `page` locator a source may carry. `vg check` calls this too, so a researcher's
+    and the `page` locator a source may carry. `provenance check` calls this too, so a researcher's
     self-check and the verifier cannot triage a page differently."""
     # A citation must point at a page that actually served. An error page can carry the
     # snippet (a soft 404 echoing the query, a "not found" page quoting the article title)
@@ -424,7 +424,7 @@ def verify_source(src: Source, root: Path, *, refresh: bool = False,
 
 
 def _copy_of(url: str, page: PageCache) -> PageCopy:
-    """Name the copy of `url` a context is being built from, as `vg judge` will look it up."""
+    """Name the copy of `url` a context is being built from, as `provenance judge` will look it up."""
     return PageCopy(url=url, fetched_at=page.fetched_at, extractor_version=page.extractor_version)
 
 
@@ -556,7 +556,7 @@ def _capture_problem(root: Path, src: Source, snapshot: str,
     capture loaded as a readable page and only the citation's own check is left."""
     if page is None:
         return "archive_unconfirmed", (
-            f"{snapshot} has not been checked yet — run `vg archive` to check it")
+            f"{snapshot} has not been checked yet — run `provenance archive` to check it")
     if elsewhere := _landed_elsewhere(root, src, page):
         return "archive_unusable", f"{snapshot}: {elsewhere}"
     name = bot_check(page)
@@ -603,7 +603,7 @@ def check_snapshot(src: Source, snapshot: str, root: Path, *, fetch_missing: boo
     to the text, so a junk one is worse than none — it looks like evidence.
 
     `earlier` marks a capture that is not a fresh save (the save failed and an older one
-    stood in). Offline unless `fetch_missing`: `vg archive` fetches each snapshot (which
+    stood in). Offline unless `fetch_missing`: `provenance archive` fetches each snapshot (which
     caches it), and every later command re-derives the same answer from that cached copy.
     """
     if not _is_capture_of(root, src.url, snapshot):
@@ -705,7 +705,7 @@ def verify_against_archive(src: Source, root: Path, *, refresh: bool = False) ->
     And it must have served a real page: an error page or bot check can echo the snippet.
 
     A row already `verified_via_archive` is re-checked, not kept: it was earned against
-    whatever snapshot was recorded then, and `vg archive` may have replaced it since.
+    whatever snapshot was recorded then, and `provenance archive` may have replaced it since.
     """
     v = src.verification
     if v.status == "verified_via_archive":
@@ -720,7 +720,7 @@ def verify_against_archive(src: Source, root: Path, *, refresh: bool = False) ->
         v.support, v.support_note = "unreviewed", None
     if v.status != "could_not_verify_paywall" or not src.archive_url:
         return src
-    # The status may have come from a claim file (`vg archive` loads trusted): upgrade only
+    # The status may have come from a claim file (`provenance archive` loads trusted): upgrade only
     # where the live page, as cached, really is gated.
     if _live_gate(root, src) is not None:
         return src
@@ -754,7 +754,7 @@ def revalidate_from_cache(src: Source, root: Path, *,
     Stripping machine-owned fields on ingest stops an agent from *declaring* its citation
     verified, but only for commands that re-verify. This closes the rest of the gap: every
     row that counts as evidence is rebuilt from the cached page it was supposedly checked
-    against, by the same offline check `vg verify` runs — source class, snippet rules, served
+    against, by the same offline check `provenance verify` runs — source class, snippet rules, served
     status, presence, uniqueness. What renders is what that check gives now, never what the
     claim file said: a row that cannot be reproduced is downgraded to `human_review`, and one
     that can gets its status, reason, excerpt and offsets from the check. No network, so it
@@ -823,13 +823,13 @@ def revalidate_from_cache(src: Source, root: Path, *,
             v.query_run = run
             return src
         # A query that reproduces vouches for its number, not for whatever status, excerpt or
-        # reason the claim file paired with it: rebuild them exactly as `vg verify` would.
+        # reason the claim file paired with it: rebuild them exactly as `provenance verify` would.
         _mark_query_verified(v, src.query, result, run)
         return src
 
     problem = citation_problem(src, rules)
     if problem:
-        return _discard(f"claimed {claimed!r} but the citation fails a rule `vg verify` "
+        return _discard(f"claimed {claimed!r} but the citation fails a rule `provenance verify` "
                         f"enforces ({problem[0]}): {problem[1]}")
 
     # verified_via_archive means the LIVE page was unreadable, so checking src.url would
@@ -838,15 +838,15 @@ def revalidate_from_cache(src: Source, root: Path, *,
     if claimed == "verified_via_archive":
         if not src.archive_url:
             return _discard("claimed verified_via_archive but no snapshot is recorded — "
-                            "re-run `vg archive`")
+                            "re-run `provenance archive`")
         # The status means the LIVE page couldn't be read. Where it reads fine, an earlier
         # capture holding a quote the page has since dropped would otherwise reproduce it.
         if gate := _live_gate(root, src):
-            return _discard(f"claimed verified_via_archive but {gate} — re-run `vg verify`")
+            return _discard(f"claimed verified_via_archive but {gate} — re-run `provenance verify`")
         if not _is_capture_of(root, src.url, src.archive_url):
             return _discard(
                 f"claimed verified_via_archive against {src.archive_url}, which is not a "
-                "capture of the cited URL — re-run `vg archive`")
+                "capture of the cited URL — re-run `provenance archive`")
     target = src.context_url   # the page a verdict on this row is checked against, too
 
     # fetch() caches every response, gates and error pages included, so any row the pipeline
@@ -855,18 +855,18 @@ def revalidate_from_cache(src: Source, root: Path, *,
     if page is None:
         return _discard(
             f"claimed {claimed!r} but no cached page exists for {target} — run "
-            "`vg verify`; never trust a status the pipeline did not produce")
+            "`provenance verify`; never trust a status the pipeline did not produce")
     if claimed == "verified_via_archive" and (elsewhere := _landed_elsewhere(root, src, page)):
         return _discard(f"claimed verified_via_archive against {target}, but {elsewhere} — "
-                        "re-run `vg archive`")
+                        "re-run `provenance archive`")
     found = check_page(src, page)
     if claimed == "could_not_verify_paywall":
         if found.status != claimed:
             # Build refines a row that already matched; it never promotes one into a match, the
             # same way a 'verified' that no longer matches exactly is sent back rather than
-            # relabelled. A gate the cached page doesn't have is `vg verify`'s to re-derive.
+            # relabelled. A gate the cached page doesn't have is `provenance verify`'s to re-derive.
             return _discard(f"claimed {claimed!r} but the cached page gives {found.status!r} "
-                            "— re-run `vg verify`")
+                            "— re-run `provenance verify`")
         # Still gated. Its evidence is the gate itself, so there is no excerpt to draw: take
         # the check's reason and clear anything page-derived the claim file carried.
         v.reason, v.match_count = found.reason, found.match_count
@@ -874,8 +874,8 @@ def revalidate_from_cache(src: Source, root: Path, *,
         src.paywall = True
         return src
     if found.status not in MATCHED:
-        return _discard(f"claimed {claimed!r} but the cached page fails the check `vg verify` "
-                        f"runs ({found.status}): {found.reason} — re-run `vg verify`")
+        return _discard(f"claimed {claimed!r} but the cached page fails the check `provenance verify` "
+                        f"runs ({found.status}): {found.reason} — re-run `provenance verify`")
     start, end = found.start, found.end
     if claimed == "verified" and found.mode != "exact":
         # "verified" is a promise that the human's literal Cmd-F will hit. A normalized-only
@@ -883,7 +883,7 @@ def revalidate_from_cache(src: Source, root: Path, *,
         # through on one.
         return _discard(
             "claimed 'verified' but the snippet only matches after normalization, which "
-            "does not guarantee Cmd-F will find it — re-run `vg verify`")
+            "does not guarantee Cmd-F will find it — re-run `provenance verify`")
     if claimed == "verified_via_archive":
         # The snapshot matched, so the status stands. The reason is still rebuilt from how it
         # matched: a normalized-only hit must say so, whatever the claim file wrote.

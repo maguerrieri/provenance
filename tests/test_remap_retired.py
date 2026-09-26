@@ -1,4 +1,4 @@
-"""`vg remap` and the verdict re-homing it needed are retired: question ids are stable and never
+"""`provenance remap` and the verdict re-homing it needed are retired: question ids are stable and never
 reused, so a claim never moves between ids. What stays is that an old invocation is told why,
 that a backup an interrupted re-home left behind still stops every reader, and that files
 carrying the fields remap wrote still load and build."""
@@ -13,15 +13,15 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from typer.testing import CliRunner
 
-from vgpipe import cli, judgments
-from vgpipe.fetch import cache_path
-from vgpipe.models import EXTRACTOR_VERSION, Claim, PageCache, Question, Source
+from provenance import cli, judgments
+from provenance.fetch import cache_path
+from provenance.models import EXTRACTOR_VERSION, Claim, PageCache, Question, Source
 
 URL = "https://news.example/council-vote"
 SNIPPET = "voted against the harbor levy on its second reading"
 
 
-def _vg(*args):
+def _provenance(*args):
     width = cli.con.width
     cli.con.width = 10_000   # rich folds a long tmp path mid-word at 80 columns
     try:
@@ -32,8 +32,8 @@ def _vg(*args):
 
 
 def _handed(data, qid: str, sid: str) -> list[str]:
-    """`--context` and the token `vg handoff` prints beside `sid`, as a verifier passes it on."""
-    code, out = _vg("handoff", qid, "--data", data)
+    """`--context` and the token `provenance handoff` prints beside `sid`, as a verifier passes it on."""
+    code, out = _provenance("handoff", qid, "--data", data)
     assert code == 0, out
     token = re.search(rf"sid {re.escape(sid)}\s+context token (\w+)", out)
     assert token, out
@@ -46,7 +46,7 @@ def _source() -> Source:
 
 
 def _legacy_run(tmp_path):
-    """A candidate run whose files carry what `vg remap` wrote: `maps_from` and `mapped_from`
+    """A candidate run whose files carry what `provenance remap` wrote: `maps_from` and `mapped_from`
     in the question template, `previous_question` in the claim. The cited page is cached, so
     everything below runs offline."""
     data, run = tmp_path / "data", tmp_path / "data" / "cand"
@@ -74,23 +74,23 @@ def test_files_carrying_remaps_fields_still_load_and_build(tmp_path):
     data, run, questions = _legacy_run(tmp_path)
     assert [Question.model_validate(q).id for q in questions] == ["q1", "q2"]
 
-    code, out = _vg("verify", "--data", run)
+    code, out = _provenance("verify", "--data", run)
     assert code == 0, out
     (claim,) = cli.load_claims(run / "claims", trust_machine_fields=True)
     assert claim.sources[0].verification.status == "verified"
-    code, out = _vg("judge", "q1", claim.sources[0].sid, "supports", "--data", run,
+    code, out = _provenance("judge", "q1", claim.sources[0].sid, "supports", "--data", run,
                     *_handed(run, "q1", claim.sources[0].sid))
     assert code == 0 and "supports recorded" in out, out
-    code, out = _vg("judgments", "--data", run)
+    code, out = _provenance("judgments", "--data", run)
     assert code == 0 and "0 of 1 cited source(s) need a verdict" in out, out
-    code, out = _vg("build", "--data", run)
+    code, out = _provenance("build", "--data", run)
     assert code == 0, out
     (built,) = json.loads((run / "out" / "claims.json").read_text())
     assert built["question_id"] == "q1"
     assert built["sources"][0]["verification"]["support"] == "supports"
 
     # A new run copies neither half of a migration: it has no earlier id space.
-    code, out = _vg("new-candidate", "ng", "--data", data)
+    code, out = _provenance("new-candidate", "ng", "--data", data)
     assert code == 0, out
     copied = json.loads((data / "ng" / "questions.json").read_text())
     assert [q["id"] for q in copied] == ["q1", "q2"]
@@ -102,16 +102,16 @@ def _tree(root):
 
 
 @pytest.mark.parametrize("args, named", [
-    (["remap"], "`vg remap`"),
-    (["remap", "--apply"], "`vg remap`"),
-    (["remap", "--apply", "--archive-stranded"], "`vg remap`"),
-    (["remap", "--mark-applied"], "`vg remap`"),
-    (["judgments", "--repair"], "`vg judgments --repair`"),
+    (["remap"], "`provenance remap`"),
+    (["remap", "--apply"], "`provenance remap`"),
+    (["remap", "--apply", "--archive-stranded"], "`provenance remap`"),
+    (["remap", "--mark-applied"], "`provenance remap`"),
+    (["judgments", "--repair"], "`provenance judgments --repair`"),
     (["judgments", "--repair", "--moved", "q1:q2", "--gone", "q3"],
-     "`vg judgments --repair --moved --gone`"),
-    (["judgments", "--moved", "q1:q2"], "`vg judgments --moved`"),
-    (["judgments", "--gone", "q3"], "`vg judgments --gone`"),
-    (["judgments", "--rollback"], "`vg judgments --rollback`"),
+     "`provenance judgments --repair --moved --gone`"),
+    (["judgments", "--moved", "q1:q2"], "`provenance judgments --moved`"),
+    (["judgments", "--gone", "q3"], "`provenance judgments --gone`"),
+    (["judgments", "--rollback"], "`provenance judgments --rollback`"),
 ], ids=lambda v: " ".join(v) if isinstance(v, list) else "")
 def test_a_retired_command_says_why_and_changes_nothing(tmp_path, args, named):
     """An old script or habit must meet the rule that replaced these commands, not "No such
@@ -120,7 +120,7 @@ def test_a_retired_command_says_why_and_changes_nothing(tmp_path, args, named):
     data, run, _ = _legacy_run(tmp_path)
     judgments.record(run, "q1", _source().sid, "supports", "judged before the retirement")
     before = _tree(data)
-    code, out = _vg(*args, "--data", run)
+    code, out = _provenance(*args, "--data", run)
     assert code == 1, out
     assert f"{named} is retired: question ids are stable and never reused" in out, out
     assert "A split or reworded question gets a new id, and the old id is retired" in out, out
@@ -128,9 +128,9 @@ def test_a_retired_command_says_why_and_changes_nothing(tmp_path, args, named):
 
 
 def test_retired_commands_are_not_offered(tmp_path):
-    _, out = _vg("--help")
+    _, out = _provenance("--help")
     assert "remap" not in out, out
-    _, out = _vg("judgments", "--help")
+    _, out = _provenance("judgments", "--help")
     assert not re.search(r"--(repair|rollback|moved|gone)\b", out), out
 
 
@@ -138,7 +138,7 @@ def test_a_backup_an_interrupted_re_home_left_still_stops_every_reader(tmp_path,
     """No re-home runs any more, but one an older version was running when it died left
     judgments-backup/ behind, with shards that may be half-rewritten. Reading them as the
     verdicts would render whatever is missing as unreviewed, so every reader still refuses,
-    and names a commit whose `--rollback` undoes it. `--rollback`, `--repair` and `vg remap`
+    and names a commit whose `--rollback` undoes it. `--rollback`, `--repair` and `provenance remap`
     say the same rather than that they are retired, since that is what an operator retrying the
     interrupted command needs.
 
@@ -151,15 +151,15 @@ def test_a_backup_an_interrupted_re_home_left_still_stops_every_reader(tmp_path,
     (judgments.backup_dir(run) / "q1.json").write_text("[]")
     before = _tree(data)
     monkeypatch.chdir(tmp_path)
-    # `vg judge` too, the one writer: a verdict recorded into half-rewritten shards is one the
+    # `provenance judge` too, the one writer: a verdict recorded into half-rewritten shards is one the
     # old rollback then overwrites.
     for args in (["judgments"], ["judgments", "--rollback"], ["judgments", "--repair"],
                  ["remap", "--apply"], ["build"], ["status"], ["verify"],
                  ["judge", "q1", _source().sid, "supports"]):
-        code, out = _vg(*args, "--data", run.relative_to(tmp_path))
+        code, out = _provenance(*args, "--data", run.relative_to(tmp_path))
         assert code == 1, (args, out)
         assert "was interrupted, and its shards may be half-rewritten" in out, (args, out)
-        assert (f"run `vg judgments --rollback --data {shlex.quote(str(run.resolve()))}` from "
+        assert (f"run `provenance judgments --rollback --data {shlex.quote(str(run.resolve()))}` from "
                 f"a checkout of commit {judgments.LAST_WITH_ROLLBACK}, which still has it"
                 ) in out, (args, out)
         # after the rollback, the migration is still pending, and only that checkout can apply it
@@ -174,9 +174,9 @@ def test_the_rollback_command_quotes_a_run_path_with_a_space(tmp_path):
     and reported nothing to undo, while every reader here kept refusing."""
     data, run, _ = _legacy_run(tmp_path / "my runs")
     judgments.backup_dir(run).mkdir()
-    code, out = _vg("judgments", "--data", run)
+    code, out = _provenance("judgments", "--data", run)
     assert code == 1, out
-    cmd = re.search(r"run `(vg judgments --rollback --data .*?)` from a checkout", out)
+    cmd = re.search(r"run `(provenance judgments --rollback --data .*?)` from a checkout", out)
     assert cmd, out
     assert shlex.split(cmd.group(1))[-2:] == ["--data", str(run.resolve())], cmd.group(1)
 
@@ -184,7 +184,7 @@ def test_the_rollback_command_quotes_a_run_path_with_a_space(tmp_path):
 def test_the_commit_named_for_rollback_is_on_main_and_has_it():
     """The refusal above sends an operator to this commit. It must be named in full, be on
     main, where the operator's clone has it (a commit only on a feature branch can be rebased
-    away), and its `vg judgments` must still take `--rollback`. CI's checkout is shallow, so
+    away), and its `provenance judgments` must still take `--rollback`. CI's checkout is shallow, so
     the history half runs where the history is."""
     import subprocess
 
@@ -193,7 +193,7 @@ def test_the_commit_named_for_rollback_is_on_main_and_has_it():
 
     commit = judgments.LAST_WITH_ROLLBACK
     assert re.fullmatch(r"[0-9a-f]{40}", commit), "an abbreviated id can become ambiguous"
-    old = git("show", f"{commit}:src/vgpipe/judgments.py")
+    old = git("show", f"{commit}:src/provenance/judgments.py")
     if old.returncode != 0:
         pytest.skip(f"no git history with {commit} here: {old.stderr.strip()}")
     # HEAD only where there is no origin/main to ask, as in a fork's checkout.
@@ -201,23 +201,23 @@ def test_the_commit_named_for_rollback_is_on_main_and_has_it():
             else "HEAD")
     assert git("merge-base", "--is-ancestor", commit, main).returncode == 0, main
     assert "\ndef rollback(root: Path)" in old.stdout
-    assert "rollback: bool = False" in git("show", f"{commit}:src/vgpipe/cli.py").stdout
+    assert "rollback: bool = False" in git("show", f"{commit}:src/provenance/cli.py").stdout
 
 
-def test_vg_judgments_names_the_scratch_an_interrupted_re_home_left(tmp_path):
+def test_provenance_judgments_names_the_scratch_an_interrupted_re_home_left(tmp_path):
     """A re-home killed while building its backup left judgments-backup.partial/, and one killed
     while deleting the retired backup left judgments-backup.discard/. The next re-home cleared
-    them. Nothing does now, so `vg judgments` says what they are, before anyone mistakes one
+    them. Nothing does now, so `provenance judgments` says what they are, before anyone mistakes one
     for the backup and restores stale verdicts from it."""
     data, run, _ = _legacy_run(tmp_path)
-    code, out = _vg("verify", "--data", run)
+    code, out = _provenance("verify", "--data", run)
     assert code == 0, out
     for name in ("judgments-backup.partial", "judgments-backup.discard"):
         (run / name).mkdir()
         (run / name / "q1.json").write_text("[]")
-    code, out = _vg("judgments", "--data", run)
+    code, out = _provenance("judgments", "--data", run)
     for name in ("judgments-backup.partial", "judgments-backup.discard"):
-        assert (f"{run / name} is scratch an interrupted re-home by the retired `vg remap` left "
+        assert (f"{run / name} is scratch an interrupted re-home by the retired `provenance remap` left "
                 f"behind") in out, out
     # A .partial copied the shards before any was touched, and a .discard is the shards before a
     # re-home that finished: neither is the run's verdicts now.
@@ -226,26 +226,26 @@ def test_vg_judgments_names_the_scratch_an_interrupted_re_home_left(tmp_path):
     assert "was interrupted, and its shards may be half-rewritten" not in out, "not the backup"
 
 
-def test_vg_judgments_counts_a_shard_a_case_folding_disk_opens_as_the_claims(tmp_path,
+def test_provenance_judgments_counts_a_shard_a_case_folding_disk_opens_as_the_claims(tmp_path,
                                                                            monkeypatch):
-    """On macOS's default disk `vg build` opens Q1.json for claim q1 and applies its verdicts,
-    so `vg judgments` must count them as q1's, or its gate never reaches 0. CI's disk keeps the
+    """On macOS's default disk `provenance build` opens Q1.json for claim q1 and applies its verdicts,
+    so `provenance judgments` must count them as q1's, or its gate never reaches 0. CI's disk keeps the
     two names apart, so that branch never ran there once the re-home tests that simulated a
     folding disk went: this simulates one by answering `_same_file()` as such a disk would."""
     data, run, _ = _legacy_run(tmp_path)
-    code, out = _vg("verify", "--data", run)
+    code, out = _provenance("verify", "--data", run)
     assert code == 0, out
     (claim,) = cli.load_claims(run / "claims", trust_machine_fields=True)
     page_url, page_at, ver = judgments.judged_copy(claim.sources[0], data)
     judgments.record(run, "Q1", claim.sources[0].sid, "supports", "judged as Q1",
                      page_fetched_at=page_at, extractor_version=ver, page_url=page_url,
                      claim_fingerprint=claim.fingerprint)
-    code, out = _vg("judgments", "--data", run)
+    code, out = _provenance("judgments", "--data", run)
     if not (run / "judgments" / "q1.json").exists():   # this disk keeps Q1 and q1 apart
         assert code == 1 and "under an id no claim has (Q1.json)" in out, out
         monkeypatch.setattr(judgments, "_same_file", lambda root, stem, qid: (
             stem.casefold() == qid.casefold() and judgments._on_disk(root, stem).exists()))
-        code, out = _vg("judgments", "--data", run)
+        code, out = _provenance("judgments", "--data", run)
     assert code == 0 and "0 of 1 cited source(s) need a verdict" in out, out
     assert "Q1.json differ from a claim's id only in case, and this disk opens them" in out, out
     assert "Rename each to its claim's exact id by hand" in out, out
@@ -253,7 +253,7 @@ def test_vg_judgments_counts_a_shard_a_case_folding_disk_opens_as_the_claims(tmp
 
 def test_a_verdict_recorded_while_another_is_being_written_is_not_lost(tmp_path, monkeypatch):
     """record() reads a shard and rewrites it, and verifier agents record in parallel. A second
-    `vg judge` landing between the first one's read and its rewrite was never read, so the
+    `provenance judge` landing between the first one's read and its rewrite was never read, so the
     rewrite deleted it. The directory lock makes it wait and land on top instead. (The test
     that pinned this lock went with `rehome()`, which shared it.)"""
     import threading

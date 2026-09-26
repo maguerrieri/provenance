@@ -1,4 +1,4 @@
-"""vg — voter guide pipeline CLI."""
+"""provenance — voter guide pipeline CLI."""
 
 from __future__ import annotations
 
@@ -163,7 +163,7 @@ def _archive_records(data: Path) -> dict[str, dict]:
 
 
 def _warn_unrecorded_snapshots(claims_dir: Path, records: dict[str, dict]) -> None:
-    """Say how many claim-file archive_urls no `vg archive` run recorded.
+    """Say how many claim-file archive_urls no `provenance archive` run recorded.
 
     None is ever used, and the first command to write claims back drops them, so this is
     the one moment the loss is visible — a run archived before the records existed would
@@ -182,8 +182,8 @@ def _warn_unrecorded_snapshots(claims_dir: Path, records: dict[str, dict]) -> No
                         and s["archive_url"] != (records.get(s.get("url")) or {}).get("snapshot")):
                     n += 1
     if n:
-        con.print(f"[yellow]{n} source(s) carry an archive_url no `vg archive` run recorded; "
-                  f"it is ignored. Run `vg archive` to snapshot them.[/]")
+        con.print(f"[yellow]{n} source(s) carry an archive_url no `provenance archive` run recorded; "
+                  f"it is ignored. Run `provenance archive` to snapshot them.[/]")
 
 
 def _verdict_cache_root(data: Path, cache: Path | None) -> Path:
@@ -206,7 +206,7 @@ def _verdict_cache_root(data: Path, cache: Path | None) -> Path:
                   f"every verdict checked against it would read stale.[/]")
         raise typer.Exit(1)
     con.print(f"[yellow]no cache at {escape(_printable(str(root / 'cache')))}: every verdict on a "
-              f"cited page will read stale until `vg verify` fetches the pages, or --cache names "
+              f"cited page will read stale until `provenance verify` fetches the pages, or --cache names "
               f"the cache.[/]")
     return root
 
@@ -216,8 +216,8 @@ def _aliased_shards(data: Path, every: dict, claims: list[Claim]) -> dict[str, s
     otherwise — Q1.json for claim q1 on a case-insensitive disk.
 
     Asked of the disk, not guessed from the names: on a case-sensitive one Q1.json is simply a
-    shard no claim has, which `vg build` never reads. Where the disk opens it as q1.json, it is
-    q1's shard, and `vg build` applies it to q1.
+    shard no claim has, which `provenance build` never reads. Where the disk opens it as q1.json, it is
+    q1's shard, and `provenance build` applies it to q1.
     """
     from . import judgments
 
@@ -307,7 +307,7 @@ def load_claims(claims_dir: Path, *, trust_machine_fields: bool = False,
                     "questions.json and any derives_from naming it, and store it as "
                     "<new id>.json, since claims are stored as <qid>.json. On a case-sensitive "
                     "disk its verdicts stay filed under the old id, where nothing reads them: "
-                    "`vg judgments` names that shard, to move out of judgments/ or rename with "
+                    "`provenance judgments` names that shard, to move out of judgments/ or rename with "
                     "its claim. Where the disk folds case, both ids' verdicts are already in "
                     "one shard: split it by hand.")
             origin[key] = (claim.question_id, p.name)
@@ -344,7 +344,7 @@ def fetch(url: str, data: Path = DATA, cache: Path = None, refresh: bool = False
     if p.error:
         con.print(f"[red]error:[/] {escape(_printable(p.error, lines=True))}")
     # A kept page carries its OLD status and text, so without this line a failed
-    # `vg fetch --refresh` prints exactly like a successful one.
+    # `provenance fetch --refresh` prints exactly like a successful one.
     if kept := kept_copy_note(p):
         con.print(f"[red]{escape(_printable(kept))}[/]")
     # Its markers print below like text, so a scan otherwise reads as an ordinary page.
@@ -368,10 +368,10 @@ def check(url: str, snippet: str, data: Path = DATA, cache: Path = None, refresh
     """Ad-hoc: is this snippet on this page, exactly once? (Researchers self-check with this.)
 
     Runs the verifier's own snippet rules and page check, so it cannot pass a snippet or a page
-    that `vg verify` fails, nor fail what it only flags: a paywall or a scan is flagged, a dead
+    that `provenance verify` fails, nor fail what it only flags: a paywall or a scan is flagged, a dead
     URL or a soft 404 is a failure. --page is the source's `page` locator: on a partly scanned
     PDF it is what tells a quote on a scanned page from one that isn't there. Source class
-    needs the whole citation, so only `vg check-claim` checks that. Exits non-zero on a
+    needs the whole citation, so only `provenance check-claim` checks that. Exits non-zero on a
     failure."""
     if problem := snippet_problem(snippet):
         con.print(f"[red]{problem[0]}: {escape(_printable(problem[1]))}[/]")
@@ -441,7 +441,7 @@ def verify(data: Path = DATA, cache: Path = None, refresh: bool = False, qid: st
             verify_source(s, cache_root, refresh=refresh, rules=rules)
             apply_archive(s, records, cache_root)
             # verify_source just reset a paywalled row; its snapshot is already cached, so
-            # re-earn verified_via_archive here instead of losing it until `vg archive`.
+            # re-earn verified_via_archive here instead of losing it until `provenance archive`.
             verify_against_archive(s, cache_root)
             st = s.verification.status
             if st in ("verified", "verified_via_archive"):
@@ -477,7 +477,7 @@ def _report_stale(stale: list[str]) -> None:
               f"applied. Each predates its page, or has no cached page to check against, or "
               f"judged a copy its context no longer comes from (a replaced snapshot), or was "
               f"formed under another query definition, or judged another question or answer "
-              f"than its claim gives now (or names none) — re-judge those sources (after `vg "
+              f"than its claim gives now (or names none) — re-judge those sources (after `provenance "
               f"verify`, where the page is missing):[/]")
     for x in stale[:8]:
         # Escaped: a reason can name a snapshot, whose URL embeds the agent-authored one.
@@ -548,7 +548,7 @@ def archive(data: Path = DATA, cache: Path = None, delay: float = 3.0):
         """Whether an earlier snapshot of ours is already known not to be the cited page — a
         bot check, a capture of somewhere else, nothing readable. Never because a snippet is
         missing from it: that can be the citation's fault, and a good capture would be thrown
-        away for it. Offline: `vg archive` fetched it when it was recorded."""
+        away for it. Offline: `provenance archive` fetched it when it was recorded."""
         try:
             snapshot = check_archive_url(snapshot)
         except ValueError:
@@ -618,7 +618,7 @@ def archive(data: Path = DATA, cache: Path = None, delay: float = 3.0):
 def _report_rearchived_verdicts(claims: list[Claim], data: Path, cache_root: Path) -> None:
     """Say how many verdicts on archive rows this run left stale. A fresh snapshot is a new
     copy of the page, so every verdict on a row whose context comes from a replaced one goes
-    stale — and `vg archive` runs after the judgment pass, so without this nothing says
+    stale — and `provenance archive` runs after the judgment pass, so without this nothing says
     the pass has to run again for those rows. Called with the archives this run applied."""
     from . import judgments
 
@@ -639,8 +639,8 @@ def _report_rearchived_verdicts(claims: list[Claim], data: Path, cache_root: Pat
         return
     if stale:
         con.print(f"[yellow]{len(stale)} verdict(s) on archive-verified sources were about a "
-                  f"snapshot this run replaced, so they are stale: run `vg judgments` and judge "
-                  f"them again before `vg build` — e.g. {escape(', '.join(stale[:4]))}[/]")
+                  f"snapshot this run replaced, so they are stale: run `provenance judgments` and judge "
+                  f"them again before `provenance build` — e.g. {escape(', '.join(stale[:4]))}[/]")
 
 
 def _apply_archives(claims: list[Claim], records: dict[str, dict], cache_root: Path) -> None:
@@ -699,7 +699,7 @@ def _question_ids(data: Path, claims: list[Claim]) -> set[str] | None:
     reused"). Returns the ids of the claims that break it, or None when the question set can't
     be read, so that no claim could be checked.
 
-    `vg build` never read questions.json, so a claim on a retired id rendered beside its
+    `provenance build` never read questions.json, so a claim on a retired id rendered beside its
     replacement, and one on a reworded or reused id rendered under the new question, while every
     command exited 0. No question set at all is said out loud, since then nothing was checked.
     """
@@ -723,7 +723,7 @@ def _question_ids(data: Path, claims: list[Claim]) -> set[str] | None:
         # Not "never applied": an older remap applied some without retiring them, and the file
         # can't say which.
         con.print("[yellow]" + escape(_printable(f"{path} still declares maps_from ({pairs})"))
-                  + ", a migration for the retired `vg remap`. Nothing applies it now, and no "
+                  + ", a migration for the retired `provenance remap`. Nothing applies it now, and no "
                   "claim moves, so each is checked against the question at the id it sits on. "
                   "Delete the key once that is settled.[/]")
     if found.unlisted:
@@ -777,13 +777,13 @@ def build(data: Path = DATA, cache: Path = None, race: str = "", candidate: str 
     from .races import candidate as find_candidate
 
     # First, so that every way this build can stop short (a refusal below, a crash, a kill)
-    # leaves no earlier render for `vg serve` to show as if it were this one.
+    # leaves no earlier render for `provenance serve` to show as if it were this one.
     try:
         clear_render(data / "out")
     except OSError as e:
         con.print("[red]" + escape(_printable(f"could not clear the previous render from "
                                               f"{data / 'out'}: {e}", lines=True))
-                  + ". Remove it by hand: `vg serve` must not show a render this build did not "
+                  + ". Remove it by hand: `provenance serve` must not show a render this build did not "
                   "produce.[/]")
         raise typer.Exit(1) from None
     r = load_race(race or None)
@@ -820,7 +820,7 @@ def build(data: Path = DATA, cache: Path = None, race: str = "", candidate: str 
         newest_j = max((f.stat().st_mtime for f in jdir.glob("*.json")), default=0)
         newest_c = max((f.stat().st_mtime for f in (data / "claims").glob("*.json")), default=0)
         if newest_j > newest_c:
-            con.print("[yellow]judgments are newer than the claim files: run `vg verify` first, "
+            con.print("[yellow]judgments are newer than the claim files: run `provenance verify` first, "
                       "or recent verdicts will render as unreviewed[/]")   # verdicts live outside the claim file; merge them in
     _report_older_exports(claims, cache_root, recorded)
     html, js = render(claims, data / "out", title=title, cache_root=cache_root)
@@ -841,9 +841,9 @@ def serve(data: Path = DATA, port: int = 8765, open_browser: bool = True):
     if not (out / "review.html").exists():
         # A build removes the last render before it can refuse, so this is also what a refused
         # build leaves: say so, or the next person runs serve, not build, and never sees why.
-        con.print(f"[red]No review.html in {escape(_printable(str(out)))}: `vg build` has not "
+        con.print(f"[red]No review.html in {escape(_printable(str(out)))}: `provenance build` has not "
                   f"rendered one, is still rendering one, or its last run refused and rendered "
-                  f"nothing. Run `vg build` and fix what it reports.[/]")
+                  f"nothing. Run `provenance build` and fix what it reports.[/]")
         raise typer.Exit(1)
     handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(out))
     url = f"http://127.0.0.1:{port}/review.html"
@@ -1012,7 +1012,7 @@ def _amendment_footer(marks: list, omitted: list = (), reattributed: list | None
         also = (", or list rows an earlier amendment's cover gave this candidate"
                 if reattributed is not None else "")
         why = problem or ("its covers cannot say which amendment of a filing is its latest. "
-                          "Rebuild it from a complete export: uv run vg calaccess build")
+                          "Rebuild it from a complete export: uv run provenance calaccess build")
         con.print(Text("This database cannot tell whether a filing's latest amendment dropped "
                        f"any of these rows{also}: {why}", style="yellow"), soft_wrap=True)
     else:
@@ -1030,7 +1030,7 @@ def _amendment_footer(marks: list, omitted: list = (), reattributed: list | None
                       f"figure counting one goes to human_review.[/]")
     if any(m is None for m in omitted):
         con.print("[yellow]This database cannot tell whether a later amendment left out a "
-                  "schedule these rows are on: they carry no FORM_TYPE. Rebuild it: uv run vg "
+                  "schedule these rows are on: they carry no FORM_TYPE. Rebuild it: uv run provenance "
                   "calaccess build[/]")
     elif left_out := sum(1 for m in omitted if m):
         con.print(f"[yellow]{left_out} row(s) are in no figure: a later amendment of their "
@@ -1090,7 +1090,7 @@ def calaccess_ie(candidate_last: str, data: Path = DATA, cache: Path = None, fir
 
 def _unsettled_rest(result) -> None:
     """Every filing, schedule, late report or other name past the few a reason names
-    (UNSETTLED_SHOWN, LATE_SHOWN). The reason says `vg query` lists them, so this is where they are."""
+    (UNSETTLED_SHOWN, LATE_SHOWN). The reason says `provenance query` lists them, so this is where they are."""
     from . import queries
 
     for u in (result.unrestated[queries.UNSETTLED_SHOWN:]
@@ -1196,7 +1196,7 @@ def _qid_or_exit(data: Path, question_id: str) -> None:
 
 
 def _claim_or_exit(data: Path, question_id: str, needed: str) -> tuple[Claim, list[Claim]]:
-    """The claim with exactly this question id, loaded as `vg judge` reads it (trusted), and
+    """The claim with exactly this question id, loaded as `provenance judge` reads it (trusted), and
     every readable claim; or stop, naming why. `needed` finishes the sentence for a claim that
     could not be read: what that leaves unknown. Plain text, not markup."""
     skipped: list[str] = []
@@ -1207,7 +1207,7 @@ def _claim_or_exit(data: Path, question_id: str, needed: str) -> tuple[Claim, li
     if question_id in skipped:
         _refuse(f"claim {question_id} could not be read, {needed} — fix it first")
     # q07 for q7, Q7 for q7: the same question to a reader, a different shard to the code.
-    # On a case-insensitive disk Q7.json even IS q7.json, which `vg judgments` then misses.
+    # On a case-insensitive disk Q7.json even IS q7.json, which `provenance judgments` then misses.
     near = [c.question_id for c in claims
             if qid_sort_key(c.question_id.lower()) == qid_sort_key(question_id.lower())]
     _refuse(f"no {'readable ' if skipped else ''}claim has question id {question_id} in "
@@ -1238,11 +1238,11 @@ def _apply_archive_rows(data: Path, sources, cache_root: Path, *,
 
 
 def _rebuild_problem(s, cache_root: Path) -> str:
-    """Why `vg build` would not keep a verdict on `s` as the claim file has it now, or "".
+    """Why `provenance build` would not keep a verdict on `s` as the claim file has it now, or "".
 
     Build rebuilds every row from the cache, and drops a verdict whose context that changes
     (`revalidate_from_cache()`). A verdict on the claim file's context was then kept only until
-    the next `vg verify` rewrote the file, and from then on it applied to the rebuilt context,
+    the next `provenance verify` rewrote the file, and from then on it applied to the rebuilt context,
     which no verifier had read. Asked by running that code on a copy, not by re-deriving its
     rule. Apply the run's snapshots first (`_apply_archive_rows()`)."""
     rebuilt = s.model_copy(deep=True)
@@ -1253,16 +1253,16 @@ def _rebuild_problem(s, cache_root: Path) -> str:
         return (f"the cache does not confirm this citation as the claim file has it ({v.status}: "
                 f"{v.reason or 'no reason given'}), so there is no context to judge")
     if v.support == "unreviewed":
-        return ("its context is not what the cached page gives now, so `vg build` would drop a "
-                "verdict on it. Run `vg verify` for this run, then judge the context it gives")
+        return ("its context is not what the cached page gives now, so `provenance build` would drop a "
+                "verdict on it. Run `provenance verify` for this run, then judge the context it gives")
     return ""
 
 
 def _unjudgeable(s, cache_root: Path, *, seen, last_run) -> str:
-    """Why `vg judge` would refuse a verdict on `s` now, or "": one answer for `vg handoff`,
-    `vg judge` and `vg judgments`, so a hand-off never offers what judge refuses or the gate
+    """Why `provenance judge` would refuse a verdict on `s` now, or "": one answer for `provenance handoff`,
+    `provenance judge` and `provenance judgments`, so a hand-off never offers what judge refuses or the gate
     waits on. `seen` and `last_run` are the claim file's `context_page` and `query_run`,
-    captured before anything rebuilt the verification: `vg judge` reads the file."""
+    captured before anything rebuilt the verification: `provenance judge` reads the file."""
     from . import judgments
 
     if s.query is None:
@@ -1273,7 +1273,7 @@ def _unjudgeable(s, cache_root: Path, *, seen, last_run) -> str:
 
 
 def _query_run_line(run) -> str:
-    """The run a query citation's context came from, as `vg handoff` shows it. Facts only: the
+    """The run a query citation's context came from, as `provenance handoff` shows it. Facts only: the
     verifier acts on what the hand-off prints, so it carries no instruction (`describe_export()`
     tells an operator to rebuild an undated database, which is not a verifier's step)."""
     data = run.dataset
@@ -1283,13 +1283,13 @@ def _query_run_line(run) -> str:
 
 
 def _handed(claim, cache_root: Path, *, judged=None):
-    """What `vg handoff` shows a verifier for `claim`, as one value (`judgments.Handoff`): the
+    """What `provenance handoff` shows a verifier for `claim`, as one value (`judgments.Handoff`): the
     printer reads nothing else, and the context token hashes all of it but what it names as left
-    out, so nothing else can be printed that the token does not cover. `vg handoff` and `vg
+    out, so nothing else can be printed that the token does not cover. `provenance handoff` and `provenance
     judge` both build it here, from one read of the claim file. Apply the run's snapshots first
     (`_apply_archive_rows()`).
 
-    `judged` is a source `vg judge` has already found judgeable, and is not asked again: that
+    `judged` is a source `provenance judge` has already found judgeable, and is not asked again: that
     would read a query's database a second time, and a rebuild landing between the two reads
     would refuse a verdict whose stamp comes from the first."""
     from . import judgments, queries
@@ -1298,11 +1298,11 @@ def _handed(claim, cache_root: Path, *, judged=None):
     sources = []
     for n, s in enumerate(claim.sources, 1):
         v = s.verification
-        # `vg judge` finds a source by its sid, so a second citation of the same url and snippet
+        # `provenance judge` finds a source by its sid, so a second citation of the same url and snippet
         # is judged as the first: one verdict, keyed by that sid, and one token, printed there.
         k = first.setdefault(s.sid, n)
         why = (f"the same source id as [{k}/{len(claim.sources)}]: a verdict is recorded per "
-               f"source id, and `vg judge` takes that one for it" if k != n else
+               f"source id, and `provenance judge` takes that one for it" if k != n else
                "" if s is judged else
                _unjudgeable(s, cache_root, seen=v.context_page, last_run=v.query_run)
                ) or ("" if v.context else "it has no context")
@@ -1358,11 +1358,11 @@ def _print_copied(text: str, limit: int | None = None) -> None:
 @app.command()
 def handoff(question_id: str, data: Path = DATA, cache: Path = None):
     """Print what a verifier judges for one claim: the claim, and each source's context with
-    the context token `vg judge --context` must hand back.
+    the context token `provenance judge --context` must hand back.
 
-    Claim, contexts and tokens come from one read of the claim file, the one `vg judge` checks,
+    Claim, contexts and tokens come from one read of the claim file, the one `provenance judge` checks,
     built into one value (`_handed()`) that this prints and each token hashes, so a token names
-    everything printed with it: the claim, and every source, not only its own. A source `vg
+    everything printed with it: the claim, and every source, not only its own. A source `provenance
     judge` would refuse now gets its reason instead of a token. Read-only.
     """
     _qid_or_exit(data, question_id)
@@ -1412,7 +1412,7 @@ def _print_handoff(h, run_args: str) -> None:
     if all(s.context is None for s in h.sources):
         line("Nothing in this claim can be judged yet.", "yellow")
         return
-    line(f"Record each verdict: uv run vg judge {shlex.quote(h.question_id)} <sid> "
+    line(f"Record each verdict: uv run provenance judge {shlex.quote(h.question_id)} <sid> "
          f"supports|topic_only|contradicts|superseded --context <token> --note \"<one line>\""
          f"{run_args}")
 
@@ -1422,7 +1422,7 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
           data: Path = DATA, cache: Path = None):
     """Record a verifier agent's verdict on one source.
 
-    Judgments live in data/judgments/, not in the claim file: `vg verify` reloads claims with
+    Judgments live in data/judgments/, not in the claim file: `provenance verify` reloads claims with
     stripping on — which is what stops a researcher self-certifying — so a verdict written
     into the claim is destroyed by the next verify run. Keyed by source id, so it follows the
     citation and lapses automatically when a retry changes the quote. A contradicts does not:
@@ -1430,11 +1430,11 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
 
     verdict: supports | topic_only | contradicts | superseded
 
-    --context is the context token `vg handoff` printed beside the source. Required: without
+    --context is the context token `provenance handoff` printed beside the source. Required: without
     it nothing says which hand-off the verdict is about.
 
     Refuses, writing nothing, unless the named claim cites the source, the copy of the page
-    `vg verify` built its context from is still the one cached, and the hand-off `vg handoff`
+    `provenance verify` built its context from is still the one cached, and the hand-off `provenance handoff`
     would print now is the one the token names. A verdict filed anywhere else is read by
     nothing — `q07` for `q7`, or a sid another claim cites — while the command reported success
     and the judgment pass looked done; one stamped from another copy, or on a claim, context or
@@ -1443,7 +1443,7 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
 
     The verdict also records the claim's fingerprint (its question and answer as the claim file
     reads now), so a retry that rewrites the claim after this can be told apart from one that
-    did not: `vg build` applies the verdict only while the claim still asks and answers that.
+    did not: `provenance build` applies the verdict only while the claim still asks and answers that.
     """
     from . import judgments
 
@@ -1469,7 +1469,7 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
         # recorded into it whatever else is right.
         judgments.load(data, question_id)
 
-    # Stamp the copy of the page the verifier read — the one `vg verify` built the context from
+    # Stamp the copy of the page the verifier read — the one `provenance verify` built the context from
     # — so a later re-fetch can invalidate this verdict instead of leaving it to describe text
     # that no longer exists. Same root, same lookup as the check in `apply_to()`, or the stamp
     # describes a page the check never looks at.
@@ -1495,18 +1495,18 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
         run = source.verification.query_run
         query_ver, export = run.version, run.export_date
     # A context build would not keep, the claim file's own copy notwithstanding: a verdict on it
-    # would outlive the next `vg verify` and apply to the context that one gives.
+    # would outlive the next `provenance verify` and apply to the context that one gives.
     if why := _rebuild_problem(source, cache_root):
         _refuse(f"not recorded: {why}")
     # Last, so a wrong id, sid or copy is still what a refusal names first. The copy check above
     # passes a re-verify that rebuilt the context from a newer cached copy; this is what doesn't.
-    # The hand-off as `vg handoff` would print it now, from the claim file judge just read. It
+    # The hand-off as `provenance handoff` would print it now, from the claim file judge just read. It
     # prints every source, so the others need their snapshots too, applied only here: a damaged
     # records file is not what a refusal about this source's own id, sid or copy names first.
     _apply_archive_rows(data, [s for s in claim.sources if s is not source], cache_root)
     if why := judgments.wrong_context(
             _handed(claim, cache_root, judged=source), sid, context,
-            handoff=f"vg handoff {shlex.quote(question_id)}{_run_args(data, cache)}"):
+            handoff=f"provenance handoff {shlex.quote(question_id)}{_run_args(data, cache)}"):
         _refuse(f"not recorded: {why}")
     try:
         # And stamp the claim it judged, so a retry that rewrites the claim later can be seen to
@@ -1542,21 +1542,21 @@ def show_judgments(data: Path = DATA, question_id: str = "",
     from . import judgments
 
     if repair or rollback or moved or gone:
-        # Retired with `vg remap`: they re-homed verdicts after claims moved, and claims no longer
+        # Retired with `provenance remap`: they re-homed verdicts after claims moved, and claims no longer
         # move. A backup an interrupted re-home left behind still stops every reader, naming the
         # checkout that undoes it, so say that first.
         with _judgments_or_exit():
             judgments.refuse_if_interrupted(data)
         given = [flag for flag, on in (("--repair", repair), ("--rollback", rollback),
                                        ("--moved", moved), ("--gone", gone)) if on]
-        _retired(f"`vg judgments {' '.join(given)}`")
+        _retired(f"`provenance judgments {' '.join(given)}`")
 
     cache_root = _verdict_cache_root(data, cache)
     skipped: list[str] = []
     claims = _load_or_exit(data / "claims", trust_machine_fields=True, skipped=skipped)
     # As build does, before the verdicts: an archive-verified row is checked against its
     # snapshot, both its verdict and its context, and without the record it has neither. Only
-    # read where one exists, as `vg judge` does, so a damaged records file stops a run with
+    # read where one exists, as `provenance judge` does, so a damaged records file stops a run with
     # archive rows but not one without.
     records = (_archive_records(data) if any(s.verification.status == "verified_via_archive"
                                              for c in claims for s in c.sources) else {})
@@ -1566,7 +1566,7 @@ def show_judgments(data: Path = DATA, question_id: str = "",
         every = judgments.load_every(data)
     for d in judgments.leftovers(data):
         con.print(f"[yellow]{escape(_printable(str(d)))} is scratch an interrupted re-home by "
-                  f"the retired `vg remap` left behind. Nothing reads it, and it holds at most an "
+                  f"the retired `provenance remap` left behind. Nothing reads it, and it holds at most an "
                   f"older copy of the run's verdicts: delete it, and never restore from it.[/]")
     selected = [c for c in claims if not question_id or c.question_id == question_id]
     # Checking a snapshot reads it (and at times the live page) from the cache: archive rows only.
@@ -1579,7 +1579,7 @@ def show_judgments(data: Path = DATA, question_id: str = "",
         what = f"with question id {question_id!r}" if question_id else "at all"
         con.print("[red]" + escape(_printable(f"no claim {what} in {data / 'claims'}")) + "[/]")
         raise typer.Exit(1)
-    # A shard the disk opens under a claim's id is that claim's, as `vg build` reads it. On a
+    # A shard the disk opens under a claim's id is that claim's, as `provenance build` reads it. On a
     # case-insensitive disk q1 opens Q1.json, and counting what build applies as unjudged sent
     # verifiers round a loop: re-judging as q1 writes into Q1.json, whose name never changes.
     aliased = _aliased_shards(data, every, claims)
@@ -1587,7 +1587,7 @@ def show_judgments(data: Path = DATA, question_id: str = "",
                                                                     {}))
                    for c in selected}
     # A shard named for no current claim is read by nothing — not build, not this count. A
-    # mistyped `vg judge` id used to write one and report success.
+    # mistyped `provenance judge` id used to write one and report success.
     current = {c.question_id for c in claims} | set(skipped)
     unowned = {q: len(v) for q, v in every.items()
                if v and q not in current and q not in aliased.values()}
@@ -1603,14 +1603,14 @@ def show_judgments(data: Path = DATA, question_id: str = "",
         dropped = judgments.dropped(c, recorded)
         holding += [f"{c.question_id}/{d.sid}" for d in dropped]
         orphans += sum(1 for sid in recorded if sid not in live) - len(dropped)
-        # Run what `vg build` runs on each source, read-only as `vg status` does, so the count
+        # Run what `provenance build` runs on each source, read-only as `provenance status` does, so the count
         # is what the review app will show rather than a re-derivation of it — each of three
         # re-derivations disagreed with build somewhere.
         rows = list(judgments.verdicts_for(c, data, recorded, cache_root=cache_root))
         stale += len(judgments.merge(rows))
         for s, j, why in rows:
             # Asked of the claim file, before build's rebuild below, since that is what
-            # `vg judge` reads: the same answer `vg handoff` gives. Only where the answer is used
+            # `provenance judge` reads: the same answer `provenance handoff` gives. Only where the answer is used
             # (no verdict applied, a status with a context), since it rebuilds a copy and re-runs
             # a query citation's query.
             filed = s.verification
@@ -1620,7 +1620,7 @@ def show_judgments(data: Path = DATA, question_id: str = "",
             drawn = (filed.context, filed.context_offset, filed.matched_offset)
             revalidate_from_cache(s, cache_root)
             # Revalidation redrew a page citation's excerpt: it drops any verdict on the one
-            # `vg verify` wrote, stale or not, so one recorded now would be dropped too.
+            # `provenance verify` wrote, stale or not, so one recorded now would be dropped too.
             redrawn = s.query is None and drawn != (s.verification.context,
                                                     s.verification.context_offset,
                                                     s.verification.matched_offset)
@@ -1636,22 +1636,22 @@ def show_judgments(data: Path = DATA, question_id: str = "",
                 v = f"[dim]unreviewed ({s.verification.status})[/]"
                 note = s.verification.reason
             elif redrawn:
-                # The context moved since `vg verify` wrote the claim file, and revalidation
+                # The context moved since `provenance verify` wrote the claim file, and revalidation
                 # drops any verdict on the old one. Re-judging can't fix that; re-verifying does.
                 # Asked of the context, not of the verdict: a stale one (another answer, or none
-                # named) never applies, and with no verdict at all, `vg judge` would stamp one
+                # named) never applies, and with no verdict at all, `provenance judge` would stamp one
                 # on the claim file's outdated excerpt and build would drop it the same way.
                 blocked += 1
-                v = "[dim]unreviewed (run vg verify)[/]"
+                v = "[dim]unreviewed (run provenance verify)[/]"
                 note = (f"{'verdict recorded, but the' if j else 'the'} context changed since "
-                        f"vg verify")
+                        f"provenance verify")
             elif unjudgeable:
-                # `vg judge` would refuse it: the claim file's run predates this definition,
+                # `provenance judge` would refuse it: the claim file's run predates this definition,
                 # export or root, or the copy of the page its context came from is gone or
                 # unnamed. Counted as needing a verdict, the gate could never reach 0 by
                 # judging; re-verifying is what closes it.
                 blocked += 1
-                v = "[dim]unreviewed (run vg verify)[/]"
+                v = "[dim]unreviewed (run provenance verify)[/]"
                 note = unjudgeable
             else:
                 waiting += 1
@@ -1668,12 +1668,12 @@ def show_judgments(data: Path = DATA, question_id: str = "",
         con.print(f"[dim]{orphans} recorded verdict(s) no longer match any cited source — "
                   f"their citation changed, so the judgment correctly lapsed.[/]")
     if holding:
-        # Not in the count below: no verifier can close it, since `vg judge` refuses a source
+        # Not in the count below: no verifier can close it, since `provenance judge` refuses a source
         # nothing cites. It is the human's, so every one is named: this line is the only list.
         con.print(f"[yellow]{len(holding)} contradicts verdict(s) are on a source their claim no "
                   f"longer cites ({escape(', '.join(holding))}). A contradiction does not "
                   f"lapse: each holds its claim in review until the source is cited again, or a "
-                  f"person clears it at a terminal with `vg clear-contradiction QID SID`.[/]")
+                  f"person clears it at a terminal with `provenance clear-contradiction QID SID`.[/]")
     if aliased:
         # Which claim they belong to is not inferred from a source id but is what this disk
         # already does (judgments.opened_as()).
@@ -1694,12 +1694,12 @@ def show_judgments(data: Path = DATA, question_id: str = "",
     if blocked:
         con.print(f"[dim]{blocked} more source(s) have nothing a verifier can judge yet: the "
                   f"citation failed, is paywalled, was never verified, or changed since "
-                  f"`vg verify`. That is the retry loop's, `vg archive`'s or `vg verify`'s job.[/]")
+                  f"`provenance verify`. That is the retry loop's, `provenance archive`'s or `provenance verify`'s job.[/]")
     _report_older_exports(selected, cache_root, by_question)
     if stale:
         # Not "all need judging again": one with no page to check against has no context to
-        # judge either, so it sits with the blocked sources, and `vg judge` refuses it.
-        con.print(f"[yellow]{stale} verdict(s) no longer describe what they judged, so `vg build` "
+        # judge either, so it sits with the blocked sources, and `provenance judge` refuses it.
+        con.print(f"[yellow]{stale} verdict(s) no longer describe what they judged, so `provenance build` "
                   f"will not apply them. Each predates its page, or has no cached page to check "
                   f"against, or judged a copy its context no longer comes from (a replaced "
                   f"snapshot), or was formed under another query definition, or judged another "
@@ -1736,7 +1736,7 @@ def _at_a_terminal() -> bool:
 def clear_contradiction(question_id: str, sid: str, data: Path = DATA):
     """Clear, on the record, a contradicts verdict on a source its claim no longer cites.
 
-    Such a verdict holds its claim in human_review, and `vg build` lists it with the conflicts:
+    Such a verdict holds its claim in human_review, and `provenance build` lists it with the conflicts:
     a retry that drops the source takes the disagreement off the review page without resolving
     it. Sometimes dropping it was right: the verifier was wrong, or the claim was re-scoped.
     This is for the person who has looked and decided so. It runs only at a terminal and asks
@@ -1766,13 +1766,13 @@ def clear_contradiction(question_id: str, sid: str, data: Path = DATA):
             if question_id in skipped:
                 refuse(f"claim {qid} could not be read, so whether it still cites {s} cannot be "
                        f"checked — fix it first.")
-            # q07 for q7, Q7 for q7, as `vg judge` says.
+            # q07 for q7, Q7 for q7, as `provenance judge` says.
             near = [c.question_id for c in claims
                     if qid_sort_key(c.question_id.lower()) == qid_sort_key(question_id.lower())]
             refuse(f"no claim has question id {qid} in "
                    f"{escape(_printable(str(data / 'claims')))}"
                    + (f" — did you mean {escape(', '.join(near))}?" if near else
-                      ", so no claim is held by that verdict. `vg judgments` names a shard no "
+                      ", so no claim is held by that verdict. `provenance judgments` names a shard no "
                       "claim has."))
         if any(x.sid == sid for x in claim.sources):
             refuse(f"claim {qid} still cites {s}, so its verdict is the claim's own evidence "
@@ -1782,7 +1782,7 @@ def clear_contradiction(question_id: str, sid: str, data: Path = DATA):
             held = next((d for d in judgments.dropped(claim, judgments.load(data, question_id))
                          if d.sid == sid), None)
         if held is None:
-            refuse(f"{qid} has no contradicts verdict on {s} to clear: `vg judgments "
+            refuse(f"{qid} has no contradicts verdict on {s} to clear: `provenance judgments "
                    f"--question-id {qid}` lists the ones holding it.")
         return held, sorted((c.question_id for c in claims
                              if any(x.sid == sid for x in c.sources)), key=qid_sort_key)
@@ -1851,7 +1851,7 @@ def source_access(host: str = typer.Argument(""), run_recipe: str = "",
     entry = access.find(host)
     if entry is None:
         con.print(f"[yellow]Nothing recorded for {escape(_printable(host))}.[/]\n"
-                  f"If you find a way in, record it: `vg source-import-curl <file>` after "
+                  f"If you find a way in, record it: `provenance source-import-curl <file>` after "
                   f"copying the request from dev tools. If it needs a login, record that too "
                   f"— a known dead end saves the next run from substituting silently.")
         raise typer.Exit(1)
@@ -2028,10 +2028,10 @@ def check_claim(path: Path, data: Path = DATA, cache: Path = None, race: str = "
         raise typer.Exit(1) from None
 
     ok = True
-    # The question set `vg build` will check this claim against: its run's, where the run is
+    # The question set `provenance build` will check this claim against: its run's, where the run is
     # the directory holding the claim's claims/. Not --data alone: a candidate run's claim is
     # checked with the default --data, whose set is the root template, not the retargeted copy.
-    # Resolved: `vg check-claim q1.json` from inside claims/ has "" for a parent name.
+    # Resolved: `provenance check-claim q1.json` from inside claims/ has "" for a parent name.
     at = path.resolve()
     run = at.parent.parent if at.parent.name == "claims" else data
     asked_in, asked = questions.find(run), None
@@ -2051,7 +2051,7 @@ def check_claim(path: Path, data: Path = DATA, cache: Path = None, race: str = "
         except Exception as e:  # noqa: BLE001
             con.print(f"[red]schema:[/] {escape(_printable(str(e), lines=True))}")
             raise typer.Exit(1) from None
-        # `vg build` refuses a claim whose question isn't the one its id names, so a researcher
+        # `provenance build` refuses a claim whose question isn't the one its id names, so a researcher
         # who misquotes it hears here rather than stopping the whole run's review app.
         found = questions.check([claim], asked) if asked is not None else questions.Findings()
         qid = escape(claim.question_id)
@@ -2130,11 +2130,11 @@ def remap(data: Path = DATA):
     """Retired: question ids are stable, so there is no numbering to migrate."""
     from . import judgments
 
-    # The run may be one an interrupted `vg remap --apply` left half-moved, and whoever retries
-    # it needs the way back first, as `vg judgments --rollback` gives it.
+    # The run may be one an interrupted `provenance remap --apply` left half-moved, and whoever retries
+    # it needs the way back first, as `provenance judgments --rollback` gives it.
     with _judgments_or_exit():
         judgments.refuse_if_interrupted(data)
-    _retired("`vg remap`")
+    _retired("`provenance remap`")
 
 
 @app.command(name="new-candidate")
@@ -2161,7 +2161,7 @@ def new_candidate(candidate: str, data: Path = DATA, race: str = "",
         qs = json.loads(src_q.read_text())
         for q in qs:
             # A new run has no earlier id space: a maps_from or mapped_from left from the
-            # retired `vg remap` is another run's history, so it is not copied.
+            # retired `provenance remap` is another run's history, so it is not copied.
             q.pop("maps_from", None)
             q.pop("mapped_from", None)
             # The question set is written about a subject; retarget it rather than making
@@ -2178,8 +2178,8 @@ def new_candidate(candidate: str, data: Path = DATA, race: str = "",
 
     at, cid = _printable(str(root)), _printable(c.id)
     con.print("[green]ready[/] " + escape(f"{at}\n"
-                                          f"  uv run vg verify --data {at}\n"
-                                          f"  uv run vg build  --data {at} --candidate {cid}"))
+                                          f"  uv run provenance verify --data {at}\n"
+                                          f"  uv run provenance build  --data {at} --candidate {cid}"))
 
 
 @app.command()
@@ -2194,7 +2194,7 @@ def status(data: Path = DATA, cache: Path = None, race: str = ""):
     if not claims:
         con.print("No claims yet.")
         return
-    # Run the same offline checks `vg build` runs, so the summary can't disagree with what
+    # Run the same offline checks `provenance build` runs, so the summary can't disagree with what
     # the review app will actually show. Nothing is written back — this is a read-only view.
     # That starts with leaving out the claims build leaves out.
     claims = [c for c in claims if c.question_id not in failing]
@@ -2205,7 +2205,7 @@ def status(data: Path = DATA, cache: Path = None, race: str = ""):
         rules = load_rules(tuple(load_race(race or None).sources))
     except (FileNotFoundError, ValueError) as e:
         con.print(f"[yellow]{escape(_printable(str(e), lines=True))} — checking against the "
-                  f"`us` source list only, which can pass rows `vg build --race` rejects[/]")
+                  f"`us` source list only, which can pass rows `provenance build --race` rejects[/]")
         rules = load_rules(("us",))
     cache_root = _verdict_cache_root(data, cache)
     _settle(claims, data, cache_root, rules, _archive_records(data))

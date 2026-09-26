@@ -23,7 +23,7 @@ document_retrieval: |
   A human's browser opens them fine.
 
   Consequence worth stating plainly: a citation to a CAL-ACCESS page is human-checkable but
-  NOT machine-verifiable. `vg verify` cannot fetch it, so it will not carry a verified
+  NOT machine-verifiable. `provenance verify` cannot fetch it, so it will not carry a verified
   snippet. Cite it anyway when it is the right source — the human can open it — but expect
   human_review, and give the human the filing id and what to look for.
 

@@ -28,9 +28,9 @@ import zipfile
 
 import pytest
 
-from vgpipe import calaccess, queries
-from vgpipe.models import QueryCitation, Source
-from vgpipe.verify import verify_query_source
+from provenance import calaccess, queries
+from provenance.models import QueryCitation, Source
+from provenance.verify import verify_query_source
 
 FILER = "9991290"
 F460, F497 = "9991291", "9991292"
@@ -1068,7 +1068,7 @@ def test_the_cli_prints_a_flag_as_filed_text_not_markup(tmp_path):
     style and dropped it."""
     from typer.testing import CliRunner
 
-    from vgpipe import cli
+    from provenance import cli
 
     root = build(tmp_path, [(RUE, "2500"), (WHOLE, "3000", ("", "", "[bold]Mill[/bold]"))])
     r = CliRunner().invoke(cli.app, ["query", "calaccess.contributor_total", "--cache", str(root),

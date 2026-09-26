@@ -19,9 +19,9 @@ import zipfile
 import pytest
 from typer.testing import CliRunner
 
-from vgpipe import calaccess, cli, queries
-from vgpipe.models import QueryCitation, Source, Verification
-from vgpipe.verify import revalidate_from_cache, verify_source
+from provenance import calaccess, cli, queries
+from provenance.models import QueryCitation, Source, Verification
+from provenance.verify import revalidate_from_cache, verify_source
 
 MOVED = "8890301"      # a0 names Ondine Fairweather (support), twice; a1 moves it to another
 UNNAMED = "8890302"    # a0 names her; a1's cover names no candidate: its rows reach no total
@@ -141,7 +141,7 @@ def test_a_total_missing_rows_its_own_cover_named_goes_to_human_review(root):
     assert "names no candidate" in v.reason
     assert "'Ondine Fairweather' (oppose)" in v.reason
     assert SETTLED not in v.reason and UNREAD not in v.reason
-    assert "vg query" in v.reason and v.query_run is not None
+    assert "provenance query" in v.reason and v.query_run is not None
 
 
 def test_only_rows_the_window_would_count_are_named(root):
@@ -189,7 +189,7 @@ def test_a_candidate_whose_only_rows_were_left_out_is_a_miss_naming_them(root):
     assert "1 more whose filing's latest cover names another candidate" in result.note
     assert "($900.00 between them)" in result.note, "the figure a researcher would cite"
     assert "NO MATCH" not in result.note, "there was a match: it was left out"
-    assert left_out(result) == [(ORPHAN, 900.0, 1)], "carried, so `vg query` can list them all"
+    assert left_out(result) == [(ORPHAN, 900.0, 1)], "carried, so `provenance query` can list them all"
     assert ORPHAN in result.unsettled and "$900.00" in result.unsettled
     assert calaccess.filing_url(ORPHAN) in result.unsettled
 
@@ -299,14 +299,14 @@ def test_a_database_without_cover_amend_ids_says_the_listing_cannot_check(tmp_pa
     assert "or list rows an earlier amendment's cover gave this candidate" in plain(res.output)
 
 
-def test_vg_query_warns_and_lists_every_filing_left_out(root, monkeypatch):
+def test_provenance_query_warns_and_lists_every_filing_left_out(root, monkeypatch):
     shares = [calaccess.Reattributed(f"889040{i}", 0, 1, "", amount=1000.0 - i, rows=1)
               for i in range(queries.UNSETTLED_SHOWN + 2)]
     result = queries.QueryResult(value=1.0, reattributed=shares)
     reason = result.unsettled
     assert all(u.filing_id in reason for u in shares[:queries.UNSETTLED_SHOWN])
     assert not any(u.filing_id in reason for u in shares[queries.UNSETTLED_SHOWN:])
-    assert "and 2 more filing(s) with smaller amounts, which `vg query` lists" in reason
+    assert "and 2 more filing(s) with smaller amounts, which `provenance query` lists" in reason
 
     monkeypatch.setattr(queries, "run", lambda name, params, root: result)
     out = plain(CliRunner().invoke(cli.app, ["query", "calaccess.ie_total", "--param",
@@ -317,9 +317,9 @@ def test_vg_query_warns_and_lists_every_filing_left_out(root, monkeypatch):
         "every filing, each once")
 
 
-def test_a_miss_lists_every_filing_its_reason_leaves_to_vg_query(root, monkeypatch):
-    """A miss's reason names the largest few and says `vg query` lists the rest, so the miss
-    path of `vg query` must, or the pointer leads nowhere."""
+def test_a_miss_lists_every_filing_its_reason_leaves_to_provenance_query(root, monkeypatch):
+    """A miss's reason names the largest few and says `provenance query` lists the rest, so the miss
+    path of `provenance query` must, or the pointer leads nowhere."""
     shares = [calaccess.Reattributed(f"889050{i}", 0, 1, "", amount=1000.0 - i, rows=1)
               for i in range(queries.UNSETTLED_SHOWN + 2)]
     miss = queries.QueryResult(value=None, found=False, reattributed=shares,
@@ -331,7 +331,7 @@ def test_a_miss_lists_every_filing_its_reason_leaves_to_vg_query(root, monkeypat
                                        "candidate_last=Larkspur", "--param", "first=Wren",
                                        "--cache", str(root)])
     out = plain(res.output)
-    assert res.exit_code == 1 and "which `vg query` lists" in out
+    assert res.exit_code == 1 and "which `provenance query` lists" in out
     assert "nothing counted" in out and "Not a finding" in out
     assert all(out.count(f"filing {u.filing_id}'s rows") == 1 for u in shares), (
         "every filing, each once")

@@ -18,12 +18,12 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from vgpipe import cli, judgments
-from vgpipe.conflicts import detect
-from vgpipe.fetch import cache_path
-from vgpipe.models import (EXTRACTOR_VERSION, Claim, DroppedContradiction, PageCache, Source,
+from provenance import cli, judgments
+from provenance.conflicts import detect
+from provenance.fetch import cache_path
+from provenance.models import (EXTRACTOR_VERSION, Claim, DroppedContradiction, PageCache, Source,
                            strip_machine_fields)
-from vgpipe.verify import check_corroboration, check_inputs
+from provenance.verify import check_corroboration, check_inputs
 
 LEDGER = "https://daily-ledger.example/levy-vote"
 WEEKLY = "https://harbor-weekly.example/levy-vote"
@@ -57,7 +57,7 @@ def _cache(root: Path, url: str) -> None:
     cache_path(root, url).write_text(page.model_dump_json())
 
 
-def _vg(*args, input: str | None = None) -> tuple[int, str]:
+def _provenance(*args, input: str | None = None) -> tuple[int, str]:
     width = cli.con.width
     cli.con.width = 10_000   # rich folds a long tmp path mid-word at 80 columns
     try:
@@ -75,15 +75,15 @@ def _write_claim(data: Path, *sources: Source, qid: str = "q1") -> None:
 
 
 def _built(data: Path) -> dict:
-    code, out = _vg("build", "--data", data)
+    code, out = _provenance("build", "--data", data)
     assert code == 0, out
     [claim] = json.loads((data / "out" / "claims.json").read_text())
     return claim
 
 
 def _handed(data, qid: str, sid: str) -> list[str]:
-    """`--context` and the token `vg handoff` prints beside `sid`, as a verifier passes it on."""
-    code, out = _vg("handoff", qid, "--data", data)
+    """`--context` and the token `provenance handoff` prints beside `sid`, as a verifier passes it on."""
+    code, out = _provenance("handoff", qid, "--data", data)
     assert code == 0, out
     token = re.search(rf"sid {re.escape(sid)}\s+context token (\w+)", out)
     assert token, out
@@ -91,7 +91,7 @@ def _handed(data, qid: str, sid: str) -> list[str]:
 
 
 def _judge(data: Path, sid: str, verdict: str, note: str, qid: str = "q1") -> None:
-    code, out = _vg("judge", qid, sid, verdict, "--note", note, "--data", data,
+    code, out = _provenance("judge", qid, sid, verdict, "--note", note, "--data", data,
                     *_handed(data, qid, sid))
     assert code == 0, out
 
@@ -104,14 +104,14 @@ def _retried_run(tmp_path: Path) -> Path:
     for url in (LEDGER, WEEKLY, GAZETTE):
         _cache(data, url)
     _write_claim(data, _ledger(), _weekly())
-    code, out = _vg("verify", "--data", data)
+    code, out = _provenance("verify", "--data", data)
     assert code == 0, out
     _judge(data, _ledger().sid, "supports", "states the vote")
     _judge(data, _weekly().sid, "contradicts", NOTE)
     assert _built(data)["status"] == "human_review"
 
     _write_claim(data, _ledger(), _gazette())
-    code, out = _vg("verify", "--data", data)
+    code, out = _provenance("verify", "--data", data)
     assert code == 0, out
     _judge(data, _gazette().sid, "supports", "states the vote too")
     return data
@@ -131,16 +131,16 @@ def test_a_contradiction_a_retry_drops_still_holds_the_claim(tmp_path):
     [line] = built["conflicts"]
     assert f"no longer cites as it did (source id {weekly}, judged " in line
     assert f"contradicts the claim: {NOTE}. " in line
-    assert line.endswith(f"at a terminal with `vg clear-contradiction q1 {weekly}`")
+    assert line.endswith(f"at a terminal with `provenance clear-contradiction q1 {weekly}`")
     assert "Conflicts (1)" in (data / "out" / "review.html").read_text()
 
-    code, out = _vg("status", "--data", data)
+    code, out = _provenance("status", "--data", data)
     assert code == 0, out
     row = next(ln for ln in out.splitlines() if ln.split()[:1] == ["q1"])
     assert "human_review" in row and row.split()[-1] == "1", row
 
     # Not in the gate: no verifier can close it, since nothing cites the source to judge.
-    code, out = _vg("judgments", "--data", data)
+    code, out = _provenance("judgments", "--data", data)
     assert code == 0, out
     assert "0 of 2 cited source(s) need a verdict" in out
     assert f"1 contradicts verdict(s) are on a source their claim no longer cites (q1/{weekly})" \
@@ -152,7 +152,7 @@ def test_citing_the_source_again_applies_the_verdict_as_usual(tmp_path):
     """The verdict is the same one: back on a cited source, it is listed as that source's."""
     data = _retried_run(tmp_path)
     _write_claim(data, _ledger(), _gazette(), _weekly())
-    code, out = _vg("verify", "--data", data)
+    code, out = _provenance("verify", "--data", data)
     assert code == 0, out
 
     built = _built(data)
@@ -164,13 +164,13 @@ def test_citing_the_source_again_applies_the_verdict_as_usual(tmp_path):
 
 def test_only_a_person_at_a_terminal_can_clear_it(tmp_path):
     """"Clearing is the human's call" was a sentence, and the command is named wherever the
-    contradiction is: in `vg judgments`, which agents run, and in the conflicts. Agents run
+    contradiction is: in `provenance judgments`, which agents run, and in the conflicts. Agents run
     commands with no terminal, so the command asks for its reason at one and refuses without."""
     data = _retried_run(tmp_path)
     weekly = _weekly().sid
     before = judgments.path_for(data, "q1").read_bytes()
 
-    code, out = _vg("clear-contradiction", "q1", weekly, "--data", data,
+    code, out = _provenance("clear-contradiction", "q1", weekly, "--data", data,
                     input="the verifier was wrong\n")
     assert code == 1 and "a person's decision" in out and "Nothing was cleared" in out
     assert judgments.path_for(data, "q1").read_bytes() == before
@@ -187,14 +187,14 @@ def test_a_person_clears_it_on_the_record(tmp_path, monkeypatch):
     shard = judgments.path_for(data, "q1")
     before = shard.read_bytes()
 
-    code, out = _vg("clear-contradiction", "q1", weekly, "--data", data, input="  \n")
+    code, out = _provenance("clear-contradiction", "q1", weekly, "--data", data, input="  \n")
     assert code == 1 and "a reason is required" in out and "Nothing was cleared" in out
     assert f"q1/{weekly}: a verifier judged it contradicts the claim" in out and NOTE in out
     assert shard.read_bytes() == before
     assert not judgments.archive_dir(data).exists()
 
     reason = "the Weekly story was about an earlier levy, not this one"
-    code, out = _vg("clear-contradiction", "q1", weekly, "--data", data, input=f"{reason}\n")
+    code, out = _provenance("clear-contradiction", "q1", weekly, "--data", data, input=f"{reason}\n")
     assert code == 0, out
     assert f"cleared the contradicts verdict on q1/{weekly}" in out
 
@@ -222,7 +222,7 @@ def test_clearing_refuses_anything_but_a_dropped_contradiction(tmp_path, monkeyp
     before = judgments.path_for(data, "q1").read_bytes()
 
     def refused(*args) -> str:
-        code, out = _vg("clear-contradiction", *args, "--data", data, input="because\n")
+        code, out = _provenance("clear-contradiction", *args, "--data", data, input="because\n")
         assert code == 1 and "Nothing was cleared" in out and "Why" not in out, out
         return " ".join(out.split())
 
@@ -263,7 +263,7 @@ def test_a_clearance_is_never_half_done(tmp_path, monkeypatch):
     # Through the command, a failure is a refusal, not a traceback.
     with monkeypatch.context() as m:
         m.setattr(judgments, "_write", fail)
-        code, out = _vg("clear-contradiction", "q1", weekly, "--data", data, input="re-scoped\n")
+        code, out = _provenance("clear-contradiction", "q1", weekly, "--data", data, input="re-scoped\n")
     assert code == 1 and "disk full. Nothing was cleared" in out, out
     assert list(judgments.archive_dir(data).iterdir()) == []
 
@@ -310,14 +310,14 @@ def test_a_verdict_judged_again_while_the_prompt_waits_is_not_cleared(tmp_path, 
         return "the verifier was wrong"
 
     monkeypatch.setattr(cli.typer, "prompt", meanwhile)
-    code, out = _vg("clear-contradiction", "q1", weekly, "--data", data)
+    code, out = _provenance("clear-contradiction", "q1", weekly, "--data", data)
     assert code == 1 and "was judged again (at 2031-01-02T03:04:05+00:00) after it was " \
                          "shown" in " ".join(out.split()), out
     assert judgments.load(data, "q1")[weekly].note == "a later reading"
     assert not judgments.archive_dir(data).exists()
 
 
-def test_vg_judgments_names_every_held_verdict(tmp_path):
+def test_provenance_judgments_names_every_held_verdict(tmp_path):
     """The line is the only list of them, so none is cut off."""
     data = tmp_path / "data"
     _cache(data, LEDGER)
@@ -325,7 +325,7 @@ def test_vg_judgments_names_every_held_verdict(tmp_path):
     sids = [f"{n:012x}" for n in range(1, 11)]
     for sid in sids:
         judgments.record(data, "q1", sid, "contradicts", NOTE)
-    code, out = _vg("judgments", "--data", data)
+    code, out = _provenance("judgments", "--data", data)
     flat = " ".join(out.split())
     assert "no cache" not in flat and "10 contradicts verdict(s)" in flat, out
     assert f"({', '.join(f'q1/{sid}' for sid in sids)})" in flat, out
@@ -344,7 +344,7 @@ def test_a_source_cited_again_while_the_prompt_waits_is_not_cleared(tmp_path, mo
         return "the verifier was wrong"
 
     monkeypatch.setattr(cli.typer, "prompt", meanwhile)
-    code, out = _vg("clear-contradiction", "q1", weekly, "--data", data)
+    code, out = _provenance("clear-contradiction", "q1", weekly, "--data", data)
     assert code == 1 and "claim q1 still cites" in out, out
     assert judgments.path_for(data, "q1").read_bytes() == before
     assert not judgments.archive_dir(data).exists()
@@ -361,19 +361,19 @@ def test_clearing_says_when_another_claim_cites_the_source(tmp_path, monkeypatch
     judgments.record(data, "q2", weekly, "supports", "states the vote")
     theirs = judgments.path_for(data, "q2").read_bytes()
 
-    code, out = _vg("clear-contradiction", "q1", weekly, "--data", data, input="\n")
+    code, out = _provenance("clear-contradiction", "q1", weekly, "--data", data, input="\n")
     assert code == 1, out
     flat = " ".join(out.split())
     assert "q2 also cites this source, each judged by the verdicts in its own shard: clearing " \
            "this one leaves those as they are." in flat
 
-    code, out = _vg("clear-contradiction", "q1", weekly, "--data", data,
+    code, out = _provenance("clear-contradiction", "q1", weekly, "--data", data,
                     input="the claim was narrowed\n")
     assert code == 0, out
     assert weekly not in judgments.load(data, "q1")
     assert judgments.path_for(data, "q2").read_bytes() == theirs
 
-    code, out = _vg("clear-contradiction", "q01", weekly, "--data", data, input="because\n")
+    code, out = _provenance("clear-contradiction", "q01", weekly, "--data", data, input="because\n")
     assert code == 1 and "did you mean q1?" in out and "names a shard" not in out, out
 
 
@@ -413,7 +413,7 @@ def test_only_the_shard_says_a_contradiction_was_dropped(tmp_path):
     data = tmp_path / "data"
     _cache(data, LEDGER)
     _write_claim(data, _ledger())
-    code, out = _vg("verify", "--data", data)
+    code, out = _provenance("verify", "--data", data)
     assert code == 0, out
     _judge(data, _ledger().sid, "supports", "states the vote")
     path = data / "claims" / "q1.json"
@@ -433,4 +433,4 @@ def test_detect_lists_one_without_a_note_or_a_time():
         "a verifier judged a source this claim no longer cites as it did (source id "
         "0123456789ab) contradicts the claim. Changing the citation did not resolve that: the "
         "claim stays in review until the source is cited again, or a human clears it at a "
-        "terminal with `vg clear-contradiction q1 0123456789ab`"]
+        "terminal with `provenance clear-contradiction q1 0123456789ab`"]

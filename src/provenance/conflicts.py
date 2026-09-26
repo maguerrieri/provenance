@@ -121,7 +121,7 @@ def detect(claims: list[Claim]) -> list[Claim]:
                 f"a verifier judged a source this claim no longer cites as it did (source id "
                 f"{d.sid}{when}) contradicts the claim" + (f": {d.note}" if d.note else "")
                 + f". Changing the citation did not resolve that: the claim stays in review "
-                f"until the source is cited again, or a human clears it at a terminal with `vg "
+                f"until the source is cited again, or a human clears it at a terminal with `provenance "
                 f"clear-contradiction {c.question_id} {d.sid}`")
         snip = " ".join(s.snippet for s in c.sources)
         if not snip:
