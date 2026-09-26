@@ -175,19 +175,23 @@ _MAX_DECODINGS = 8
 
 
 # Where a URL's authority starts, and what it runs to as written: an `@` in it follows a login.
-# A `//` starts one only where a URL's can: after a scheme's `:`, or where a value starts (a
-# protocol-relative link). Inside a word or a path (`and/or//x`, `a//b`) it is not a URL's.
-_AUTHORITY = re.compile(r"(?<![\w/])//([^/?#\s\"'<>`\\]*)")
-# ... and the same with its `//` percent-encoded, in a value holding a URL encoded whole. It runs
-# to the first delimiter as written (a query's `&` included): decoded, a `%2F` in it would end it
-# before its `@`.
-_ENCODED_AUTHORITY = re.compile(r"(?:(?<=%3[aA])|(?<![\w/%]))%2[fF]%2[fF]([^/?#&\s\"'<>`\\]*)")
-# An authority whose port is not a number (or a recipe's `{port}`): what a login's first half
-# looks like once a `/` has ended the authority before its `@` (`https://user:x/y@host`).
-_NOT_A_PORT = re.compile(r"^[^\[\]]*:(?!(?:\d*|\{\w+\})$)")
+# It starts after a web scheme with any slashes or none, since a browser reads `https:user:x@h`,
+# `https:/user:x@h` and `https:\\user:x@h` all as `https://user:x@h/`; and at a `//` after any
+# other scheme's `:` or where a value starts (a protocol-relative link). A `//` inside a word or
+# a path (`and/or//x`, `docs//notes@2030`) is not a URL's.
+_WEB_SCHEME = r"(?<![\w+.-])(?:https?|wss?|ftp)"
+_AUTHORITY = re.compile(rf"(?:{_WEB_SCHEME}:[/\\]*|(?<![\w/])//)([^/?#\s\"'<>`\\]*)",
+                        re.IGNORECASE)
+# ... and the same with its delimiters percent-encoded, in a value holding a URL encoded whole.
+# It runs to the first delimiter as written (a query's `&` included): decoded, a `%2F` in it
+# would end it before its `@`.
+_ENCODED_AUTHORITY = re.compile(
+    rf"(?:{_WEB_SCHEME}%3A(?:%2F|%5C)*|(?:(?<=%3A)|(?<![\w/%]))%2F%2F)([^/?#&\s\"'<>`\\]*)",
+    re.IGNORECASE)
 # `name:secret@host` with no scheme: a proxy setting, curl's `-u` value pasted whole. Prose,
-# names and host arguments are refused it (`_prose_login()`), and the redactor removes it. A
-# request is not read for it: there it is search syntax too (`from:alice@example.org`).
+# names, header values and host arguments are refused it (`_prose_login()`), and the redactor
+# removes it. A request's URL and body are not read for it: there it is search syntax too
+# (`from:alice@example.org`).
 _BARE_LOGIN = re.compile(r"(?<![^\s\"'<>`(=,;&?/])(?!mailto:)[^\s/?#@\"'<>`:=&;]+:"
                          r"[^\s/?#@\"'<>`]*@[^\s/?#@\"'<>`]", re.IGNORECASE)
 
@@ -199,17 +203,15 @@ def _login_in(text: str) -> bool:
     or an email address is not one.
 
     One rule: an authority, taken as written in some reading of `text`, then read in every
-    decoding of its own, holds an `@` (or, where it was found, a port that isn't one).
-    Decoding moves where an authority ends, so where it ends is taken before decoding it:
-    `https://user:pw%2Fx%40host/` found raw ends at its last `/`, and decoded, at the `/` the
-    `%2F` became, before the `@`. A URL encoded whole has no `//` until decoded, so an encoded
-    `%2F%2F` starts an authority too, which decoded as a whole would read `user:123` (a real
-    port) before a path holding the `@`."""
+    decoding of its own, holds an `@`. Decoding moves where an authority ends, so where it
+    ends is taken before decoding it: `https://user:pw%2Fx%40host/` found raw ends at its last
+    `/`, and decoded, at the `/` the `%2F` became, before the `@`. A URL encoded whole has no
+    `//` until decoded, so an encoded `%2F%2F` starts an authority too, which decoded as a
+    whole would read `user:123` (a real port) before a path holding the `@`."""
     readings = _readings(text)
-    return (any("@" in a or _NOT_A_PORT.match(a) for r in readings
-                for m in _AUTHORITY.finditer(r) for a in _readings(m[1]))
-            or any("@" in a for r in readings
-                   for m in _ENCODED_AUTHORITY.finditer(r) for a in _readings(m[1])))
+    return any("@" in a for r in readings
+               for pattern in (_AUTHORITY, _ENCODED_AUTHORITY)
+               for m in pattern.finditer(r) for a in _readings(m[1]))
 
 
 def _has_login(url: str, where: str) -> bool:
@@ -433,7 +435,9 @@ def _check_request(url: str, headers: dict[str, str], body: str | None) -> None:
     # Every string of the request read as text too: a param can fill a fragment or a body that
     # has no pairs to read with a whole URL, login and all.
     for k, v in headers.items():
-        _check_text(v, f"its {_names_shown([k])} header", prose=False)
+        # A header's value is no search: read as prose, a bare `name:x@host` included
+        # (`X-Forwarded-Host`, `Via`).
+        _check_text(v, f"its {_names_shown([k])} header")
     _check_text(url, "its URL", prose=False)
     if body:
         _check_text(body, "its body", prose=False)
@@ -453,7 +457,10 @@ _COLON_VALUE = re.compile(r""""(?:\\.|[^"\\\n])*(?:"|(?=\n)|\Z)"""
 # ... and a query or form pair (`api_key=x`), whose value runs to the next separator.
 _EQUALS_PAIR = re.compile(r"""(?<![^\s&;?#=/"'<>`])(?P<name>[^\s&;?#=/"'<>`]+)="""
                           r"""(?P<value>[^\s&;#"'<>`]+)""")
-_AUTH_SCHEME = re.compile(r"\b(Bearer|Basic|Digest|Negotiate)[ \t]+[^\s\"',;]+", re.IGNORECASE)
+# An auth scheme and its token (`Bearer x`), but not a word that ends an option's name: the
+# refusal `curl --oauth2-bearer passes a credential` lost its verb to it.
+_AUTH_SCHEME = re.compile(r"(?<![\w-])(Bearer|Basic|Digest|Negotiate)[ \t]+[^\s\"',;]+",
+                          re.IGNORECASE)
 _TOKEN_EDGE = re.compile(r"(\s+|[\"'`<>])")
 # `KeyError: 'x'` names an exception, not a field.
 _EXCEPTION_NAME = re.compile(r"[A-Z]\w*(?:Error|Exception|Warning)")
@@ -608,9 +615,10 @@ def _check_text(text: str, where: str, *, prose: bool = True) -> None:
     percent-encoded whole has no `//` until it is decoded. A relative link is not read for
     parameters, since documentation names a parameter that way (`/DownloadPdf?key=<hex>`).
 
-    Prose (a note, a name, anything that is not part of a request) is also refused a bare
-    `name:x@host`, which is a login written without its scheme. Part of a request, the same
-    shape is search syntax (`from:alice@agency.example`), so a request is read without it."""
+    Prose (a note, a name, a header's value: anything but a request's URL and body) is also
+    refused a bare `name:x@host`, which is a login written without its scheme. In a request's
+    URL or body the same shape is search syntax (`from:alice@agency.example`), so those are
+    read without it."""
     if _prose_login(text) if prose else _login_in(text):
         raise Refused(f"{where} holds a username or password in a URL or host")
     for r in _readings(text):
@@ -777,8 +785,11 @@ def with_note(host: str, finding: str, *, access: str = "",
         data["access"] = access
     if verified:
         data["verified"] = verified
-    data["findings"] = ((data.get("findings") or "") + ("\n" if data.get("findings") else "")
-                        + finding)
+    # Not `or ""`: a `false` or `[]` read as empty would be replaced, a delete.
+    findings = _unless_null(data.get("findings"), "")
+    if not isinstance(findings, str):
+        raise Refused("its findings field is not text, so a finding can't be added to it")
+    data["findings"] = findings + ("\n" if findings else "") + finding
     return h, data
 
 
@@ -792,8 +803,10 @@ def load_all(registry: Path | None = None) -> dict[str, SourceAccess]:
         try:
             host = _registry_host(p.stem)
         except Refused as e:
-            raise Refused(f"a file in the registry is not named for a host ({e}); rename it "
-                          "to the host it records") from None
+            # Named, so it can be found: the redactor removes a login from the name, and the CLI
+            # prints it through `_printable()`.
+            raise Refused(f"the registry's file {p.name!r} is not named for a host ({e}); "
+                          "rename it to the host it records") from None
         try:
             raw = _read_entry(p)
             check_entry(raw, host)

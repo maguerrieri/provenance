@@ -259,6 +259,14 @@ def _recipe(**fields) -> dict:
      "a header's name holds a username or password"),
     (_entry(extra={"Set-Cookie": CANARY}), "field named like a credential"),
     (_entry(**_recipe(url=f"https://{LOGIN}@portal.example/api")), "its URL carries a username"),
+    # A browser reads a web scheme with any slashes, or none, as `https://`.
+    (_entry(**_recipe(url=f"https:{LOGIN}@portal.example/api")), "its URL holds a username"),
+    (_entry(**_recipe(url=f"https:\\\\{LOGIN}@portal.example/api")), "holds a username"),
+    (_entry(**_recipe(url=f"https://portal.example/api?next=https:/{LOGIN}@y.example")),
+     "carries a username"),
+    # A header's value is no search: a bare login there is refused as in prose.
+    (_entry(**_recipe(headers={"X-Forwarded-Host": f"{LOGIN}@portal.example"})),
+     "its X-Forwarded-Host header holds a username"),
     (_entry(**_recipe(url=f"https://portal.example/api?token={CANARY}")), r"its URL \(token\)"),
     (_entry(**_recipe(headers={"Authorization": f"Basic {CANARY}"})), "credential headers"),
     (_entry(**_recipe(headers={"Origin": f"https://{LOGIN}@portal.example"})),
@@ -307,6 +315,8 @@ def test_check_entry_refuses_each_shape_naming_where_not_what(entry, match):
     # value starts does.
     _entry(**_recipe(url="https://portal.example/api?path=docs//notes@2030")),
     # A port is a number, or a recipe's placeholder for one.
+    # Documentation writes a URL's parts as words, and a `//` in a note needn't be a URL's.
+    _entry(notes="the API is at https://host:port/api; //TODO:later"),
     _entry(ui_url="https://portal.example:8443/", **_recipe(url="https://{host}:{port}/api",
                                                             params=["host", "port"])),
 ])
@@ -416,6 +426,23 @@ def test_a_registry_file_not_named_for_a_host_is_refused_without_its_name(regist
     code, out = _invoke("source-access")
     assert code == 1 and "not named for a host" in out, out
     _clean(out)
+    # Any other file that is not named for a host is named, so it can be found.
+    (registry / f"{LOGIN}@portal.example.yaml").unlink()
+    (registry / "notes.bak yaml.yaml").write_text("host: portal.example\n")
+    code, out = _invoke("source-access")
+    assert code == 1 and "'notes.bak yaml.yaml' is not named for a host" in out, out
+
+
+@pytest.mark.parametrize("findings", ["false", "[]", "[older, notes]", "0"])
+def test_findings_that_are_not_text_are_refused_not_replaced(findings, registry):
+    """`or ""` read `false` and `[]` as no findings, and the note replaced them: a delete. A
+    list crashed on the concatenation."""
+    registry.mkdir()
+    text = f"host: portal.example\nfindings: {findings}\n"
+    (registry / "portal.example.yaml").write_text(text)
+    code, out = _invoke("source-note", "portal.example", "a finding")
+    assert code == 1 and "findings field is not text" in out, out
+    assert (registry / "portal.example.yaml").read_text() == text
 
 
 # --- in: pins. Every write under the registry goes through save(), and save() checks ---------
@@ -591,6 +618,9 @@ def test_redact_takes_time_in_proportion_to_a_long_word(word):
     "a username or password",
     "the pasted request: its URL can't be parsed, so it can't be checked for a credential",
     "KeyError: 'token'",
+    # An option ending in an auth scheme's name is no auth header.
+    "curl --oauth2-bearer passes a credential. An endpoint that needs one is a manual retrieval",
+    "curl --basic passes a credential",
     "unsupported curl option --cookie-jar; remove it if the request works without it, or "
     "record the endpoint by hand",
     "no recipe '[/] [sic] :ok:'",
