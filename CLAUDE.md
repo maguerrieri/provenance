@@ -1278,6 +1278,49 @@ refuses a recipe carrying them, because an endpoint that only works with someone
 a manual retrieval, not a pipeline capability — recording it as one would be both a leak and a
 lie about what the pipeline can do unattended.
 
+**The check lives where values enter and messages leave, not at each command (#161).** Seven
+holes were closed one door at a time (#46, #52, #155, #158, #161, #163 and the importer's
+first), and each review found the next, because each fix guarded one command. So there is one
+check each way:
+- **In: `check_entry()`.** Every entry passes it, whatever wrote it. `save()` is the only write
+  under `sources/access/`, and `dump_entry()` the only YAML an entry becomes (printed to be
+  pasted, too); both call it. `load_all()` calls it on every file, since a person with an editor
+  is a writer too: a committed credential stops every command that reads the registry, and the
+  suite. It refuses a login in any URL or host, in any string, in every reading `_readings()`
+  knows (NFKC, percent-encoding, HTML and backslash escapes): nested in a query, fragment, form
+  field or JSON value at any depth (#163), written into prose, or with no scheme at all
+  (`user:x@host`, which `.hostname` never dropped, so `source-note` wrote it into a file name,
+  #161). Each recipe's request gets `_check_request()`, which `run()` also calls after filling
+  and `parse_curl()` on the request it records. A field or recipe param named like a credential
+  is refused, and the host must be a host name, since it names the file (`../x` wrote outside
+  the registry).
+- **Out: `redact()`.** Every exception `access.py` raises is a `Refused`, whose message is made
+  through it, and `_refusing` turns a library's error into one at every function the CLI calls.
+  The access commands run inside `cli._access_refusals()`, which prints through
+  `_access_refused()`, which redacts again, so a refusal quoting a host argument or a recipe
+  name is covered too, and none ends in a traceback. It fails toward removing, as the check
+  going in fails toward refusing.
+- **Pinned, not listed.** `tests/test_access_choke_points.py` fails on a write, a YAML dump or a
+  registry path outside those functions, a `raise` of anything but `Refused`, a function the CLI
+  calls without `_refusing`, an access command that exits, raises or catches on its own, and a
+  command that writes the registry with no invocations there carrying a synthetic login in each
+  value it writes.
+
+Three things learned building it:
+- **Prose is read for URLs, not words.** A login anywhere is refused, and so is a credential
+  parameter in any URL with a scheme or `//`. A relative link is not read for parameters, since
+  documentation names one that way (`/DownloadPdf?key=<hex>`), and the committed registry does.
+  The archive.org entry held a placeholder `Authorization` header, which `run()` refused anyway.
+  It moved into the recipe's notes: the registry holds no credential header, placeholder or not.
+- **A redactor can't find what a library cut.** PyYAML quotes the lines around its error,
+  trimmed to fit, and it trimmed a URL before its `@`. So `_read_entry()` says where the problem
+  is and what it is, never the lines. When a library's error quotes its input, drop the quote
+  rather than trust the redactor with it.
+- **A refusal never reads `name: reason`.** To the redactor that is a field and its value, so a
+  recipe called `token`, or an entry for `auth.example`, lost its reason. Messages say
+  `in recipe 'x', …` and `… can't be used, …`, and an exception's type (`KeyError: …`) is not
+  read as a field.
+
 The importer let credentials through in two ways. Both were fixed by failing closed, not by
 listing more names:
 - **A parser that skips what it doesn't know has to know how much to skip.** The importer
@@ -1293,8 +1336,9 @@ listing more names:
   `access.py` splits, a command's host argument included, goes through `_split()`, which names
   the URL ("the referer header's URL") instead, and a test fails on any other reference to a
   function that splits. httpx parses a recipe's URL again and quotes the part it can't read (a
-  password written with `%40` is a port to it), so `run()` replaces its `InvalidURL` the same
-  way.
+  port), so `run()` replaces its `InvalidURL` the same way, and its `LocalProtocolError`, which
+  quotes a header value whole. A password written with `%40` for its `@` was a port to httpx;
+  the login check reads every decoding of a netloc now, so it is a login.
 - **A deny-list of names can't anticipate what a site calls its session.** Only `Cookie`,
   `Authorization` and a few more were dropped, so `x-csrf-token` and `x-xsrf-token` reached
   disk. Credential headers now match by pattern (`credential_header()`), and `run()` uses the
@@ -1312,14 +1356,16 @@ as a search's `key=LastName`, and the recipe still runs and returns plausible re
 broader search: the silent substitution this registry exists to prevent. So the import stops
 and names each parameter (never its value), and a human removes it from the paste or records
 the endpoint by hand. `run()` runs the same check after filling, since a param can hold a whole
-`name=value` pair. Every channel is read, in one function (`_credential_params()`) that both
-callers use:
+`name=value` pair. Every channel is read, in one function (`_credential_params()`, through
+`_check_request()`) that every caller uses:
 - the query, the fragment, and each path segment's `;` parameters;
 - the URL in an `origin` or `referer` header. The import already strips the referer's query,
   but a hand-edited recipe can put one back;
 - a form body, and a JSON body's keys at any depth;
 - inside any value, the keys of JSON, the parameters of a URL (a `next` or `callback` link
-  carries a query of its own, relative or absolute), and `&`-joined pairs.
+  carries a query of its own, relative or absolute), and `&`-joined pairs;
+- in every value and name it reads, a login (#163): a nested URL was read for its parameter
+  names and never for its netloc.
 
 Pairs are read twice, split on `&` alone and on `&` and `;`, because servers differ: splitting
 on `;` alone cut up a JSON value holding one, and the key after it went unread. **A reader that
