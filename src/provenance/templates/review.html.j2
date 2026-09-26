@@ -229,16 +229,19 @@ for (const el of srcs) byFp.set(el.dataset.fp, [...(byFp.get(el.dataset.fp) || [
 function evidence(fp){ return fp.split('.')[0]; }
 // What a recorded check says about the rows now, or null. It names the row it was made on, and
 // render() keeps it there while that row shows the same claim and evidence. If that row's notes
-// differ, the note changed, on that row and every row sharing its fingerprint. If its claim or
-// evidence differs, that row says so. Nothing when the row shows what was checked, or is gone.
+// differ, the note changed, on that row and every row of its claim sharing its fingerprint (one
+// source cited twice alike): a twin claim whose note now reads the same shares it too, but was
+// never checked. If its claim or evidence differs, that row says so. Nothing when the row shows
+// what was checked, or is gone.
 // Guessing the row from content instead (a claim moved to another id and given a new note in one
 // rebuild) sent the warning to a twin, another claim asking and answering the same thing from
 // the same citation, so that case reads unchecked without saying why.
 function lapse(f){
   const el = byKey.get(state.checked[f]);
   if (!el || el.dataset.fp === f) return null;
-  return evidence(el.dataset.fp) === evidence(f) ? {note: true, rows: byFp.get(el.dataset.fp)}
-                                                 : {note: false, rows: [el]};
+  if (evidence(el.dataset.fp) !== evidence(f)) return {note: false, rows: [el]};
+  const claim = el.closest('.claim');
+  return {note: true, rows: byFp.get(el.dataset.fp).filter(r => r.closest('.claim') === claim)};
 }
 // Moves a check to the first row showing what it attests, and reports whether any row does.
 function repoint(f){
