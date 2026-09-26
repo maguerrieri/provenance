@@ -2922,18 +2922,19 @@ def new(directory: Annotated[Path, typer.Argument(
 
 def _ask_dir(question: str) -> Path | None:
     """`ask-<the question's first distinctive words>-<a hash of it>`, in the working directory:
-    the words every such question shares (`_ASK_FILLER`) are left out. Accents are folded, a
-    possessive `'s` dropped, and anything else outside [a-z0-9] separates words, so the name is
-    plain on any disk. The words are cut short, and two questions can share them: the hash
-    keeps the directory, and the project's name with it, one question's. The same question
-    asked again gets the same directory, and is refused. None for a question with no such word:
-    it has no default, and `provenance ask` asks for `--dir`."""
+    the words every such question shares (`_ASK_FILLER`) are left out. A possessive `'s` is
+    dropped, with a straight or a curly apostrophe (before folding, which drops the curly one
+    and left "countys"), accents are folded, and anything else outside [a-z0-9] separates
+    words, so the name is plain on any disk. The words are cut short, and two questions can
+    share them: the hash keeps the directory, and the project's name with it, one question's.
+    The same question asked again gets the same directory, and is refused. None for a question
+    with no such word: it has no default, and `provenance ask` asks for `--dir`."""
     import hashlib
     import unicodedata
 
-    folded = unicodedata.normalize("NFKD", question).encode("ascii", "ignore").decode().lower()
-    words = [w for w in re.findall(r"[a-z0-9]+", re.sub(r"'s\b", "", folded))
-             if w not in _ASK_FILLER]
+    unpossessed = re.sub(r"['\u2019]s\b", "", question, flags=re.IGNORECASE)
+    folded = unicodedata.normalize("NFKD", unpossessed).encode("ascii", "ignore").decode().lower()
+    words = [w for w in re.findall(r"[a-z0-9]+", folded) if w not in _ASK_FILLER]
     slug = "-".join(words[:6])[:48].rstrip("-")
     digest = hashlib.sha256(question.encode()).hexdigest()[:16]
     return Path(f"ask-{slug}-{digest}") if slug else None
