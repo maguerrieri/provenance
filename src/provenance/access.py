@@ -20,6 +20,7 @@ each way, and every path goes through them rather than a check of its own:
 
 from __future__ import annotations
 
+import datetime
 import functools
 import html
 import json
@@ -408,7 +409,9 @@ def _credential_params(url: str, headers: dict[str, str], body: str | None) -> l
         raise Refused("a parameter nests too deeply to be checked for a credential") from None
     finally:
         _value_names.cache_clear()
-    if any(_login_in(n) for _, names in found for n in names):
+    # A name is no search value, so it is read as prose is, a bare `name:x@host` included: a JSON
+    # key holding one passed as a request's value would.
+    if any(_prose_login(n) for _, names in found for n in names):
         raise Refused("a parameter's name carries a username or password")
     return [f"{where} ({shown})" for where, names in found if (shown := _credential_names(names))]
 
@@ -622,14 +625,26 @@ def _check_text(text: str, where: str, *, prose: bool = True) -> None:
     if _prose_login(text) if prose else _login_in(text):
         raise Refused(f"{where} holds a username or password in a URL or host")
     for r in _readings(text):
-        for url in re.findall(r"(?:[A-Za-z][A-Za-z0-9+.-]*:)?//[^\s\"'<>`]+", r):
+        for url in _URL_IN_TEXT.findall(r):
             if found := _credential_params(url, {}, None):
                 raise Refused(f"{where} holds a URL carrying what look like credentials in "
                               f"{'; '.join(found)}")
 
 
+# A URL a reader would open, in text: any `//` link, and a web scheme with no slashes, which a
+# browser reads as `https://` (the authority rule's reading, `_AUTHORITY`).
+_URL_IN_TEXT = re.compile(rf"(?:[A-Za-z][A-Za-z0-9+.-]*:)?//[^\s\"'<>`]+"
+                          rf"|{_WEB_SCHEME}:[^\s\"'<>`]+", re.IGNORECASE)
+# What YAML gives that the check reads: text, and values that hold none. Anything else (bytes
+# from `!!binary`, a `!!set`) can't be read for a credential, so it is refused.
+_PLAIN = (bool, int, float, datetime.date, type(None))
+
+
 def _check_fields(value, path: str = "") -> None:
     """Every field of an entry, at any depth: a name like a credential's, and every string."""
+    if not isinstance(value, (dict, list, str, *_PLAIN)):
+        raise Refused(f"its field {path} holds a {type(value).__name__}, which can't be read "
+                      "for a credential")
     if isinstance(value, dict):
         for k, v in value.items():
             if credential_param(str(k)) or _prose_login(str(k)):
