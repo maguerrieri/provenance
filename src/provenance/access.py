@@ -17,6 +17,7 @@ import re
 import shlex
 from dataclasses import dataclass, field
 from functools import lru_cache
+from importlib.metadata import PackageNotFoundError, distribution
 from importlib.resources import files
 from itertools import pairwise
 from pathlib import Path
@@ -25,8 +26,29 @@ from urllib.parse import SplitResult, unquote_plus, urlsplit, urlunsplit
 import httpx
 import yaml
 
-# Package data, so an installed copy (uv tool install) has it.
+# Package data, so an installed copy (uv tool install) has it. Only a checkout writes to it:
+# see installed_copy().
 REGISTRY = Path(files(__package__) / "source_access")
+
+
+def installed_copy() -> bool:
+    """Whether this provenance is an installed copy, not a checkout of its repo.
+
+    The registry ships inside the package. In a checkout (an editable install, which `uv sync`
+    makes) an entry written there is a file in the repo, committed like any other, and that is
+    how a finding outlives the session that made it. In an installed copy (`uv tool install`) it
+    is a file in the tool's own environment, which the next install replaces without a word. So
+    `source-note` and `source-import-curl` write only in a checkout. The install records which
+    it is (PEP 610's direct_url.json). Anything it can't read counts as installed: refusing a
+    write costs a paste, and a write that is silently lost costs the finding.
+    """
+    try:
+        raw = distribution(__package__).read_text("direct_url.json")
+        info = json.loads(raw) if raw else {}
+    except (PackageNotFoundError, OSError, ValueError):
+        return True
+    dir_info = info.get("dir_info") if isinstance(info, dict) else None
+    return not (isinstance(dir_info, dict) and dir_info.get("editable") is True)
 
 # Never persisted, never replayed. An endpoint that only works with your session is a manual
 # retrieval, not a pipeline capability, and recording the credential would be both a leak and

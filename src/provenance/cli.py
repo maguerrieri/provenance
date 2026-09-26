@@ -1910,6 +1910,19 @@ def source_access(host: str = typer.Argument(""), run_recipe: str = "",
         _print_copied(resp.text, 1500)   # fetched, and copied from
 
 
+def _registry_write_refused(dest: Path, text: str) -> NoReturn:
+    """Print the entry instead of writing it, in an installed copy: the registry ships inside
+    the package there, and the next install would delete the file (access.installed_copy()).
+    Called where the write would be, so the entry has passed every check a write does."""
+    con.print(Text("not written: this provenance is an installed copy, and the access registry "
+                   "ships inside it, so the next install would delete the entry. Add it to the "
+                   "tool's repo instead, from a clone of https://github.com/maguerrieri/provenance, "
+                   f"as src/provenance/source_access/{_printable(dest.name)}:", style="yellow"),
+              soft_wrap=True)
+    _print_copied(text)
+    raise typer.Exit(1)
+
+
 @app.command(name="source-note")
 def source_note(host: str, note: str, access: str = "", verified: str = ""):
     """Record an access finding that didn't come from a browser request.
@@ -1930,8 +1943,11 @@ def source_note(host: str, note: str, access: str = "", verified: str = ""):
     if verified:
         data["verified"] = verified
     data["findings"] = (data.get("findings") or "") + ("\n" if data.get("findings") else "") + note
+    text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=100)
+    if access_mod.installed_copy():
+        _registry_write_refused(entry_path, text)
     entry_path.parent.mkdir(parents=True, exist_ok=True)
-    entry_path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=100))
+    entry_path.write_text(text)
     con.print(f"[green]recorded[/] {escape(_printable(str(entry_path)))}")
 
 
@@ -1974,6 +1990,8 @@ def source_import_curl(path: Path, name: str = "", write: bool = True):
     if not write:
         _print_copied(text)
         return
+    if access.installed_copy():
+        _registry_write_refused(dest, text)
     if dest.exists():
         con.print(f"[yellow]{escape(_printable(str(dest)))} exists — printing instead of "
                   f"overwriting[/]\n")
