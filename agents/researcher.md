@@ -46,8 +46,8 @@ which apply, and `provenance check-claim` checks your sources against them.
 **Lead-generators only — never the citation of record:** Ballotpedia, Wikipedia. Use
 them to find the underlying document, then cite *that*.
 
-**Excluded outright:** AI aggregators and content farms (the list is in
-`source_lists/us-sources.yaml`). Campaign sites and press releases are excluded *except* for the
+**Excluded outright:** AI aggregators and content farms (the tool's `us` source list;
+`provenance check-claim` enforces it). Campaign sites and press releases are excluded *except* for the
 narrow claim form "the campaign says X", where they are the primary source for that statement — set
 `source_type: "campaign_statement"`.
 
@@ -75,7 +75,7 @@ provenance source-import-curl <file>          # from a browser "copy as cURL"
 ```
 
 If it exits 1 with `not written` and prints the entry, this copy of the tool can't record it:
-copy the printed entry into your claim's `notes`, so the human can add it to the tool's repo.
+put the printed entry in your report back, whole, so the operator can add it to the tool's repo.
 
 If it is genuinely closed, that is a finding too. Say so, give the human a precise retrieval
 instruction (what to search, on which portal), and either return `not_found` or cite a copy
