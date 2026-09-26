@@ -35,8 +35,17 @@ verifier returns `superseded` for an older one when a newer one exists.
 - **Form 700s** (statements of economic interests).
 - **Campaign finance forms:** Form 460s, and the Form 497 and Form 496 late reports.
 - **Candidate statements:** one for the primary and another for the general (below).
-- **The state's codes and bills:** see "The legislature's host" below, since what to cite there
-  is the version a claim is about, not always the newest.
+
+The state's code sections and bills come in versions instead: a section changes with each
+amendment, and a bill with each amended version. The `ca` list names both of the legislature's
+hosts, `leginfo.legislature.ca.gov` and `leginfo.ca.gov`, under `legal_text`, so every citation
+on either needs a `date`, which your instructions on legal text say how to fill. Two things
+about these hosts:
+- A code section's page shows its current text (and, where one is enacted, a version not yet
+  operative), each with its history note ("Amended by Stats. …"). An earlier version is not on
+  that page: it is in the chaptered bill that enacted it.
+- A bill's text page can serve its latest version to a fetcher whatever version your browser
+  showed. Run `provenance fetch <url>` and check that your snippet is in the text it caches.
 
 ## Portals that answer only through a bulk export or the pipeline's own query
 
@@ -159,24 +168,8 @@ tells you how the member voted) and the status page as the citation. Same patter
 campaign-finance database.
 
 Roll calls are the strongest evidence there is of a record, because they are what someone *did*
-rather than said. Do not skip them because the obvious page won't verify. Set the citation's
-`date` to the date of the vote (next section).
-
-## The legislature's host: every citation there carries its date or version
-
-The `ca` list names `leginfo.legislature.ca.gov` and `leginfo.ca.gov` under `legal_text`, so
-`provenance check-claim` fails any citation on either host without a `date`, or with a
-placeholder such as "current". What goes in `date` depends on what you cite:
-
-- **A code section:** the effective date or version of the text you quoted, from the section's
-  history note ("Amended by Stats. …, Ch. …, Sec. …, effective …"). A section changes with each
-  amendment, and an older version verifies exactly like the one in force, so cite the version
-  the claim is about: the one in force for a claim about the law as it stands, the one in force
-  then for a claim about the law at a stated time.
-- **A bill's text:** its version ("Amended in Assembly …", "Introduced …"). Each amendment is a
-  new version of the bill, and one vote was on one of them.
-- **A bill's status, a vote or an analysis:** the date of the action or analysis you cite. These
-  record an action, not a version of the law, so no newer version supersedes them.
+rather than said. Do not skip them because the obvious page won't verify. The status page is on
+a `legal_text` host, so its citation needs a `date`: the date of the action your snippet quotes.
 
 ## Candidate statements are a series too
 
