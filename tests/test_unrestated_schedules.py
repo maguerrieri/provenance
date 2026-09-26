@@ -530,7 +530,7 @@ def test_a_left_out_miss_still_names_the_schedules_that_count_the_gift(root):
 
 
 def test_a_reason_with_both_kinds_names_each_and_provenance_query_lists_the_rest(tmp_path,
-                                                                         monkeypatch):
+                                                                                 monkeypatch):
     """A value can count rows a cover's later amendment lacks and leave out a schedule too.
     The reason says both, each naming its largest few, and `provenance query` lists every one."""
     counted = [calaccess.Unrestated("8884301", 0, 1, amount=90.0, rows=1)]

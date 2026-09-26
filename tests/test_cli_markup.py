@@ -101,7 +101,7 @@ def test_a_verdict_note_in_markup_is_recorded_and_listed_as_written(tmp_path):
     assert token, out
 
     code, out = _provenance("judge", "q1", sid, "topic_only", "--note", note, "--context",
-                    token.group(1), "--data", cand)
+                            token.group(1), "--data", cand)
     assert code == 0 and f"recorded for q1/{sid}: {note}" in out, out
 
     code, out = _provenance("judgments", "--data", cand)
@@ -257,7 +257,7 @@ def test_query_prints_its_no_match_note_and_errors_as_written(tmp_path, monkeypa
     for exc in (ValueError, TypeError):
         monkeypatch.setattr(queries, "run", refused(exc))
         code, out = _provenance("query", "calaccess.ie_total", "--param", f"last={MARK}",
-                        "--data", tmp_path)
+                                "--data", tmp_path)
         assert code == 1 and f"bad value {MARK!r}" in out, (exc, out)
 
 

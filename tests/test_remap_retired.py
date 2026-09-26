@@ -79,7 +79,7 @@ def test_files_carrying_remaps_fields_still_load_and_build(tmp_path):
     (claim,) = cli.load_claims(run / "claims", trust_machine_fields=True)
     assert claim.sources[0].verification.status == "verified"
     code, out = _provenance("judge", "q1", claim.sources[0].sid, "supports", "--data", run,
-                    *_handed(run, "q1", claim.sources[0].sid))
+                            *_handed(run, "q1", claim.sources[0].sid))
     assert code == 0 and "supports recorded" in out, out
     code, out = _provenance("judgments", "--data", run)
     assert code == 0 and "0 of 1 cited source(s) need a verdict" in out, out

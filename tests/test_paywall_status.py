@@ -220,7 +220,7 @@ def test_a_paywalled_source_is_judged_through_its_snapshot(tmp_path):
     assert _gate(data) == (1, 1, 0)
 
     code, out = _provenance("judge", "q1", s.sid, "supports", "--note", "the snapshot quotes the vote",
-                    "--data", data, *_handed(data, "q1", s.sid))
+                            "--data", data, *_handed(data, "q1", s.sid))
     assert code == 0, out
     assert _gate(data) == (0, 1, 0)
     assert _built(data)["status"] == "verified"

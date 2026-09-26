@@ -165,7 +165,7 @@ def test_a_verdict_on_a_context_rebuilt_since_the_hand_off_is_refused(tmp_path):
     # what the hand-off gives now is what can be judged
     assert _handed(run) == {s.sid: (token2, rebuilt.removesuffix("\n"))}
     code, out = _provenance("judge", "q1", s.sid, "supports", "--context", f" {token2.upper()} ",
-                    "--data", run)
+                            "--data", run)
     assert code == 0 and "supports recorded for q1" in out, out
     assert _unreviewed_after_build(run) == []
 
@@ -333,7 +333,7 @@ def test_what_judge_prints_cannot_raise_or_start_a_line(tmp_path):
     run, s = _run(tmp_path), _source()
     note = "fine\udcff\nsupports recorded for q2/0123456789ab"
     code, out = _provenance("judge", "q1", s.sid, "topic_only", "--context", _token(run), "--note", note,
-                    "--data", run)
+                            "--data", run)
     assert code == 0, out
     assert out.splitlines() == [
         f"topic_only recorded for q1/{s.sid}: fine\\udcff\\x0asupports recorded for "
@@ -450,14 +450,14 @@ def test_a_query_verdict_on_a_run_replaced_since_the_hand_off_is_refused(tmp_pat
     assert token2 != token1
 
     code, out = _provenance("judge", "q1", s.sid, "supports", "--context", token1,
-                    "--data", run, "--cache", root)
+                            "--data", run, "--cache", root)
     assert code == 1 and "not recorded" in out and "query run" in out, out
     assert f"provenance handoff q1 --data {run} --cache {root}" in out, out
     assert token2 not in out, "a refusal that printed the current token invites a blind retry"
     assert _shards(run) == {}, "refused, writing nothing"
 
     code, out = _provenance("judge", "q1", s.sid, "supports", "--context", token2,
-                    "--data", run, "--cache", root)
+                            "--data", run, "--cache", root)
     assert code == 0 and "supports recorded for q1" in out, out
     j = judgments.load(run, "q1")[s.sid]
     assert (j.query_version, j.export_date) == (
@@ -491,11 +491,11 @@ def test_a_query_verdict_without_a_token_is_refused(tmp_path, total):
     run, root = _query_run(tmp_path, s)
     for given in ([], ["--context", ""]):
         code, out = _provenance("judge", "q1", s.sid, "supports", *given, "--data", run,
-                        "--cache", root)
+                                "--cache", root)
         assert code == 1 and "--context" in out, out
         assert f"provenance handoff q1 --data {run} --cache {root}" in out, out
     code, out = _provenance("judge", "q1", s.sid, "supports", "--context", "0" * 16, "--data", run,
-                    "--cache", root)
+                            "--cache", root)
     assert code == 1 and "not recorded" in out, out
     assert _shards(run) == {}
 
@@ -533,7 +533,7 @@ def test_a_query_outside_calaccess_is_handed_off_and_judged(tmp_path, monkeypatc
     assert code == 0 and f"  query run: test.total v1, under {root}\n" in out, out
     [(token, _)] = _handed_from(out).values()
     code, out = _provenance("judge", "q1", s.sid, "supports", "--context", token, "--data", run,
-                    "--cache", root)
+                            "--cache", root)
     assert code == 0, out
     assert judgments.load(run, "q1")[s.sid].export_date == ""
 
@@ -550,7 +550,7 @@ def test_the_same_root_spelled_another_way_keeps_the_token(tmp_path, total, monk
     assert _claim(run).sources[0].verification.query_run.cache_root == "root"
     assert _handed_under("run", "root") == _handed_under(run, root)
     code, out = _provenance("judge", "q1", s.sid, "supports", "--context", token, "--data", "run",
-                    "--cache", "root")
+                            "--cache", "root")
     assert code == 0, out
 
 
@@ -572,7 +572,7 @@ def test_a_query_verdict_is_stamped_with_the_run_it_was_checked_against(tmp_path
 
     monkeypatch.setattr(calaccess, "export_info", export_info)
     code, out = _provenance("judge", "q1", s.sid, "supports", "--context", token, "--data", run,
-                    "--cache", root)
+                            "--cache", root)
     assert code == 0, out
     assert judgments.load(run, "q1")[s.sid].export_date == "2030-01-02"
 
@@ -731,7 +731,7 @@ def test_a_token_names_the_source_it_was_printed_beside(tmp_path):
     handed = _handed(run)
     assert handed[s.sid][0] != handed[LEDGER.sid][0]
     code, out = _provenance("judge", "q1", s.sid, "supports", "--context", handed[LEDGER.sid][0],
-                    "--data", run)
+                            "--data", run)
     assert code == 1 and "different hand-off" in out, out
     assert _shards(run) == {}
 
