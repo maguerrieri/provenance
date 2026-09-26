@@ -168,6 +168,27 @@ def _ascii(host: str) -> str:
         return host
 
 
+def why_not_nameable(host: str | None, rules: dict[str, tuple[str, ...]]) -> str | None:
+    """Why `host` (as `bare_host()` gives it) can't be named in a project's `primary_hosts`
+    under `rules`, or None when it can. The one rule for it: `project.load()` refuses an entry
+    by it, and check-claim and the review page offer `primary_hosts` only where it allows, so
+    none of them tells a person to add a host the project file would refuse.
+
+    Classification takes the most restrictive class first, so an excluded or lead-generator host
+    named there would stay what it is while every brief called it an issuing authority. And a
+    news outlet would stop being one, named itself or through a host above it (primary_document
+    is checked before journalism): its copy of a record would pass as the record."""
+    if host is None:
+        return ("it is no host name a project can list (an IP address, a single label, or a "
+                "character no host name holds)")
+    if (cls := classify(f"https://{host}/", rules)) not in ("unknown", "primary_document"):
+        return f"the project's source lists class it as {cls}"
+    if outlets := [j for j in rules.get("bylined_journalism", ()) if j.endswith("." + host)]:
+        return f"it covers {', '.join(map(repr, outlets))}, a news outlet on the project's " \
+               f"source lists"
+    return None
+
+
 def host_key(url: str) -> str:
     """`url`'s host as hosts are compared: `domain()`'s, in the ASCII form list entries are
     stored in (`_ascii()`). Everything that asks whether two hosts are one uses it, the

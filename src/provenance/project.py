@@ -140,7 +140,7 @@ def find(start: Path) -> Path | None:
 def load(root: Path) -> Project:
     """Read `root`/provenance.toml, refusing anything it can't read as a project. Every problem
     is named in one message, so a repair is not a loop of re-runs."""
-    from .sources import available, bare_host, classify, load_rules
+    from .sources import available, bare_host, load_rules, why_not_nameable
 
     root = _real(root) or absolute(root)
     path = root / FILE
@@ -218,20 +218,11 @@ def load(root: Path) -> Project:
             if str(e) not in problems:
                 problems.append(str(e))
     if listed is not None:
-        # Classification takes the most restrictive class first, so an excluded or
-        # lead-generator host named here would stay what it is while the brief told every
-        # researcher it was an issuing authority. And a news outlet would stop being one, named
-        # itself or through a host above it (primary_document is checked before journalism):
-        # its copy of a record would pass as the record.
+        # The rule check-claim and the review page offer `primary_hosts` by (see its docstring).
         for h in hosts:
-            if (cls := classify(f"https://{h}/", listed)) not in ("unknown", "primary_document"):
-                problems.append(f"`primary_hosts` names {h!r}, which the project's source lists "
-                                f"class as {cls}: a project names the issuing authorities its "
-                                f"lists leave out, and can't reclass a host they class")
-            elif outlets := [j for j in listed["bylined_journalism"] if j.endswith("." + h)]:
-                problems.append(f"`primary_hosts` names {h!r}, which covers "
-                                f"{', '.join(map(repr, outlets))}, a news outlet on the "
-                                f"project's source lists: name the issuing authority's own host")
+            if why := why_not_nameable(h, listed):
+                problems.append(f"`primary_hosts` names {h!r}, but {why}: a project names only "
+                                f"the issuing authorities its lists leave out, by their own host")
 
     cache = raw.get("cache")
     cache_path = None
