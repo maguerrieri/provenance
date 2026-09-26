@@ -105,6 +105,11 @@ def test_a_value_encoded_past_reading_is_refused_not_read_no_further(registry):
         parse_curl(f"curl '{url}'")
     _clean(str(e.value))
     assert redact(f"see https://x.example/?n={CANARY}{deep}") == "see [redacted]"
+    # Eight times over is read to the end, and found.
+    eight = "%" + "25" * 7 + "40"
+    with pytest.raises(Refused, match="carries a username or password"):
+        parse_curl(f"curl 'https://x.example/api?next=https://canary-user:{CANARY}{eight}"
+                   "y.example/'")
 
 
 @pytest.mark.parametrize("recipe", [
@@ -121,6 +126,10 @@ def test_a_value_encoded_past_reading_is_refused_not_read_no_further(registry):
     # An origin's fragment has no pairs to read, and a URL in it is read all the same.
     Recipe(id="r", method="GET", url="https://x.example/api",
            headers={"Origin": f"https://x.example/#https://{LOGIN}@y.example"}),
+    # Nor has a fragment or a body a param fills whole: the filled request is read as text.
+    Recipe(id="r", method="GET", url="https://x.example/api#{next}", params=["next"]),
+    Recipe(id="r", method="POST", url="https://x.example/api", body="{next}", params=["next"],
+           headers={"content-type": "application/x-www-form-urlencoded"}),
 ])
 def test_run_refuses_a_login_in_a_nested_url(recipe, registry):
     """`run()` checks a recipe as `check_entry()` does, since one built by hand reaches it too."""
@@ -182,6 +191,7 @@ def test_a_host_that_is_not_a_host_name_names_no_file(host, registry, tmp_path):
     ("portal.example", f"api at https://portal.example/api?api_key={CANARY}"),
     ("portal.example", "fine", "--access", f"https://{LOGIN}@portal.example/"),
     ("portal.example", "fine", "--verified", f"https://{LOGIN}@portal.example/"),
+    ("portal.example", f"login {LOGIN}@portal.example works"),   # a note is prose
 ])
 def test_source_note_refuses_a_credential_in_any_value_it_writes(args, registry):
     code, out = _invoke("source-note", *args)
@@ -229,6 +239,10 @@ def _recipe(**fields) -> dict:
     (_entry(host="../portal.example"), "not a host name"),
     (_entry(notes=f"see https://{LOGIN}@portal.example/"), "field notes holds a username"),
     (_entry(limits=f"proxy http://{LOGIN}@proxy.example works"), "field limits holds a username"),
+    # In prose, a bare `name:x@host` is a login written without its scheme, search syntax or not.
+    (_entry(notes=f"portal login {LOGIN}@portal.example"), "field notes holds a username"),
+    (_entry(**_recipe(notes=f"works as {LOGIN}@portal.example")),
+     "in recipe 'search', its field notes holds a username"),
     (_entry(extra=[{"deep": f"//{LOGIN}@portal.example/"}]), "field extra.deep holds"),
     (_entry(notes=f"see https:\\/\\/{LOGIN}@portal.example\\/"), "holds a username"),  # escaped
     (_entry(ui_url=f"https://portal.example/?api_key={CANARY}"), r"credentials in its URL"),
@@ -277,7 +291,8 @@ def test_check_entry_refuses_each_shape_naming_where_not_what(entry, match):
     # A placeholder for a whole JSON value is no JSON until it is filled.
     _entry(**_recipe(headers={"content-type": "application/json"}, body='{"year": {year}}',
                      params=["year"])),
-    _entry(notes="search from:alice@agency.example to find the filings"),
+    # Part of a request, a bare `name:x@host` is search syntax.
+    _entry(**_recipe(url="https://portal.example/api?q=from:alice@agency.example")),
     # A port is a number, or a recipe's placeholder for one.
     _entry(ui_url="https://portal.example:8443/", **_recipe(url="https://{host}:{port}/api",
                                                             params=["host", "port"])),

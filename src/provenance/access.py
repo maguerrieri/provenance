@@ -162,13 +162,13 @@ def _readings(text: str) -> list[str]:
     Read until nothing changes. A value that still decodes after `_MAX_DECODINGS` rounds is
     refused, not read no further: stopping there let a login encoded one layer deeper through."""
     out = [text]
-    for _ in range(_MAX_DECODINGS):
-        t = _unbackslash(html.unescape(unquote(unicodedata.normalize("NFKC", out[-1]))))
-        if t == out[-1]:
-            return out
+    while (t := _unbackslash(html.unescape(unquote(unicodedata.normalize("NFKC", out[-1]))))
+           ) != out[-1]:
+        if len(out) > _MAX_DECODINGS:   # the text and its eight decodings: a ninth changed it
+            raise Refused(f"a value is encoded more than {_MAX_DECODINGS} times over, so it "
+                          "can't be checked for a credential")
         out.append(t)
-    raise Refused(f"a value is encoded more than {_MAX_DECODINGS} times over, so it can't be "
-                  "checked for a credential")
+    return out
 
 
 _MAX_DECODINGS = 8
@@ -421,8 +421,13 @@ def _check_request(url: str, headers: dict[str, str], body: str | None) -> None:
         raise Refused("its URL carries a username or password")
     if found := _credential_params(url, headers, body):
         raise Refused(f"it carries what look like credentials in {'; '.join(found)}")
+    # Every string of the request read as text too: a param can fill a fragment or a body that
+    # has no pairs to read with a whole URL, login and all.
     for k, v in headers.items():
-        _check_text(v, f"its {_names_shown([k])} header")
+        _check_text(v, f"its {_names_shown([k])} header", prose=False)
+    _check_text(url, "its URL", prose=False)
+    if body:
+        _check_text(body, "its body", prose=False)
 
 
 _REDACTED = "[redacted]"
@@ -577,12 +582,16 @@ def _field(path: str, name) -> str:
     return f"{path}.{name}" if path else name
 
 
-def _check_text(text: str, where: str) -> None:
-    """Prose is read for the URLs in it: any login, and the parameters of any URL a reader
+def _check_text(text: str, where: str, *, prose: bool = True) -> None:
+    """Text is read for the URLs in it: any login, and the parameters of any URL a reader
     would open (one with a scheme, or `//`), in every reading of it, as a login is: a URL
     percent-encoded whole has no `//` until it is decoded. A relative link is not read for
-    parameters, since documentation names a parameter that way (`/DownloadPdf?key=<hex>`)."""
-    if _login_in(text):
+    parameters, since documentation names a parameter that way (`/DownloadPdf?key=<hex>`).
+
+    Prose (a note, a name, anything that is not part of a request) is also refused a bare
+    `name:x@host`, which is a login written without its scheme. Part of a request, the same
+    shape is search syntax (`from:alice@agency.example`), so a request is read without it."""
+    if _login_in(text) or (prose and any(_BARE_LOGIN.search(r) for r in _readings(text))):
         raise Refused(f"{where} holds a username or password in a URL or host")
     for r in _readings(text):
         for url in re.findall(r"(?:[A-Za-z][A-Za-z0-9+.-]*:)?//[^\s\"'<>`]+", r):
@@ -636,6 +645,9 @@ def check_entry(entry, host: str | None = None) -> None:
     _check_fields({k: v for k, v in entry.items() if k != "recipes"})
 
 
+_REQUEST_FIELDS = frozenset({"url", "headers", "body"})
+
+
 def _check_recipe(r: dict, where: str) -> None:
     """One recipe, as `check_entry()` checks each it holds and `run()` checks the one it sends,
     so the two can't come to disagree about one:
@@ -659,7 +671,9 @@ def _check_recipe(r: dict, where: str) -> None:
         _check_request(_template(str(r.get("url") or ""), params),
                        {str(k): str(v) for k, v in headers.items()},
                        None if body is None else _template(str(body), params))
-        _check_fields(r)
+        # The request's own fields are `_check_request()`'s, read as a request (search syntax
+        # allowed); the rest of a recipe is prose.
+        _check_fields({k: v for k, v in r.items() if k not in _REQUEST_FIELDS})
     except Refused as e:
         raise Refused(f"in {where}, {e}") from None
 

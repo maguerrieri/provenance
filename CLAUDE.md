@@ -1294,10 +1294,12 @@ check each way:
   authority, and each authority is read in every decoding too, since decoded first,
   `%2F…%40` ends it before the `@`. Decoding runs until nothing changes: a value that still
   decodes after eight rounds is refused, since stopping at a fixed depth let a login one layer
-  deeper through. A scheme-less `user:x@host` counts only where a host is expected, since in a query
-  it reads the same as a search (`from:alice@agency.example`); there any `@` is refused (a host
-  argument, which `.hostname` never cleaned without a `://`, so `source-note` wrote the login
-  into a file name, #161). Each recipe gets `_check_recipe()`, which `run()` also calls, since a
+  deeper through. A scheme-less `user:x@host` is refused in prose (a note, a name), but not in a
+  request, since there it reads the same as a search (`from:alice@agency.example`); a host
+  argument refuses any `@` (`.hostname` never cleaned one without a `://`, so `source-note` wrote
+  the login into a file name, #161). Every string of a request is also read as text, since a
+  param can fill a fragment or a body that has no pairs to read with a whole URL. Each recipe
+  gets `_check_recipe()`, which `run()` also calls, since a
   recipe built by hand reaches it too; the two paths disagreed twice in review, about a login
   and then a key in a header other than `origin` and `referer`, until they shared the one
   function. Its request gets `_check_request()`, which `run()` calls again after filling and
