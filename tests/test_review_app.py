@@ -392,11 +392,15 @@ def test_stored_progress_is_sanitized(tmp_path):
                            sid: {"flag": "yes", "note": 7, "extra": "dropped"}},
                "notice": {"cleared": "<b>9</b>", "uncited": -1, "unreadable": "yes"},
                "extra": {"dropped": True}}
-    for result in (run(tmp_path, [c], storage={STORE: json.dumps(hostile)}),
-                   run(tmp_path, [c], storage={V2: json.dumps({**hostile, "v": 2})}),
-                   run(tmp_path, [c], actions=[{"do": "import", "text": json.dumps(hostile)}])):
-        assert stored(result) == {"v": 3, "checked": {"1" * 16: f"q1/{sid}",
-                                                      "2" * 16 + "." + "3" * 16: f"q1/{sid}"},
+    two_part = {"2" * 16 + "." + "3" * 16: f"q1/{sid}"}
+    older = json.dumps({**hostile, "v": 2})
+    for result, kept in ((run(tmp_path, [c], storage={STORE: json.dumps(hostile)}), two_part),
+                         (run(tmp_path, [c], actions=[{"do": "import",
+                                                       "text": json.dumps(hostile)}]), two_part),
+                         # A v2 page wrote only one-part fingerprints, and dropped any other.
+                         (run(tmp_path, [c], storage={V2: older}), {}),
+                         (run(tmp_path, [c], actions=[{"do": "import", "text": older}]), {})):
+        assert stored(result) == {"v": 3, "checked": {"1" * 16: f"q1/{sid}", **kept},
                                   "sources": {sid: {"flag": False, "note": ""}}}
         assert not rows(result)[f"q1/{sid}"]["checked"]
         assert not rows(result)[f"q1/{sid}"]["flagged"]
