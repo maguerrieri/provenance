@@ -63,12 +63,12 @@ check two things before any researcher runs:
   that…") gets that answer back, and nothing else surfaces. Propose a rewording that asks what
   the record shows.
 - **Its `claim_type`.** A question negative or contested about someone or something is
-  `adversarial` (Phase 0, step 4). If it was not asked with `--adversarial`, say so and offer
-  the change.
+  `adversarial` (Phase 0, step 4). If it was not asked with `--adversarial`, say so.
 
-Make either change in `questions.json` only with the operator's approval. No claim or verdict
-is filed under `q1` until a researcher writes one, so the question can still change. Once a
-researcher has, `q1` is fixed, and a different question is a new `provenance ask`.
+Don't edit `questions.json` to fix either: `q1` names one question for the life of the
+project. Give the operator the `provenance ask` command for the question as it should be
+(with `--adversarial` if it should be), and stop. The first project's directory holds no
+research yet, so they can remove it.
 
 Then run Phases 1 to 3 as written, for the one question: one `provenance:researcher`, which
 must pass `provenance check-claim`, and after `provenance verify`, one fresh

@@ -228,21 +228,23 @@ provenance ask "What does the record show about the county's flood-control levy?
   on, add where the records are to `context`, and list the project's `subjects` if it has more
   than one (see [Projects](#projects)).
 - **`provenance ask "<question>"`** is for one question, with no template. It creates a new
-  project in `--dir`, by default `ask-<the question's first words>` in the working directory,
-  which must not exist yet. The project holds just the question, as `q1`. The skill gives it
+  project in `--dir`, by default `ask-<the question's first distinctive words>` in the working
+  directory, which must not exist yet. The project holds just the question, as `q1`. The skill gives it
   one researcher and one fresh verifier, then builds its review page. Pass `--adversarial` for
   a question negative or contested about someone or something: its claim then needs two
   independent sources.
 
 Both keep a full run's guarantees. The question asks what the record shows, never the answer
-it expects: the skill proposes a rewording for one that does. Each claim passes
+it expects: for one that does, the skill proposes a rewording, as a new `provenance ask`.
+Each claim passes
 `provenance check-claim`, and a verifier that did not write it judges every source.
 
 `--source` is required, once for each source list the citations are checked against (see
-[Source lists](#source-lists)). `us` holds the rules that apply everywhere. `--cache` sets
-`cache`: `.` for a `new` project, and `~/.cache/provenance` for every `ask` project, so a
-question asked again doesn't fetch its pages again. `new` takes `--name`, the project's name,
-which defaults to the directory's.
+[Source lists](#source-lists)). `us` holds the rules that apply everywhere. The project's
+`cache` is `.` for a `new` project, and `~/.cache/provenance` for every `ask` project, so a
+question asked again doesn't fetch its pages again. `--cache` names another, from the working
+directory as every command's `--cache` does, and is written relative to the project file.
+`--name` sets the project's name, which defaults to the directory's.
 
 ## Projects
 
