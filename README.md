@@ -282,8 +282,9 @@ instead.
 
 ## What researchers are told
 
-`provenance brief` prints what goes into every researcher's prompt, verbatim: the project, the
-run's subject, and `context`. It never prints `completeness_check`.
+`provenance brief` prints what goes into every researcher's and verifier's prompt, verbatim:
+the project, the run's subject, `context`, and the notes that ship with each source list the
+project names (see [Source lists](#source-lists)). It never prints `completeness_check`.
 
 Keep `context` thin. It reaches every researcher unverified: no snippet, no source, nothing
 checks it, so a factual claim placed there is believed by every researcher and checked by
@@ -306,6 +307,12 @@ still pass if they carry a named or institutional author — so an unlisted loca
 degrades gracefully instead of being rejected. A new list is a change to the tool: add it under
 `src/provenance/source_lists/` in a clone, since an installed copy's lists are replaced on the
 next install.
+
+A list can ship notes beside it, `<name>-notes.md`: how its records behave, such as which
+filings come in series and which portals answer only through a bulk export. `provenance brief`
+appends the notes of every list the project names, so a project that names the list gets them
+and one that doesn't never sees them. The `ca` list's notes hold the California election,
+legislative and campaign-finance guidance; the skill and agents carry none.
 
 A new project is a new `provenance.toml`. No pipeline or skill edits.
 

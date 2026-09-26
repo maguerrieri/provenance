@@ -1054,6 +1054,26 @@ brief, for any run. `project.load()` refuses a `context` that still holds a comp
 heading, as a race file's body pasted whole would. The orchestrator reads the check; it pastes
 the brief, never the project file.
 
+## Domain content ships with its source list, never in the skill or agents
+
+The skill and agents carry the loop and the invariants. How one jurisdiction's or domain's
+records behave (which filings come in series, which portals answer only through a bulk
+export, how one state's campaign-finance export counts) is a source list's notes:
+`src/provenance/source_lists/<name>-notes.md`, beside `<name>-sources.yaml`.
+`researcher_brief()` appends the notes of every list the project names, headed as the tool's
+text, so a project naming `ca` gets them and one that doesn't never reads them. The skill
+passes the brief to verifiers as well as researchers.
+
+Delivery is mechanical on purpose. A prose rule ("read the notes when the work touches the
+domain") is one an orchestrator can skim, and a verifier never told that a record comes in
+series can't return `superseded` for it.
+- A leading `<!-- ... -->` in a notes file is for the tool's maintainers and is left out.
+- `tests/test_plugin.py` fails on a term of the shipped domain in the skill or an agent. Add
+  terms there when a list gains notes.
+- `ca-notes.md` is one file for now. Splitting the jurisdiction (the legislature, outlets and
+  portals) from the domain (CAL-ACCESS, Form 700, candidate statements) is for the packs
+  (#22, #23).
+
 ## One run per subject; one cache for all of them
 
 Each subject is a separate run in a subdirectory of the project, `<project>/<subject-id>/`,
@@ -1776,7 +1796,8 @@ flagged too, as the mirror image of the one above:
 - **A citable receipts figure** that would have counted rows from one carries it
   (`QueryResult.omitted`), with what it leaves out, and goes to `human_review` through the same
   `unsettled` reason. That reason says it "leaves out rows a later amendment may have
-  withdrawn", and the skill matches the phrase both reasons share, so it doesn't retry either.
+  withdrawn", and the `ca` list's notes quote the phrase both reasons share for the skill's
+  retry loop, so it doesn't retry either.
 - **A miss carries it too.** When every match with a readable amount is on a left-out
   schedule, the query finds nothing counted, and "NO MATCH for that name" would tell a
   researcher the donor gave nothing. The note says every such match was left out instead, and
