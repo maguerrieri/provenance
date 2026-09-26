@@ -154,10 +154,10 @@ def _unbackslash(text: str) -> str:
 
 
 def _readings(text: str) -> list[str]:
-    """`text`, then `text` as each round of decoding reads it: NFKC (a fullwidth `＠` is an `@`
-    to `urlsplit()`), percent-encoding (`%40`, and `%2540` in a second round), HTML entities and
-    backslash escapes (`\\u0040`, JSON's `\\/`). Every check for a login looks at every reading,
-    so none hides behind an encoding some reader decodes and the check doesn't."""
+    """`text`, then `text` as each round of decoding reads it: NFKC (the fullwidth `@`, U+FF20,
+    is an `@` to `urlsplit()`), percent-encoding (`%40`, and `%2540` in a second round), HTML
+    entities and backslash escapes (`\\u0040`, JSON's `\\/`). Every check for a login looks at
+    every reading, so none hides behind an encoding some reader decodes and the check doesn't."""
     out = [text]
     for _ in range(4):
         t = _unbackslash(html.unescape(unquote(unicodedata.normalize("NFKC", out[-1]))))
@@ -171,7 +171,7 @@ def _readings(text: str) -> list[str]:
 _AUTHORITY = re.compile(r"//([^/?#\s\"'<>`\\]*)")
 # `name:secret@host` with no scheme: a host argument, a proxy setting, curl's `-u` value pasted
 # whole. The colon is what tells it from an email address, and `mailto:` is one.
-_BARE_LOGIN = re.compile(r"(?<![^\s\"'<>`(=,;&?])(?!mailto:)[^\s/?#@\"'<>`:]+:"
+_BARE_LOGIN = re.compile(r"(?<![^\s\"'<>`(=,;&?])(?!mailto:)[^\s/?#@\"'<>`:=&;]+:"
                          r"[^\s/?#@\"'<>`]*@[^\s/?#@\"'<>`]", re.IGNORECASE)
 
 
@@ -625,7 +625,16 @@ def save(host: str, entry: dict) -> Path:
 
 
 def _read_entry(path: Path) -> dict:
-    raw = yaml.safe_load(path.read_text()) or {}
+    """A registry file's fields. PyYAML's error is not passed on: it quotes the lines around
+    the problem, cut to fit (`https://user:secr ... `), so a login in them can be cut before
+    its `@`, where no redactor can find it. Only where the problem is, and what it is."""
+    try:
+        raw = yaml.safe_load(path.read_text()) or {}
+    except yaml.YAMLError as e:
+        mark = getattr(e, "problem_mark", None)
+        at = f" at line {mark.line + 1}, column {mark.column + 1}" if mark else ""
+        raise Refused(f"its YAML can't be read{at} "
+                      f"({getattr(e, 'problem', None) or type(e).__name__})") from None
     if not isinstance(raw, dict):
         raise Refused("it is not a mapping of fields")
     return raw
