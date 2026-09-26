@@ -2595,7 +2595,7 @@ def _already_a_project(root: Path) -> NoReturn:
             f"create a project, and no command edits one")
 
 
-def _install(path: Path, body: str) -> None:
+def _install(path: Path, body: str) -> tuple[int, int]:
     """Create `path` holding `body`, whole or not at all, and never over a file already there:
     written to a temporary file beside it, fsynced, then hard-linked into place, which raises
     FileExistsError if `path` exists. A run killed while writing leaves only the temporary file
@@ -2608,7 +2608,10 @@ def _install(path: Path, body: str) -> None:
     a partial project file is refused, as unreadable, by every command that reads it.
 
     Written as bytes, UTF-8, with no newline translation: a template is copied as it was given,
-    so a retry compares it equal, and a CRLF template stays one."""
+    so a retry compares it equal, and a CRLF template stays one.
+
+    Returns the file's identity (device, inode), taken from the file this run wrote, so a
+    cleanup can tell it from one another process put in its place."""
     import errno
     import os
     import tempfile
@@ -2620,6 +2623,7 @@ def _install(path: Path, body: str) -> None:
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
+            st = os.fstat(f.fileno())
         try:
             os.link(tmp, path)
         except OSError as e:
@@ -2630,6 +2634,7 @@ def _install(path: Path, body: str) -> None:
                     f.write(data)
                     f.flush()
                     os.fsync(f.fileno())
+                    st = os.fstat(f.fileno())
                 except BaseException:
                     # A failed cleanup must not replace the error that caused it.
                     try:
@@ -2642,6 +2647,7 @@ def _install(path: Path, body: str) -> None:
             os.unlink(tmp)
         except OSError:
             pass
+    return st.st_dev, st.st_ino
 
 
 def _refuse_run_files(root: Path, held: list[str]) -> NoReturn:
@@ -2683,14 +2689,18 @@ def _scaffold(root: Path, name: str, sources: list[str], cache: str, files: dict
     import os
 
     created: list[Path] = []   # directories this run made, deepest first
-    written: list[Path] = []
+    written: list[tuple[Path, tuple[int, int]]] = []   # files it installed, with their identity
     text = _PROJECT_FILE.format(name=_toml_string(name), sources=json.dumps(sources),
                                 cache=_toml_string(cache))
 
     def undo() -> None:
-        for f in reversed(written):
+        for f, ident in reversed(written):
+            # Only while it is still the file this run installed: one another process put in
+            # its place is theirs.
             try:
-                f.unlink()
+                st = os.lstat(f)
+                if (st.st_dev, st.st_ino) == ident:
+                    f.unlink()
             except OSError:
                 pass
         for d in created:
@@ -2707,17 +2717,19 @@ def _scaffold(root: Path, name: str, sources: list[str], cache: str, files: dict
                 os.mkdir(d)
                 created.insert(0, d)
             except FileExistsError:
-                if d == root or not d.is_dir():
+                # A parent made meanwhile is left to whoever made it, but only a directory: one
+                # that turned up as a symlink would carry the project into wherever it points.
+                if d == root or os.path.islink(d) or not d.is_dir():
                     undo()
-                    _refuse(f"could not create {root}: {d} exists")
+                    _refuse(f"could not create {root}: {d} was made meanwhile"
+                            + (", as a symlink" if os.path.islink(d) else ""))
             except OSError as e:
                 undo()
                 _refuse(f"could not create {root}: {e}")
     for rel, body in {**files, proj.FILE: text}.items():
         path = root / rel
         try:
-            _install(path, body)
-            written.append(path)
+            written.append((path, _install(path, body)))
         except FileExistsError:
             undo()
             if rel == proj.FILE:
