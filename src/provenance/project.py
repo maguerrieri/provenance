@@ -57,6 +57,13 @@ class Project:
     def subject_dir(self, subject: str) -> Path:
         return self.root / subject
 
+    def subject_of(self, run: Path) -> str | None:
+        """The declared subject whose run `run` is, or None for the root (or any other
+        directory). By the name the project declares, not the directory's own, which differs
+        for a subject that is a symlink."""
+        at = run.resolve()
+        return next((s for s in self.subjects if self.subject_dir(s).resolve() == at), None)
+
 
 def find(start: Path) -> Path | None:
     """The nearest directory at or above `start` that holds a provenance.toml, or None.
@@ -117,7 +124,12 @@ def load(root: Path) -> Project:
                         "(\".\" for one beside this file)")
     else:
         cache_path = _path(root, cache)
-        if any((cache_path / d).is_dir() for d in ("pages", "calaccess")):
+        if bad := next((p for p in (cache_path, cache_path / "cache")
+                        if os.path.lexists(p) and not p.is_dir()), None):
+            # A file where the cache goes: the first fetch would fail creating cache/pages under
+            # it, with an OSError naming neither the project file nor the key.
+            problems.append(f"`cache` needs {bad} to be a directory, and it is a file")
+        elif any((cache_path / d).is_dir() for d in ("pages", "calaccess")):
             # As --cache: it names the directory that HOLDS cache/, and pointed at cache/ itself a
             # reader looked in cache/cache, found nothing, and a fetch created a second cache there.
             problems.append(f"`cache` names {cache_path}, which is a cache directory itself: "

@@ -144,6 +144,20 @@ def test_a_cache_naming_a_cache_directory_itself_is_refused(tmp_path):
         project.load(tmp_path)
 
 
+@pytest.mark.parametrize("where", ["the directory named", "its cache/"])
+def test_a_file_where_the_cache_goes_is_refused(tmp_path, where):
+    """The first fetch would fail creating cache/pages under it, with an error naming neither
+    the project file nor the key. A directory not created yet is fine."""
+    write_project(tmp_path, cache="store")
+    assert project.load(tmp_path).cache == (tmp_path / "store").resolve()
+    bad = tmp_path / "store" if where == "the directory named" else tmp_path / "store" / "cache"
+    bad.parent.mkdir(parents=True, exist_ok=True)
+    bad.write_text("")
+    with pytest.raises(project.ProjectError) as e:
+        project.load(tmp_path)
+    assert f"`cache` needs {bad.resolve()} to be a directory, and it is a file" in str(e.value)
+
+
 def test_an_unreadable_project_file_is_refused_not_skipped(tmp_path):
     """A walk that skipped a broken project file would hand the run to a project further up."""
     inner = write_project(tmp_path / "inner")
@@ -351,6 +365,19 @@ def test_a_subject_that_is_a_symlink_finds_the_project_it_is_declared_in(tmp_pat
     # project it is found in is tmp_path's, which does not declare it.)
     with pytest.raises(project.ProjectError, match="is neither the root of the project"):
         project.resolve(real, None)
+
+    # Named by the project's name for it, not its directory's: the command a refusal gives must
+    # name a subject the project has. Here its real directory is "ng-2030".
+    real2 = tmp_path / "other-disk" / "ng-2030"
+    (real2 / "claims").mkdir(parents=True)
+    (root / "ng").unlink()
+    (root / "ng").symlink_to(real2)
+    (root / "questions.json").write_text(json.dumps([{"id": "q1", "text": "?"}]))
+    code, _ = _provenance("status", "--data", root / "ng")
+    out = " ".join(quiet.getvalue().split())   # the console is `quiet`'s here
+    assert code == 1 and f"{root / 'ng'} is ng's run and has no questions.json" in out, out
+    assert "`provenance new-candidate ng` copies it, retargeted to ng." in out, out
+    assert "ng-2030's" not in out and "new-candidate ng-2030" not in out, out
 
 
 def test_the_root_run_is_named_when_defaulted_from_inside_a_subject(tmp_path, monkeypatch):
