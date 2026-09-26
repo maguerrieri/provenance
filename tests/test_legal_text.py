@@ -121,10 +121,12 @@ NOT_A_HOST = "'legal_text' holds what is not a bare host name"
     ("legal_text:\n  - codes.example.gov:443\n", NOT_A_HOST),
     ("legal_text:\n  - www.codes.example.gov\n", NOT_A_HOST),
     ("legal_text:\n  - localhost\n", NOT_A_HOST),
+    ("legal_text:\n  - bad_host.example.gov\n", NOT_A_HOST),
     ("legal_text: [codes.example.gov\n", "can't be read"),
     ("- codes.example.gov\n", "is not a mapping"),
 ], ids=["misspelled key", "repeated key", "bare host", "empty string", "zero", "empty mapping",
         "number", "empty host", "scheme", "trailing slash", "path", "port", "www", "no dot",
+        "underscore",
         "not yaml", "not a mapping"])
 def test_a_malformed_source_list_is_refused(tmp_path, text, says):
     """Each of these fails open if read past: a misspelled or repeated `legal_text` lists no
