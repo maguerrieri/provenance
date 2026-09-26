@@ -13,11 +13,11 @@ Agents find sources and make judgment calls. Deterministic code decides whether 
 
 Imported from the private project where it was built, and still shaped by it: research is
 organized as voter-guide races. The generalization is tracked as an epic in this repo's issues.
-The tool ships with no race file: add one (see [Adding a race](#adding-a-race)) before
-`provenance verify` or `provenance build`.
+The tool ships with no project: write one (see [Projects](#projects)) before running a
+command in it.
 
 Citation verification pipeline for voter guides. Nothing race-specific lives in the pipeline
-itself: each race is one file in `races/`.
+itself: each race is one file, which its project names.
 
 **The premise:** every claim must be traceable to a human-written source, and a human must
 be able to confirm any citation in ~15 seconds. Fabricated and misattributed citations are
@@ -55,13 +55,15 @@ Then run it from your research project's directory:
 
 ```bash
 provenance --version                                                    # provenance 0.1.0
-provenance races                                                        # what's defined
 provenance check "https://example.org/article" "a short verbatim snippet" # ad-hoc
-provenance verify        # deterministic checks over data/claims/*.json
+provenance verify        # deterministic checks over the run's claims/*.json
 provenance archive       # web.archive.org snapshots
 provenance build         # conflicts + render the review app
 provenance serve         # http://127.0.0.1:8765/review.html
 ```
+
+Every command runs in a project: from inside one, or with `--project <dir>` (see
+[Projects](#projects)). `check` and `fetch` given `--cache` need none.
 
 To move to another release, install over it:
 
@@ -136,7 +138,7 @@ whether they support the claim.
 | Phase | Who | What |
 |---|---|---|
 | 0 | main session | Split the template into atomic questions; a human approves the split |
-| 1 | `provenance:researcher` agents, parallel | One question each → `data/claims/<qid>.json` |
+| 1 | `provenance:researcher` agents, parallel | One question each → `claims/<qid>.json` in the run |
 | 2 | `provenance verify` + `provenance:verifier` agents | Mechanical checks, then the judgment half; ≤2 retries, then `human_review` |
 | 3 | `provenance build` / `provenance serve` | Conflicts + review app + `claims.json` |
 
@@ -171,17 +173,67 @@ fabricated quote, repeated snippet, smart-quote drift, excluded aggregator. The 
 tests run the page's own script under Node, so they need `node` on the PATH; without it they
 skip, except in CI, where they fail.
 
+## Projects
+
+A project is a directory holding a `provenance.toml`. Every command finds it the same way: the
+nearest one at or above the run it is given (`--data`, else the working directory), or the one
+`--project` names. Nothing is inferred from which directories happen to exist.
+
+```toml
+name = "example"
+sources = ["us", "ca"]       # the source lists citations are checked against
+cache = "."                  # the directory that holds cache/, as --cache names it
+subjects = ["lind", "ng"]    # optional: a run for each, in its own subdirectory
+race = "race.md"             # the race file (see below)
+```
+
+- **`cache`** is where the shared page cache and the CAL-ACCESS database live, relative to the
+  file, with `~` expanded. `"."` keeps them beside it. The same path in several projects, such
+  as `"~/.cache/provenance"`, shares one cache between them. `--cache` overrides it.
+- **`subjects`** lists the project's separate runs, each in its own subdirectory with its own
+  claims, verdicts, question set and review progress. `provenance new-candidate <id>` scaffolds
+  one, but only for a subject listed here: no command edits the project file. Without
+  subjects, the project root is the only run.
+- **`race`** names the race file, relative to this one.
+
+A run is the project root or a subject's directory: `provenance verify` works on the root,
+`provenance verify --data lind` on a subject, and any other `--data` is refused. Each run holds
+its own `questions.json`, `claims/`, `judgments/`, `archives.json` and `out/`. A subject's
+`questions.json` is its own copy, retargeted to it, and it never falls back to the root's.
+
+### Moving a project laid out the old way
+
+Before project files, a project lived in `data/`: its question set, claims and cache there, and
+a run per candidate in `data/<candidate>/`, with the cache found by inference. No command adopts
+that layout: each one refuses until a project file exists. To move one, write
+`data/provenance.toml`:
+
+```toml
+name = "<the race's name>"
+sources = ["us", "ca"]         # moved from the race file's `sources:`
+cache = "."                    # data/cache, as before
+subjects = ["<candidate>"]     # each data/<candidate>/ directory
+race = "../races/<race>.md"   # the clone's races/, or a copy moved in beside this file
+```
+
+Then delete `sources:` from the race file (a race still naming them is refused), and give any
+subject without a `questions.json` its own copy. Commit the project file in the project's own
+repository, so the move is reviewed like any other change. Commands then run in `data/`, or
+with `--data data/<candidate>`. Nothing else moves.
+
 ## Adding a race
 
-A race is one file in `races/`: frontmatter naming its title and which source lists apply,
-then prose context that goes verbatim into researcher prompts.
+A race is one file, which the project names with `race`: frontmatter naming its title and
+candidates, then prose context that goes verbatim into researcher prompts. The source lists are
+the project's (`sources`).
 
 ```yaml
 ---
 name: example
 title: 2030 Example County Assessor
 election_date: 2030-11-05
-sources: [us, ca]          # source_lists/us-sources.yaml + source_lists/ca-sources.yaml
+candidates:
+  - {id: lind, name: Avery Lind}
 ---
 ```
 
@@ -194,7 +246,7 @@ degrades gracefully instead of being rejected. A new list is a change to the too
 `src/provenance/source_lists/` in a clone, since an installed copy's lists are replaced on the
 next install.
 
-New race → new file. No pipeline or skill edits.
+New race → new file, named in its project file. No pipeline or skill edits.
 
 ## License
 

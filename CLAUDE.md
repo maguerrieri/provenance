@@ -630,7 +630,8 @@ stale; fresh has to be shown. The same rule, three places:
   data/cache`. Every command refuses a `--cache` that is itself a cache directory (it holds
   `pages/` or `calaccess/`), since `fetch` and `verify` used to create a second cache inside
   it. `judge`, `judgments`, `build` and `status` never create a cache, so they also refuse an
-  explicit root holding no `cache/` at all, and warn when the inferred one has none.
+  explicit root holding no `cache/` at all, and warn when the project's has none. A project
+  file's `cache` means what `--cache` means, and is refused on the same grounds.
 - Stamps compare as parsed times, never text, and a cache holding an *older* copy than the
   one judged (a merged stray, a restored backup) is stale too.
 
@@ -943,18 +944,30 @@ minimal DOM that supports single-class selectors only and throws on anything els
 template change that needs more fails loudly: extend the harness, don't stub around it. They
 skip without node only outside CI, and the fingerprint tests, which need no node, never skip.
 
-## Race-specific content lives in races/
+## Race-specific content lives in the project's race file
 
 Nothing about a candidate, an office, or a state belongs in `src/`, the skill, or the agent
-definitions. A race is one file in `races/` naming its source lists; the source lists are
-`src/provenance/source_lists/<region>-sources.yaml` and merge. If you find yourself adding a candidate name to
-the pipeline, put it in the race file instead.
+definitions. A race is one file, which the project's provenance.toml names (`race`, a path
+relative to it). The project names its source lists too (`sources`, each a
+`src/provenance/source_lists/<region>-sources.yaml`), and they merge. If you
+find yourself adding a candidate name to the pipeline, put it in the race file instead.
+
+A race is project data, so it lives with the project. It used to live in the tool's `races/`,
+found as `parents[2]/races`, which resolves inside the tool's own install once the tool is
+installed with `uv tool install`. #9 folds the race into the project file, and the `race` key
+is the bridge until then. A race file that still names `sources:` is refused, not ignored: a
+race listing `us, ca` beside a project listing `us` would lose its California lists without a
+word. The source lists come from the project everywhere, including the verdict helpers and the
+review page's secondary-host badge, which used to read the default race's lists while build
+read another's.
 
 Tests see only the synthetic race in `tests/fixtures/races/`, through conftest's autouse
-`example_race`, which patches `races.RACES_DIR` with the test's own `monkeypatch`. So
-`monkeypatch.undo()` partway through a test undoes that too, and the next `provenance` command fails
-to load a race, with a bare exit 1 under `CliRunner`. Scope a temporary patch with
-`with monkeypatch.context() as m:` instead.
+`example_project`, which makes every test's `tmp_path` a project naming it. A command finds its
+project by walking up from the run, and the nearest provenance.toml wins, so a run in `tmp_path`
+itself needs nothing more. A test that lays a run out elsewhere (`tmp_path / "data"`, a
+candidate's `data/cand`) writes its own with `write_project()`, declaring the subjects it uses,
+or the command refuses the run as one the project does not declare. A test about having no
+project unlinks `tmp_path`'s file first.
 
 ## Researchers search; they are never told what they will find
 
@@ -977,9 +990,12 @@ topping up a claim with the answer.
 
 ## One run per candidate; one cache for all of them
 
-Each candidate is a separate run under `data/<candidate-id>/` — own claims, own retries,
-own review progress. `provenance new-candidate <id>` scaffolds it and retargets the question set to
-that person's name, so a researcher is never left inferring who "the candidate" means.
+Each candidate is a separate run in a subdirectory of the project, `<project>/<candidate-id>/`,
+which the project's provenance.toml lists under `subjects` — own claims, own retries, own
+review progress. `provenance new-candidate <id>` scaffolds it and retargets the question set to
+that person's name, so a researcher is never left inferring who "the candidate" means. It
+refuses a candidate the project does not list, and one with no question set to copy: it writes
+the run, never the project file.
 
 The page cache is deliberately **not** per-candidate. The same filing, article, or roll call
 routinely covers more than one of them, and re-fetching per run would both waste time and
@@ -994,20 +1010,40 @@ figures across every claim it is given. That is right within a candidate and wro
 two, so if these datasets are ever merged, scope the cross-claim comparison by subject
 first.
 
-**Gotcha: a rule keyed on "does a cache exist here?" fulfils itself.** `_cache_root()` used
-to let a run's own `cache/` win if present. The first stray write into `data/<candidate>/cache`
-created exactly that condition, so the stray *became* the cache: one fetch with
-`--data data/<candidate>` forked the pages and hid the CAL-ACCESS database, and every query
-citation in the run failed at once. A candidate dir now uses its parent's cache whenever the parent is a
-data root (it has the race's `questions.json` template, written before any candidate exists),
-stray or not, and names the stray in a yellow warning; `--cache` still overrides. The parent's
-own `cache/` is deliberately NOT part of the test: it is gitignored, so on a fresh clone it
-does not exist yet and the first run would fork. Don't let the existence of an output
-directory decide where outputs go: whatever first creates it gets to pick. Every command that
-touches the cache — `provenance calaccess` included — must resolve its root through `_cache_root()`
-and take `--cache`, or two commands disagree about where the database lives. That includes reads: the verdict
-staleness check used to look under the candidate dir and, through `cache_dir()`'s mkdir,
-recreate the stray on every run (see "A verdict is about a source as cached at judgment time").
+**Where anything lives is declared, never inferred.** Every command finds its project the same
+way (`project.resolve()`, through `cli._project()`): the directory `--project` names, else the
+nearest provenance.toml at or above the run (`--data`, else the working directory). The run
+must be the project root or a declared subject. Anything else is refused, since a mistyped
+`--data` used to become a run of its own, with a cache of its own. The cache root is `--cache`,
+else the project's `cache`, which means what `--cache` means (the directory that holds
+`cache/`): relative to the project file, with `~` expanded. A cache shared by several projects
+is the same path in each. No cache, output or question-set directory that happens to exist
+changes any of it, and `tests/test_project.py` checks every combination of them.
+
+**Gotcha: a rule keyed on "does a cache exist here?" fulfils itself.** That is what the project
+file replaced, in two steps. `_cache_root()` first let a run's own `cache/` win if present. The
+first stray write into `data/<candidate>/cache` created exactly that condition, so the stray
+*became* the cache: one fetch with `--data data/<candidate>` forked the pages and hid the
+CAL-ACCESS database, and every query citation in the run failed at once. The fix inferred
+again, one level up: a candidate dir used its parent's cache whenever the parent held a
+question set. That could not tell a self-contained root nested in another from a candidate of
+it, so a scratch root in `data/scratch` rebuilt the live database. Nor could it tell a candidate
+scaffolded before its parent had a question set from a root, and that one forked. Don't let
+the existence of a directory decide where anything goes, since whatever first creates it gets
+to pick: declare it. A stray `cache/` in a run is never read. It is named once, in a yellow
+warning, so someone moves what it holds. Every command that touches the cache —
+`provenance calaccess` included — resolves its root through `_cache_root()` and takes
+`--cache`, or two commands disagree about where the database lives. That includes reads: the
+verdict staleness check used to look under the candidate dir and, through `cache_dir()`'s
+mkdir, recreate the stray on every run (see "A verdict is about a source as cached at judgment
+time").
+
+**No command adopts an old layout.** A directory with no provenance.toml at or above it is
+refused, with what to write. Moving a project laid out the old way (`data/` holding the question
+set, claims and cache, and a run per candidate in `data/<candidate>/`) is a reviewed change: a
+provenance.toml in `data/` with `cache = "."` and the candidates' directories under `subjects`
+(README, "Projects"). Adopting one silently would keep the inference alive for every project
+that never writes the file.
 
 ## Question ids are stable and never reused
 
@@ -1049,20 +1085,21 @@ delete the key. An identity pair moved nothing, so it is not reported.
 `provenance check-claim` runs the same comparison on the one claim a researcher is handing on, so a
 misquoted question fails there, before build leaves it out of review. It checks against the set
 of the run the claim sits in, the directory holding its `claims/` (resolved, so a relative
-path from inside `claims/` works), not `--data`. A researcher on a candidate run checks with the
-default `--data data`, whose set is the root template, not the copy retargeted to the candidate.
+path from inside `claims/` works), not `--data`, in the project found by walking up from there.
+A researcher on a candidate run checks with no `--data`, which is the project root, whose set is
+the template, not the copy retargeted to the candidate.
 
-Which `questions.json` is the run's is #8. Until a run declares it, the gate reads the run's own
-(`data/<candidate>/questions.json`, which `provenance new-candidate` writes), else the data root's. A
-candidate run's own copy is not updated when the template gains a question, so add a new one to
-each run's copy as well. A set that can't be read as one question per id fails the whole
+Each run holds its own set. The project root's is the template, and a subject's is its own
+`questions.json`, retargeted to it, which `provenance new-candidate` writes. There is no
+fallback between them: a subject's run with no copy used to read the template, which is worded
+for another subject. A subject's own copy is not updated when the template gains a question, so
+add a new one to each run's copy as well. A set that can't be read as one question per id fails the whole
 command, and build renders nothing, since no claim could be checked. The message names every
 problem: not a list, an entry with no id or text, an id no claim can carry (`QID_PATTERN`), or
 one id given twice. Ids differing only in case are one id, since they are one claim file and
 one shard on macOS's default disk. Read as empty, the set would report every claim as retired.
-Read as missing, it would check nothing, and so would falling back to the root's when the run's
-own can't be read (a dangling symlink included). With no set at all, the gate says so and checks
-nothing.
+Read as missing, it would check nothing, and so would a dangling symlink read as absent. With
+no set at all, the gate says so and checks nothing.
 
 What the gate can't see is a reused id once the new question's research has replaced the old
 claim. The claim then matches the set, and the shard's old verdicts sit beside it wherever it
@@ -1687,11 +1724,13 @@ Python's bundled 3.50 rejects an outer column in a subquery's `ORDER BY` ("no su
 and the 3.54 CLI accepts it. A cover lookup (since reverted) that ran fine in the CLI failed
 21 tests. Correlate through `WHERE`, which every version accepts.
 
-To measure a view change without touching the live database, build a scratch root **outside
-any data root**, such as a temp directory. Symlink the zip into `<scratch>/cache/calaccess/`,
+To measure a view change without touching the live database, build a scratch root **with a
+provenance.toml of its own** (`cache = "."`), such as a temp directory. Symlink the zip into `<scratch>/cache/calaccess/`,
 then run `uv run provenance calaccess build --data <scratch>`. It takes about five minutes and ~6 GB.
-Don't use `data/scratch`: `_cache_root()` sends a child of a directory holding `questions.json`
-to its parent, so that build deletes and rebuilds the live database.
+Without one the build refuses: there is no project, or, inside one, the scratch directory is a
+run that project does not declare. `data/scratch` sent a child of a directory holding
+`questions.json` to its parent's cache while the root was inferred, so that build deleted and
+rebuilt the live database.
 
 The safety test before trusting any total: check which form types the filer actually used. A
 committee with no Form 496 rows cannot be hit by (4).
@@ -2435,8 +2474,8 @@ git+https://github.com/maguerrieri/provenance@v<version>`), so four things follo
   registry are package data under `src/provenance/`, found through `importlib.resources`.
   They were found beside the checkout (`Path(__file__).parents[2]`), which a wheel doesn't have,
   and every test passed, because tests run from the checkout. A test builds the wheel and checks
-  the files are in it. Nothing the package reads may be looked up relative to the repo root;
-  `races/` is the one left, until #8 replaces it (`tests/test_installed_copy.py` names it).
+  the files are in it. Nothing the package reads may be looked up relative to the repo root.
+  `races/` was the last one; a race is project data now, named by the project file (#8).
   A file the package *writes* can't live there either: see "Only a checkout writes to the
   registry".
 - **One version for the plugin and the command.** Claude Code caches a plugin by the

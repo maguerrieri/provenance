@@ -916,9 +916,9 @@ def calaccess_build(data: Path = None, cache: Path = None, project: Path = None)
     """Load the downloaded export into SQLite (a few minutes).
 
     Download it first — it is ~1.5 GB, so the pipeline never fetches it implicitly:
-      curl -L -o data/cache/calaccess/dbwebexport.zip \
+      curl -L -o <cache>/cache/calaccess/dbwebexport.zip \
         https://campaignfinance.cdn.sos.ca.gov/dbwebexport.zip
-    (With --cache, the zip goes under <cache>/cache/calaccess/ instead.)
+    where <cache> is the project's `cache` in its provenance.toml, or --cache.
     """
     from . import calaccess
 
@@ -1482,7 +1482,7 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
           data: Path = None, cache: Path = None, project: Path = None):
     """Record a verifier agent's verdict on one source.
 
-    Judgments live in data/judgments/, not in the claim file: `provenance verify` reloads claims with
+    Judgments live in the run's judgments/, not in the claim file: `provenance verify` reloads claims with
     stripping on — which is what stops a researcher self-certifying — so a verdict written
     into the claim is destroyed by the next verify run. Keyed by source id, so it follows the
     citation and lapses automatically when a retry changes the quote. A contradicts does not:

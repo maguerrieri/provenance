@@ -30,7 +30,7 @@ that works only inside a clone of the tool's own repo.
 
 ## Phase 0 — split the template
 
-1. Read `data/template.md`.
+1. Read the project's `template.md`.
 2. Split compound questions ("record on X and Y") into **atomic** ones — one claim per
    question — with stable IDs: `q1`, `q2a`, `q2b`. A subagent handling two claims at once
    produces citations that support one of them. IDs are **never reused or renumbered**: claims
@@ -43,7 +43,7 @@ that works only inside a clone of the tool's own repo.
    left out of review, and the command exits 1. Once the new question's research has replaced
    the old claim, a reused id no longer shows, so give the new question its new id before
    anyone researches it.
-3. Write `data/questions.json` as `[{"id", "text", "claim_type", "parent", "rationale"}]`.
+3. Write the project root's `questions.json` as `[{"id", "text", "claim_type", "parent", "rationale"}]`.
 4. Mark `claim_type: "adversarial"` for anything negative or contested about a candidate
    (settlements, donor influence, opposition to a popular measure). Adversarial claims
    need two independent sources, so this classification changes what gets researched.
@@ -71,16 +71,16 @@ Spawn one `provenance:researcher` subagent per atomic question, **in parallel** 
 independent). Give each:
 
 - the question text and its `claim_type`, verbatim from the run's own `questions.json`: for a
-  candidate run that is `data/<candidate>/questions.json`, retargeted to the candidate, not
+  candidate run that is the candidate's own `<candidate>/questions.json`, retargeted to the candidate, not
   the template. The gate checks each claim's `question` against it,
-- the race context block from `races/<race>.md`, verbatim,
-- its `question_id` and the instruction to write `data/claims/<qid>.json`.
+- the race context block from the race file the project names, verbatim,
+- its `question_id` and the instruction to write `claims/<qid>.json` in its run (the project root, or the candidate's directory).
 
 Do not summarize the source rules for them — the agent definition carries them in full.
 
 ## Phase 2 — verification
 
-1. `provenance verify --race <race>` — deterministic checks on every source: URL resolves, snippet is
+1. `provenance verify` — deterministic checks on every source: URL resolves, snippet is
    literally on the page, snippet appears exactly once, source class is allowed, paywall
    detection. No model in this loop.
 2. Spawn one `provenance:verifier` subagent per claim that passed the mechanical checks, for the
@@ -108,7 +108,7 @@ Do not summarize the source rules for them — the agent definition carries them
    same figure): the verifier re-reads what `provenance handoff` prints and judges that. A refusal names a wrong id, sid or `--data`, the copy
    that moved, or what changed; it is never a cue to file the verdict under some other claim.
 
-   Judgments are stored in `data/judgments/<qid>.json`, keyed by source id — **not** in the
+   Judgments are stored in the run's `judgments/<qid>.json`, keyed by source id — **not** in the
    claim file, which `provenance verify` reloads with stripping on. A verdict written into the claim is
    destroyed by the next verify run. `provenance judgments` shows what has been recorded and ends
    with one line, `N of M cited source(s) need a verdict (K stale)`. That line is the gate:
@@ -192,8 +192,8 @@ Do not summarize the source rules for them — the agent definition carries them
 
 ## Phase 3 — review surface
 
-1. `provenance build --race <race>` — detects conflicts and renders `data/out/review.html` +
-   `data/out/claims.json`. It first checks every claim against the question its id names in
+1. `provenance build` — detects conflicts and renders the run's `out/review.html` +
+   `out/claims.json`. It first checks every claim against the question its id names in
    `questions.json`. A claim on an id the set no longer lists, or answering another question,
    is left out of the app, and build exits 1, naming it last. Retire the id (Phase 0, step 2),
    or, if the claim only misquotes its question, copy the exact text into its `question`.
@@ -208,7 +208,7 @@ Do not summarize the source rules for them — the agent definition carries them
    rows need the most care (adversarial + paywalled), and every access-registry entry a
    researcher reported `not written`, whole, for the operator to add to the tool's repo.
 
-Claim files are stored as `data/claims/<qid>.json`. If a researcher writes one under any
+Claim files are stored as `claims/<qid>.json` in their run. If a researcher writes one under any
 other name, delete the stale file — `provenance` refuses to load two files carrying the same
 `question_id` rather than silently double-counting the question.
 
@@ -232,9 +232,9 @@ A run that skips it produces green rows nobody has actually checked.
 
 ## Race context
 
-**Read `races/<race>.md`** — that file holds everything race-specific: the candidates, the
-known adversarial claims, the powers of the office, the primary-source hosts, and which
-source lists apply (`sources: [us, ca]` → the tool's `us` and `ca` lists, which ship with it).
+**Read the race file the project's `provenance.toml` names (`race`)** — that file holds everything race-specific: the candidates, the
+known adversarial claims, the powers of the office and the primary-source hosts. The project's `sources` names which
+source lists apply (`sources = ["us", "ca"]` → the tool's `us` and `ca` lists, which ship with it).
 
 Paste its **"Race context"** and **"Primary sources"** sections verbatim into every
 researcher prompt. Do not summarize them — the specifics (exact vote shares, which LegInfo
@@ -253,7 +253,7 @@ Doe settlement" is transcription. Use the completeness check *after* results are
 if the research didn't independently surface a known item, that is itself a finding — hand
 the gap to the human rather than topping up a claim with the answer.
 
-`provenance races` lists what's defined. A new race is a new file in `races/`, not an edit
+A project names its one race in `provenance.toml`. A new race is a new file, named there, not an edit
 to this skill.
 
 ## Style for any prose output

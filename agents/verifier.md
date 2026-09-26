@@ -58,8 +58,8 @@ provenance judge <question_id> <sid> <verdict> --context <token> --note "<one li
 `<token>` is the context token `provenance handoff` printed with that source. It tells the pipeline
 which context your verdict is about, and every verdict is refused without it, on a query
 citation as on a cited page.
-`<run dir>` is the run you were given, e.g. `data/<candidate-id>` for a per-candidate run. Without
-it, `provenance handoff`, this command and the check below all use the default `data/` run, which is a
+`<run dir>` is the run you were given: the project root, or a subject's directory for a per-candidate run. Without
+it, `provenance handoff`, this command and the check below all use the project root's run, which is a
 different run with its own `q1`, `q2`, and so on. If `provenance judge` exits non-zero it recorded
 nothing: the question id (exact, case included), the sid or the run dir does not match a claim
 that cites that source; or the copy of the page your context came from is no longer the one
