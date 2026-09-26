@@ -30,12 +30,18 @@ FILE = "provenance.toml"
 KEYS = ("name", "title", "sources", "cache", "subjects", "context", "completeness_check")
 SUBJECT_KEYS = ("id", "name")
 
-# The heading that opened a race file's completeness check. Pasted into `context` with the rest
-# of a race file's body, it would carry the known answers into every researcher's prompt. Any
-# line that starts with the words counts, as a heading of any kind (`#`, bold, setext) or not:
-# the race loader matched the words as a prefix, so "# Completeness checks" was one too.
-_CHECK_HEADING = re.compile(r"^[ \t]*(?:#+|\*\*|__)?[ \t]*completeness[ \t]+check",
-                            re.IGNORECASE | re.MULTILINE)
+# A completeness check section pasted into `context`, as a race file's whole body would bring
+# one, carries the known answers into every researcher's prompt. Two kinds of line count: a
+# heading (`#`, or a line that opens with emphasis) that names the check anywhere in it, and any
+# line that starts with the words, numbered or not, which also covers a setext heading. The
+# words may be joined by a space, a hyphen or an underscore. Prose that mentions a completeness
+# check mid-line is neither, and stays context. The race loader split on "# Completeness check"
+# alone, so this refuses everything it did, and wordings it never recognized. It is a backstop:
+# the rule is that `context` holds no known answers, and "# Known claims" still passes it.
+_CHECK_HEADING = re.compile(
+    r"^[ \t]*(?:(?:#+|\*{1,2}(?=\S)|_{1,2}(?=\S))[^\n]*?|(?:\d+[.)][ \t]*)?)"
+    r"completeness[ \t_-]+check",
+    re.IGNORECASE | re.MULTILINE)
 
 # A subject is a directory name under the project root: no separator, no leading dot, so it
 # is always a direct child. The names a run keeps inside itself are refused, since a subject
