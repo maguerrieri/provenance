@@ -244,8 +244,18 @@ def test_run_refuses_a_url_whose_host_cant_be_parsed_without_repeating_it(recipe
                                                                           monkeypatch):
     sent = []
     monkeypatch.setattr(access.httpx, "request", lambda *a, **kw: sent.append(a))
-    _refused_unrepeated(lambda: run(recipe, params), f"recipe 'bad': {where}")
-    assert not sent
+    msg = _refused_unrepeated(lambda: run(recipe, params), f"recipe 'bad': {where}")
+    assert msg.endswith("record it as access: manual instead") and not sent
+
+
+def test_run_refuses_a_url_httpx_cant_read_without_repeating_it(monkeypatch):
+    """httpx parses the URL again. `%40` is not an `@` to the login check, so `fake%40canary`
+    is a port to httpx, and its error quoted it."""
+    monkeypatch.setattr(access.httpx.Client, "send", lambda *a, **kw: pytest.fail("sent"))
+    r = Recipe(id="bad", method="GET", url="https://{host}/api", params=["host"])
+    with pytest.raises(ValueError, match="its URL can't be sent as it is") as e:
+        run(r, {"host": "user:fake%40canary.example"})
+    assert not re.search("fake|canary", str(e.value)), str(e.value)
 
 
 def test_the_commands_refuse_a_url_whose_host_cant_be_parsed_without_repeating_it(tmp_path,
@@ -269,14 +279,21 @@ def test_the_commands_refuse_a_url_whose_host_cant_be_parsed_without_repeating_i
         r = CliRunner().invoke(cli.app, args)
         assert r.exit_code == 1 and "can't be parsed" in r.output, r.output
         assert not re.search("fake|canary|\uff20", r.output), r.output
+    # A host argument is split too. These two don't catch the refusal yet (#161), so it is a
+    # traceback, but the traceback repeats nothing either.
+    for args in (["source-access", f"https://{UNREADABLE_LOGIN}/"],
+                 ["source-note", f"https://{UNREADABLE_LOGIN}/", "a finding"]):
+        r = CliRunner().invoke(cli.app, args)
+        said = f"{r.output}{r.exception}"
+        assert r.exit_code == 1 and "the host can't be parsed" in said, said
+        assert not re.search("fake|canary|\uff20", said), said
     assert [p.name for p in reg.iterdir()] == ["x.example.yaml"]
 
 
 def test_every_url_from_a_paste_or_a_recipe_is_split_where_its_error_is_replaced():
     """A split anywhere else raises the stdlib's error, which quotes the netloc (#158). Every
     reference to a function that splits counts, called or not, bare or as an attribute, and
-    so does an import that renames one. `_norm_host` reads a command's host argument, which
-    #161 is to guard."""
+    so does an import that renames one. A command's host argument goes through it too."""
     splitters = {"urlsplit", "urlparse", "urljoin", "urldefrag"}
     found = []
 
@@ -293,7 +310,7 @@ def test_every_url_from_a_paste_or_a_recipe_is_split_where_its_error_is_replaced
             visit(child, where)
 
     visit(ast.parse(Path(access.__file__).read_text()), "<module>")
-    assert sorted(found) == [("_norm_host", "urlsplit"), ("_split", "urlsplit")]
+    assert found == [("_split", "urlsplit")]
 
 
 def test_run_allows_a_hand_added_header_that_is_not_a_credential(monkeypatch):
