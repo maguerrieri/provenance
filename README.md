@@ -92,7 +92,8 @@ Installed, the agents are `provenance:researcher` and `provenance:verifier`.
 
 In a clone, `uv sync`, then `uv run provenance <command>` runs the clone's code and
 `uv run pytest` the tests. `claude --plugin-dir <clone>` loads the clone's agents and skill
-for one session. A release bumps `version` in `pyproject.toml` and
+for one session; they run `provenance` from PATH, so `uv tool install --force --editable <clone>`
+puts the clone's code there. A release bumps `version` in `pyproject.toml` and
 `.claude-plugin/plugin.json` together (a test holds them equal, and every version the skill
 and this README name to both), then tags the commit `v<version>` and pushes the tag.
 
@@ -178,10 +179,12 @@ sources: [us, ca]          # source_lists/us-sources.yaml + source_lists/ca-sour
 
 `src/provenance/source_lists/us-sources.yaml` holds national outlets and the structural rules that apply
 everywhere — lead-generators (Ballotpedia, Wikipedia) and excluded AI aggregators.
-Regional lists (`ca-sources.yaml`, and any county or city list you add) hold local outlets and
+Regional lists (`ca-sources.yaml`, and any county or city list added to the tool) hold local outlets and
 primary-document hosts. Lists merge, most-restrictive category wins, and unlisted domains
 still pass if they carry a named or institutional author — so an unlisted local paper
-degrades gracefully instead of being rejected.
+degrades gracefully instead of being rejected. A new list is a change to the tool: add it under
+`src/provenance/source_lists/` in a clone, since an installed copy's lists are replaced on the
+next install.
 
 New race → new file. No pipeline or skill edits.
 
