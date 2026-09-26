@@ -18,6 +18,7 @@ from markupsafe import Markup
 
 from . import queries
 from .models import QID_PATTERN, Claim, Source
+from .sources import ARGUED, TIER_LABEL, tier
 from .verify import secondary_host
 
 # Package data, so an installed copy (uv tool install) has it. files() gives a Path for a
@@ -174,12 +175,14 @@ def query_provenance(claim_source) -> str:
 
 def render(claims: list[Claim], out_dir: Path, *, title: str = "citation review",
            cache_root: Path | None = None,
-           rules: dict[str, tuple[str, ...]] | None = None,
+           rules: dict[str, tuple[str, ...]],
            store: str) -> tuple[Path, Path]:
     """`cache_root` is the root this build resolved: the `--cache` for a query row that carries
     no stamp of its own (one build did not re-run, whose file stamp revalidation dropped).
     `rules` are the project's source lists, which the "copy, not the issuing authority" badge
-    is decided by, as `provenance check-claim` decides it. `store` is the run's `store_id()`:
+    is decided by, as `provenance check-claim` decides it, and so is each row's tier. Required:
+    defaulted to `us`, every regional outlet showed as an unlisted one beside a status that
+    counted it as reporting. `store` is the run's `store_id()`:
     required, since a default would be one store every caller that forgot it shared."""
     from .cli import qid_sort_key
 
@@ -200,6 +203,7 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "citation review"
         for s in c.sources:
             seen[s.sid] += 1
             row_key = f"{c.question_id}/{s.sid}" + (f"/{seen[s.sid]}" if seen[s.sid] > 1 else "")
+            t = tier(s, rules)
             command = (queries.human_command(
                 s.query.name, dict(s.query.params),
                 s.verification.query_run.cache_root if s.verification.query_run
@@ -209,6 +213,7 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "citation review"
                 fingerprint=review_fingerprint(c, s), context_html=context_html(s),
                 badge_class=BADGE.get(s.verification.status, "bad"),
                 secondary=secondary_host(s, rules), query_command=command,
+                tier=TIER_LABEL[t], argued=t in ARGUED, unlisted=t == "unlisted_outlet",
                 query_provenance=query_provenance(s)))
         return views
 
@@ -265,6 +270,7 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "citation review"
         for src_json, src_obj in zip(d.get("sources", []), c.sources):
             src_json["sid"] = src_obj.sid
             src_json["secondary_host"] = secondary_host(src_obj, rules)
+            src_json["tier"] = tier(src_obj, rules)
         export.append(d)
     _write_whole(json_path, json.dumps(export, indent=2))
 

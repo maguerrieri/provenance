@@ -33,7 +33,15 @@ from .models import (
     check_archive_url,
 )
 from .normalize import context_window, dehyphenate, find_all, normalize
-from .sources import check_source_class, classify, domain, publishes_legal_text
+from .sources import (
+    ARGUED,
+    attributes,
+    check_source_class,
+    classify,
+    domain,
+    publishes_legal_text,
+    tier,
+)
 
 # Every reason for a query figure whose record isn't settled (`QueryResult.unsettled`) says
 # this, whichever path writes it. The research skill quotes it to leave such a row for a person
@@ -938,9 +946,24 @@ def secondary_host(src: Source, rules: dict[str, tuple[str, ...]] | None = None)
     # own_statement/campaign_statement are BY the host about itself, so "not the issuing
     # authority" cannot apply: for an endorsement, the endorsing organization IS the
     # authority. Flagging those told one run to "repair" five genuine primary sources.
-    if src.source_type not in ("primary_document", "official_record"):
+    # An official analysis is issued by a body too, and the label alone must not raise a page
+    # anywhere else to that tier: an advocacy site's "analysis" would carry a bare fact.
+    if src.source_type not in ("primary_document", "official_record", "official_analysis"):
         return False
     return classify(src.url, rules) != "primary_document"
+
+
+def unattributed(claim: Claim, rules: dict[str, tuple[str, ...]] | None) -> list[Source]:
+    """The sources `claim` rests on for what their author argues (`sources.ARGUED`: opinion,
+    advocacy, an unlisted outlet) whose author or publisher its answer never names.
+
+    Such a source supports "X argues Y", not Y. An answer that doesn't name X states Y bare, which
+    is the claim form the tier forbids, the way campaign material is limited to "the campaign
+    says X". `provenance check-claim` fails each one, and `check_corroboration()` fails the
+    claim's corroboration on any it would count, so `provenance build` does not render the
+    claim green on it either."""
+    return [s for s in claim.sources
+            if tier(s, rules) in ARGUED and not attributes(claim.answer, s)]
 
 
 def missing_filing_date(src: Source) -> bool:
@@ -1073,9 +1096,17 @@ def check_inputs(claims: list[Claim]) -> list[list[str]]:
     return cycles
 
 
-def check_corroboration(claim: Claim) -> Claim:
+def check_corroboration(claim: Claim, *, rules: dict[str, tuple[str, ...]]) -> Claim:
     """Adversarial claims need 2 *independent* sources: different publishers, and not
-    the same wire story reprinted."""
+    the same wire story reprinted.
+
+    Tiers are counted deliberately. A source that carries only what its author argues
+    (`sources.ARGUED`) is evidence only where the answer names whose argument it is: one the
+    answer states bare fails the claim's corroboration however many others back it, so
+    `provenance build` sends it to review as `provenance check-claim` refuses it. And all of a
+    claim's such documents count as one: two advocacy pieces are each one side's say-so, not
+    two independent sources. `rules` is required, because the tier of a news citation turns on
+    the project's lists: defaulted, every regional outlet would read as unlisted."""
     # A source judged topic_only/contradicts/superseded is not corroboration. Counting it
     # let a claim whose every source a verifier rejected report "15/1 usable, corroborated".
     usable = [s for s in claim.sources
@@ -1085,31 +1116,55 @@ def check_corroboration(claim: Claim) -> Claim:
         claim.corroboration_ok = True
         claim.corroboration_note = "not_found — no citation required"
         return claim
-    n_docs = len({s.url for s in usable})
+    # Tiered once each. One stated bare is no evidence, and fails the claim below.
+    argued: dict[str, bool] = {}   # url -> every usable citation of it argued
+    n_bare = 0
+    counted = []
+    for s in usable:
+        is_argued = tier(s, rules) in ARGUED
+        if is_argued and not attributes(claim.answer, s):
+            n_bare += 1
+            continue
+        counted.append(s)
+        argued[s.url] = argued.get(s.url, True) and is_argued
+    usable = counted
+    docs = set(argued)
+    # A page cited for fact and for opinion both (one article holds both) is one document, and
+    # it is counted with the facts.
+    argued_docs = {u for u, a in argued.items() if a}
+    n_docs = len(docs - argued_docs) + min(1, len(argued_docs))
+    as_one = (f", {len(argued_docs)} opinion, advocacy or unlisted-outlet document(s) counted "
+              f"as one" if len(argued_docs) > 1 else "")
+    # Every problem at once, so a retry that fixes one doesn't meet the next a round later.
+    problems = []
+    if n_bare:
+        problems.append(
+            f"{n_bare} source(s) cited for a claim they cannot carry: opinion, advocacy and an "
+            f"unlisted outlet count only for 'X argues Y', with the answer naming X, the "
+            f"source's author or publisher")
     if n_docs < need:
         rejected = sum(1 for s in claim.sources if s.judged_bad)
-        claim.corroboration_ok = False
-        claim.corroboration_note = (
+        problems.append(
             f"{claim.claim_type} claim needs {need} independent document(s); has "
-            f"{n_docs} document(s) ({len(usable)} snippet(s))"
+            f"{n_docs} document(s) ({len(usable)} snippet(s))" + as_one
             + (f", {rejected} rejected by the verifier" if rejected else ""))
-        return claim
-    docs = {s.url for s in usable}
-    if need >= 2:
+    elif need >= 2:
         pubs = {domain(s.url) for s in usable}
         names = {s.publisher.strip().lower() for s in usable}
         if len(pubs) < 2 or len(names) < 2:
-            claim.corroboration_ok = False
-            claim.corroboration_note = (
+            problems.append(
                 "sources are not independent — same publisher; adversarial claims need two "
                 "different outlets doing their own reporting")
-            return claim
+    if problems:
+        claim.corroboration_ok = False
+        claim.corroboration_note = "; and ".join(problems)
+        return claim
     claim.corroboration_ok = True
     # Report documents, not snippets: "9 usable" was 9 snippets across 4 articles from 2
     # outlets, three of them from one URL. The independence checks still held, but the count
     # overstated the evidence base to a human deciding how much weight it carries.
     pubs = {s.publisher.strip() for s in usable if s.publisher.strip()}
     claim.corroboration_note = (
-        f"{len(docs)} document(s) from {len(pubs)} publisher(s), {len(usable)} snippet(s); "
-        f"needs {need}" + (", independent publishers" if need >= 2 else ""))
+        f"{len(docs)} document(s) from {len(pubs)} publisher(s), {len(usable)} snippet(s)"
+        + as_one + f"; needs {need}" + (", independent publishers" if need >= 2 else ""))
     return claim

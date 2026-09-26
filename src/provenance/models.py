@@ -17,7 +17,14 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 # endorsement, a union's own announcement. It is a primary source for the fact that the
 # entity said it, which is exactly what an endorsement claim asserts. Distinct from
 # `campaign_statement` (the candidate's own campaign) only in whose statement it is.
+#
+# The type is the citation's tier, set per citation because one article holds reported fact
+# and opinion both: `official_analysis` is an issuing body's analysis of a text (a legislative
+# analyst's report, a fiscal note), `opinion` an op-ed, column or editorial, and `advocacy` a
+# piece arguing a position for an organization or cause. `sources.tier()` reads it, and the
+# host list can only lower it.
 SourceType = Literal["bylined_journalism", "primary_document", "official_record",
+                     "official_analysis", "opinion", "advocacy",
                      "campaign_statement", "own_statement"]
 ClaimType = Literal["mechanical", "adversarial"]
 Confidence = Literal["direct", "inferred", "not_found"]

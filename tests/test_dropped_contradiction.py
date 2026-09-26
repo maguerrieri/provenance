@@ -24,11 +24,16 @@ from provenance.conflicts import detect
 from provenance.fetch import cache_path
 from provenance.models import (EXTRACTOR_VERSION, Claim, DroppedContradiction, PageCache, Source,
                                strip_machine_fields)
+from provenance.sources import load_rules
 from provenance.verify import check_corroboration, check_inputs
 
-LEDGER = "https://daily-ledger.example/levy-vote"
-WEEKLY = "https://harbor-weekly.example/levy-vote"
-GAZETTE = "https://tide-gazette.example/levy-vote"
+RULES = load_rules(("us", "ca"))
+
+# A listed news host: reporting on an unlisted one reads as an unlisted outlet, which a
+# claim can cite only as what the outlet reports (sources.tier()).
+LEDGER = "https://calmatters.org/levy-vote"
+WEEKLY = "https://sacbee.com/levy-vote"
+GAZETTE = "https://kqed.org/levy-vote"
 SNIPPET = "voted against the harbor levy twice"
 STORY = f"At both hearings the councilmember {SNIPPET}, citing the port budget.\n"
 NOTE = "says the councilmember voted for the levy"
@@ -386,7 +391,7 @@ def _claim(*sources, qid="q1", **kw) -> Claim:
         s.verification.status = "verified"
         s.verification.support = "supports"
     return check_corroboration(Claim(question_id=qid, question="?", answer="a",
-                                     sources=list(sources), **kw))
+                                     sources=list(sources), **kw), rules=RULES)
 
 
 def test_the_claim_is_in_review_and_so_is_a_conclusion_drawn_from_it():

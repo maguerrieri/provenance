@@ -26,12 +26,12 @@ _CHAR_MAP = {
 }
 
 
-def normalize(text: str) -> tuple[str, list[int]]:
+def normalize(text: str, *, casefold: bool = True) -> tuple[str, list[int]]:
     """Return (normalized_text, idx_map) where idx_map[i] is the raw offset of
     normalized character i.
 
     Normalization: NFKC-ish char folding, whitespace collapsed to single spaces,
-    casefolded. Leading whitespace is dropped rather than emitted.
+    casefolded unless `casefold` is False. Leading whitespace is dropped rather than emitted.
     """
     out: list[str] = []
     idx: list[int] = []
@@ -49,7 +49,7 @@ def normalize(text: str) -> tuple[str, list[int]]:
             continue
         if not mapped:
             continue
-        folded = mapped.casefold()
+        folded = mapped.casefold() if casefold else mapped
         # "--" is a common ASCII rendering of an em dash; collapse hyphen runs so it
         # folds onto the same normalized form.
         if folded == "-" and out and out[-1] == "-":

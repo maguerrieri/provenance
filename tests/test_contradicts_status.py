@@ -22,10 +22,15 @@ from provenance import cli
 from provenance.conflicts import detect
 from provenance.fetch import cache_path
 from provenance.models import EXTRACTOR_VERSION, Claim, PageCache, Source
+from provenance.sources import load_rules
 from provenance.verify import check_corroboration, check_inputs
 
-LEDGER = "https://daily-ledger.example/levy-vote"
-WEEKLY = "https://harbor-weekly.example/levy-vote"
+RULES = load_rules(("us", "ca"))
+
+# A listed news host: reporting on an unlisted one reads as an unlisted outlet, which a
+# claim can cite only as what the outlet reports (sources.tier()).
+LEDGER = "https://calmatters.org/levy-vote"
+WEEKLY = "https://sacbee.com/levy-vote"
 SNIPPET = "voted against the harbor levy twice"
 STORY = f"At both hearings the councilmember {SNIPPET}, citing the port budget.\n"
 
@@ -47,7 +52,7 @@ def _weekly(**kw):
 
 def _claim(*sources, qid="q1", **kw):
     return check_corroboration(Claim(question_id=qid, question="?", answer="a",
-                                     sources=list(sources), **kw))
+                                     sources=list(sources), **kw), rules=RULES)
 
 
 def test_a_contradicted_claim_is_never_green_beside_a_supporting_source():
@@ -59,7 +64,7 @@ def test_a_contradicted_claim_is_never_green_beside_a_supporting_source():
     assert c.status == "human_review"
 
     # Adversarial, with two supporting outlets beside it: still a disagreement to resolve.
-    third = _source(url="https://tide-gazette.example/levy", publisher="Tide Gazette",
+    third = _source(url="https://kqed.org/levy", publisher="Tide Gazette",
                     support="supports")
     adv = _claim(_source(support="supports"), third, _weekly(support="contradicts"),
                  claim_type="adversarial")

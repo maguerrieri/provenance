@@ -20,7 +20,9 @@ from conftest import write_project
 from provenance import judgments
 from provenance.models import EXTRACTOR_VERSION, Claim, PageCache, Source
 
-HOST = "https://minutes.example"
+# A listed news host: reporting on an unlisted one reads as an unlisted outlet, which a
+# claim can cite only as what the outlet reports (sources.tier()).
+HOST = "https://calmatters.org"
 QUESTION = "How did the member for District 9 vote on Measure Q-7?"
 FOR, AGAINST = "They voted for it.", "They voted against it."
 

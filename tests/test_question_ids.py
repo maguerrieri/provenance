@@ -310,7 +310,9 @@ def test_question_text_prints_as_text_not_markup(tmp_path):
     assert "'Did they vote [sic] :smile: yes?'" in out, out
 
 
-URL = "https://news.example/council-vote"
+# A listed news host: reporting on an unlisted one reads as an unlisted outlet, which a
+# claim can cite only as what the outlet reports (sources.tier()).
+URL = "https://calmatters.org/council-vote"
 SNIPPET = "voted against the harbor levy on its second reading"
 
 
