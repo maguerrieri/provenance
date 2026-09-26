@@ -417,6 +417,24 @@ def test_an_entry_whose_host_field_names_another_host_is_refused(registry):
     assert code == 1 and "names another host" in out, out
 
 
+@pytest.mark.parametrize("text", [
+    f"host: portal.example\nnotes: https://{LOGIN}@portal.example/\nnotes: harmless\n",
+    f"host: portal.example\nextra:\n  a: https://{LOGIN}@portal.example/\n  a: harmless\n",
+    "host: portal.example\nrecipes:\n  - id: r\n    method: GET\n    url: https://portal.example/"
+    f"?token={CANARY}\n    url: https://portal.example/\n",
+])
+def test_a_field_given_twice_is_refused_not_read_once(text, registry):
+    """PyYAML keeps the last of two equal keys, so the check read that one while the file still
+    held the other."""
+    registry.mkdir()
+    (registry / "portal.example.yaml").write_text(text)
+    for args in (("source-access",), ("source-note", "portal.example", "a finding")):
+        code, out = _invoke(*args)
+        assert code == 1 and "twice" in out, (args, out)
+        _clean(out)
+    assert (registry / "portal.example.yaml").read_text() == text
+
+
 @pytest.mark.parametrize("text", ["[]\n", "false\n", "0\n", "''\n"])
 def test_a_registry_file_that_is_not_a_mapping_is_refused_not_read_as_empty(text, registry):
     """Read as an empty entry, `source-note` rewrote it as a stub: a delete. Only an empty file

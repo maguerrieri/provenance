@@ -28,6 +28,7 @@ import os
 import re
 import shlex
 import unicodedata
+from collections.abc import Hashable
 from dataclasses import asdict, dataclass, field
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, distribution
@@ -770,12 +771,31 @@ def save(host: str, entry: dict) -> Path:
     return path
 
 
+class _OneKeyEachLoader(yaml.SafeLoader):
+    """`yaml.safe_load()`, refusing a mapping that gives one key twice. PyYAML keeps the last,
+    so the check read only that one, while the file still held the other: a credential under
+    `notes:` followed by a harmless `notes:` passed, and stayed in the registry."""
+
+    def construct_mapping(self, node, deep=False):
+        seen = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if isinstance(key, Hashable) and key in seen:
+                raise Refused(f"its YAML gives the field {_field('', key)} twice, and a check "
+                              "reads only one of them")
+            if isinstance(key, Hashable):
+                seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
 def _read_entry(path: Path) -> dict:
-    """A registry file's fields. PyYAML's error is not passed on: it quotes the lines around
-    the problem, cut to fit (`https://user:secr ... `), so a login in them can be cut before
-    its `@`, where no redactor can find it. Only where the problem is, and what it is."""
+    """A registry file's fields, each key once (`_OneKeyEachLoader`). PyYAML's error is not
+    passed on: it quotes the lines around the problem, cut to fit (`https://user:secr ... `),
+    so a login in them can be cut before its `@`, where no redactor can find it. Only where the
+    problem is, and what it is."""
     try:
-        raw = _unless_null(yaml.safe_load(path.read_text(encoding="utf-8")), {})
+        raw = _unless_null(yaml.load(path.read_text(encoding="utf-8"),
+                                     Loader=_OneKeyEachLoader), {})
     except yaml.YAMLError as e:
         mark = getattr(e, "problem_mark", None)
         at = f" at line {mark.line + 1}, column {mark.column + 1}" if mark else ""
