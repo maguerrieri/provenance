@@ -15,7 +15,7 @@ data/cache/
 data/*/cache/
 data/out/
 data/claims/
-# the retired `provenance remap`'s marker described data/claims/, so an old one stays out of git with it
+# the retired `vg remap`'s marker described data/claims/, so an old one stays out of git with it
 data/.remap-applied
 
 # agent worktrees live inside the repo; they are never part of it
@@ -24,7 +24,7 @@ data/.remap-applied
 # the CAL-ACCESS export and its SQLite index are large and regenerable
 data/cache/calaccess/
 
-# what an interrupted re-home by the retired `provenance remap` may have left (CLAUDE.md, "Question ids
+# what an interrupted re-home by the retired `vg remap` may have left (CLAUDE.md, "Question ids
 # are stable and never reused")
 judgments-backup/
 judgments-backup.partial/

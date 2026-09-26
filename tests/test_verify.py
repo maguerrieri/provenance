@@ -993,7 +993,7 @@ def test_new_candidate_retargets_the_question_set(tmp_path):
 
 
 def test_new_candidate_starts_a_run_with_no_migration_pending(tmp_path):
-    """A template can still carry maps_from and mapped_from, left by the retired `provenance remap`.
+    """A template can still carry maps_from and mapped_from, left by the retired `vg remap`.
     They are another run's history, and a new run has no earlier id space, so it copies
     neither."""
     import json

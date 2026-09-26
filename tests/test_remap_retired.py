@@ -46,7 +46,7 @@ def _source() -> Source:
 
 
 def _legacy_run(tmp_path):
-    """A candidate run whose files carry what `provenance remap` wrote: `maps_from` and `mapped_from`
+    """A candidate run whose files carry what `vg remap` wrote: `maps_from` and `mapped_from`
     in the question template, `previous_question` in the claim. The cited page is cached, so
     everything below runs offline."""
     data, run = tmp_path / "data", tmp_path / "data" / "cand"
@@ -159,7 +159,7 @@ def test_a_backup_an_interrupted_re_home_left_still_stops_every_reader(tmp_path,
         code, out = _provenance(*args, "--data", run.relative_to(tmp_path))
         assert code == 1, (args, out)
         assert "was interrupted, and its shards may be half-rewritten" in out, (args, out)
-        assert (f"run `provenance judgments --rollback --data {shlex.quote(str(run.resolve()))}` from "
+        assert (f"run `vg judgments --rollback --data {shlex.quote(str(run.resolve()))}` from "
                 f"a checkout of commit {judgments.LAST_WITH_ROLLBACK}, which still has it"
                 ) in out, (args, out)
         # after the rollback, the migration is still pending, and only that checkout can apply it
@@ -176,7 +176,7 @@ def test_the_rollback_command_quotes_a_run_path_with_a_space(tmp_path):
     judgments.backup_dir(run).mkdir()
     code, out = _provenance("judgments", "--data", run)
     assert code == 1, out
-    cmd = re.search(r"run `(provenance judgments --rollback --data .*?)` from a checkout", out)
+    cmd = re.search(r"run `(vg judgments --rollback --data .*?)` from a checkout", out)
     assert cmd, out
     assert shlex.split(cmd.group(1))[-2:] == ["--data", str(run.resolve())], cmd.group(1)
 
@@ -184,7 +184,7 @@ def test_the_rollback_command_quotes_a_run_path_with_a_space(tmp_path):
 def test_the_commit_named_for_rollback_is_on_main_and_has_it():
     """The refusal above sends an operator to this commit. It must be named in full, be on
     main, where the operator's clone has it (a commit only on a feature branch can be rebased
-    away), and its `provenance judgments` must still take `--rollback`. CI's checkout is shallow, so
+    away), and its `vg judgments` must still take `--rollback`. CI's checkout is shallow, so
     the history half runs where the history is."""
     import subprocess
 
@@ -193,15 +193,18 @@ def test_the_commit_named_for_rollback_is_on_main_and_has_it():
 
     commit = judgments.LAST_WITH_ROLLBACK
     assert re.fullmatch(r"[0-9a-f]{40}", commit), "an abbreviated id can become ambiguous"
-    old = git("show", f"{commit}:src/provenance/judgments.py")
-    if old.returncode != 0:
-        pytest.skip(f"no git history with {commit} here: {old.stderr.strip()}")
+    if git("cat-file", "-e", f"{commit}^{{commit}}").returncode != 0:
+        pytest.skip(f"no git history with {commit} here")
+    # It predates the rename (#6): its package is vgpipe and its command vg. Skipped only for a
+    # missing commit: the rename first made this path wrong, and a skip on any failure hid it.
+    old = git("show", f"{commit}:src/vgpipe/judgments.py")
+    assert old.returncode == 0, old.stderr
     # HEAD only where there is no origin/main to ask, as in a fork's checkout.
     main = ("origin/main" if git("rev-parse", "--verify", "--quiet", "origin/main").returncode == 0
             else "HEAD")
     assert git("merge-base", "--is-ancestor", commit, main).returncode == 0, main
     assert "\ndef rollback(root: Path)" in old.stdout
-    assert "rollback: bool = False" in git("show", f"{commit}:src/provenance/cli.py").stdout
+    assert "rollback: bool = False" in git("show", f"{commit}:src/vgpipe/cli.py").stdout
 
 
 def test_provenance_judgments_names_the_scratch_an_interrupted_re_home_left(tmp_path):
@@ -217,7 +220,7 @@ def test_provenance_judgments_names_the_scratch_an_interrupted_re_home_left(tmp_
         (run / name / "q1.json").write_text("[]")
     code, out = _provenance("judgments", "--data", run)
     for name in ("judgments-backup.partial", "judgments-backup.discard"):
-        assert (f"{run / name} is scratch an interrupted re-home by the retired `provenance remap` left "
+        assert (f"{run / name} is scratch an interrupted re-home by the retired `vg remap` left "
                 f"behind") in out, out
     # A .partial copied the shards before any was touched, and a .discard is the shards before a
     # re-home that finished: neither is the run's verdicts now.

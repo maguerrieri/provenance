@@ -33,7 +33,7 @@ class UnreadableQuestions(ValueError):
 @dataclass
 class QuestionSet:
     text: dict[str, str]        # id -> the question asked at it
-    maps_from: dict[str, str]   # id -> another id a `provenance remap` migration declared it maps from
+    maps_from: dict[str, str]   # id -> another id a `vg remap` migration declared it maps from
 
 
 @dataclass

@@ -723,7 +723,7 @@ def _question_ids(data: Path, claims: list[Claim]) -> set[str] | None:
         # Not "never applied": an older remap applied some without retiring them, and the file
         # can't say which.
         con.print("[yellow]" + escape(_printable(f"{path} still declares maps_from ({pairs})"))
-                  + ", a migration for the retired `provenance remap`. Nothing applies it now, and no "
+                  + ", a migration for the retired `vg remap`. Nothing applies it now, and no "
                   "claim moves, so each is checked against the question at the id it sits on. "
                   "Delete the key once that is settled.[/]")
     if found.unlisted:
@@ -1566,7 +1566,7 @@ def show_judgments(data: Path = DATA, question_id: str = "",
         every = judgments.load_every(data)
     for d in judgments.leftovers(data):
         con.print(f"[yellow]{escape(_printable(str(d)))} is scratch an interrupted re-home by "
-                  f"the retired `provenance remap` left behind. Nothing reads it, and it holds at most an "
+                  f"the retired `vg remap` left behind. Nothing reads it, and it holds at most an "
                   f"older copy of the run's verdicts: delete it, and never restore from it.[/]")
     selected = [c for c in claims if not question_id or c.question_id == question_id]
     # Checking a snapshot reads it (and at times the live page) from the cache: archive rows only.
@@ -2130,8 +2130,8 @@ def remap(data: Path = DATA):
     """Retired: question ids are stable, so there is no numbering to migrate."""
     from . import judgments
 
-    # The run may be one an interrupted `provenance remap --apply` left half-moved, and whoever retries
-    # it needs the way back first, as `provenance judgments --rollback` gives it.
+    # The run may be one an interrupted `vg remap --apply` left half-moved, and whoever retries
+    # it needs the way back first, as `vg judgments --rollback` gives it.
     with _judgments_or_exit():
         judgments.refuse_if_interrupted(data)
     _retired("`provenance remap`")
@@ -2161,7 +2161,7 @@ def new_candidate(candidate: str, data: Path = DATA, race: str = "",
         qs = json.loads(src_q.read_text())
         for q in qs:
             # A new run has no earlier id space: a maps_from or mapped_from left from the
-            # retired `provenance remap` is another run's history, so it is not copied.
+            # retired `vg remap` is another run's history, so it is not copied.
             q.pop("maps_from", None)
             q.pop("mapped_from", None)
             # The question set is written about a subject; retarget it rather than making
