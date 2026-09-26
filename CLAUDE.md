@@ -877,8 +877,10 @@ render. Nothing is lost. The render is regenerable, and review progress lives in
 files a build writes are removed, along with any temp file a killed build left (`provenance serve`
 lists `out/`, dotfiles included, and one can hold a whole page); anything else in `out/` stays.
 And only a run's: a `--data` the project doesn't declare is no run, and its `out/` is none of
-the project's, so it is left alone. A project file that can't be read is a refusal like any
-other, and the run it was asked for is still that project's, so that run's render goes first.
+the project's, so it is left alone. A project file that can't be read as a project is a refusal
+like any other, and says which directories are runs as far as it still can: its root, and any
+subject its `subjects` lists (`project.lists_run()`). That run's render goes first; any other
+directory keeps its `out/`.
 If they can't be removed, the build says so and stops, and they stay until someone removes them
 by hand. Two builds of one run at once are not supported: both write the same `out/`, so the
 last to finish decides what is there, and one can remove the other's temp file mid-write.

@@ -116,6 +116,24 @@ def test_a_project_file_that_cannot_be_read_leaves_no_review_app(run, monkeypatc
     assert _left(run) == set(), out
 
 
+def test_a_project_file_it_cannot_load_still_says_which_directories_are_runs(run):
+    """A project file that parses but isn't a valid project still lists its subjects: a listed
+    subject's render goes, and a directory it doesn't list keeps its out/."""
+    listed, other = run / "cand", run / "site"
+    for d in (listed, other):
+        (d / "out").mkdir(parents=True)
+        (d / "out" / report.REVIEW_HTML).write_text("an earlier page")
+    (run / "provenance.toml").write_text(
+        (run / "provenance.toml").read_text().replace("subjects = []", 'subjects = ["cand"]')
+        + "typo = 1\n")
+    code, out = _provenance("build", "--data", listed)
+    assert code == 1 and "unknown key(s) 'typo'" in out, out
+    assert _left(listed) == set(), out
+    code, out = _provenance("build", "--data", other)
+    assert code == 1 and "unknown key(s) 'typo'" in out, out
+    assert _left(other) == {report.REVIEW_HTML}, "no run of the project, as far as it can say"
+
+
 def test_a_directory_that_is_no_run_keeps_its_out(run, tmp_path):
     """Only a run's render is removed. A directory the project doesn't declare is no run, and
     what its out/ holds is none of the project's: a mistyped --data must not delete it."""

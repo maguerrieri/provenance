@@ -900,18 +900,18 @@ def build(data: Path = None, cache: Path = None, candidate: str = "", title: str
 
     # The run's last render goes first, so that every way this build can stop short (a refusal
     # below, a crash, a kill) leaves no earlier render for `provenance serve` to show as if it
-    # were this one. A project file that can't be read is one such refusal, and the run it was
-    # asked for is still that project's (`--data`, else the root holding the file), so its
-    # render goes too. A directory the project doesn't declare, or one in no project, is no run:
-    # its out/ is none of the project's, and nothing in it is touched.
+    # were this one. Only a run's, though: which directories are runs is the project file's to
+    # say, and one it doesn't name, or one in no project, keeps its out/. A project file that
+    # can't be read as a project is one of the refusals, and says as much as it still can: the
+    # run is cleared if it is the root, or a subject the file lists (`project.lists_run()`).
     given = data
     try:
         p, data = proj.resolve(data, project)
     except proj.ProjectError as e:
-        run = (given if given is not None else project if project is not None
-               else proj.find(proj.working_dir()))
-        if isinstance(e, proj.UnreadableProject) and run is not None:
-            _clear_render_or_exit(run / "out")
+        if isinstance(e, proj.UnreadableProject):
+            run = given if given is not None else e.root
+            if proj.lists_run(e.root, run):
+                _clear_render_or_exit(run / "out")
         _refuse(str(e))
     if given is None:
         _note_root_run(p)
