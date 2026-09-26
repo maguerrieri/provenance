@@ -18,8 +18,8 @@ independent sources.
 
 ## Sources
 
-- **Bylined journalism:** besides the national outlets, the `ca` list names CalMatters, the LA
-  Times, the Sacramento Bee, KQED, LAist and Capitol Weekly.
+- **Bylined journalism:** besides the national outlets, the `ca` list names California outlets
+  such as CalMatters, the LA Times, the Sacramento Bee, KQED, LAist and Capitol Weekly.
 - **Primary documents and official records** here include certified election results and
   filings, legislative roll calls, campaign finance and conflict-of-interest forms, ballot
   designation worksheets, and legislative-analyst and controller reports.
@@ -141,17 +141,6 @@ name as filed. As with `form_type=A`, `provenance query` then says **"Will not v
 lists the other names: word the claim as that filing name's figure, not the donor's whole
 total, and hand it on with `notes` naming the other names. The two switches are separate: each
 lifts only its own check.
-
-### For the orchestrator: CAL-ACCESS figures that are not a retry
-
-A `human_review` on a CAL-ACCESS query citation whose reason says it counts or leaves out
-"rows a later amendment may have withdrawn", says it "leaves out rows that a filing's own
-amendment attributed to this candidate", says it "leaves out late-reported contributions", or
-says it "is for names exactly as filed" (from `provenance verify` or `provenance build`), is a
-correct citation of an unsettled record. Either the export cannot say whether a later amendment
-withdrew or moved those rows, or a late gift is on file that no Form 460 has restated yet, or
-other names on file could be the same giver's. Leave it for the person, as the skill says for
-any unsettled query figure.
 
 ## Roll calls: the vote page identifies nobody, cite the bill page
 

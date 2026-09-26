@@ -10,14 +10,13 @@ when the work "touches the domain".
 
 from __future__ import annotations
 
-import inspect
 import os
 from pathlib import Path
 
 from conftest import EXAMPLE_CHECK, write_project
 from typer.testing import CliRunner
 
-from provenance import cli, project, queries, sources
+from provenance import cli, project, sources
 
 HEADING = "Notes that ship with the `ca` source list (the tool's, not this project's):"
 
@@ -83,20 +82,3 @@ def test_every_notes_file_belongs_to_a_source_list():
     for p in sources.SOURCES_DIR.glob("*-notes.md"):
         assert p.name.removesuffix("-notes.md") in listed, p.name
 
-
-# What the unsettled-figure reasons say, which the `ca` notes quote so the research skill leaves
-# such a row for a person instead of retrying it. Each reason path's own test checks the code
-# writes its phrase; this checks the notes still quote every one.
-UNSETTLED = ("rows a later amendment may have withdrawn",
-             "leaves out rows that a filing's own amendment attributed to this candidate",
-             "leaves out late-reported contributions",
-             "is for names exactly as filed")
-
-
-def test_the_ca_notes_quote_every_phrase_an_unsettled_figure_is_told_by():
-    code = " ".join(inspect.getsource(queries).split())
-    notes = " ".join((sources.SOURCES_DIR / "ca-notes.md").read_text().split())
-    assert queries.LEFT_OUT in UNSETTLED
-    for phrase in UNSETTLED:
-        assert phrase in code, f"the queries no longer write {phrase!r}: update the notes"
-        assert f'"{phrase}"' in notes, f"the ca notes don't quote {phrase!r}"

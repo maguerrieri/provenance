@@ -133,9 +133,9 @@ def test_the_core_skill_and_agents_carry_no_domain_content():
     content in the core."""
     for path in [*SKILLS, *AGENTS]:
         text = path.read_text()
-        # whole words, so "selection" or "candidates for a retry" is not a domain term
+        # whole words, plurals included ("Form 700s"), so "selection" is not a domain term
         found = [t for t in DOMAIN
-                 if re.search(rf"\b{re.escape(t)}\b", text, re.IGNORECASE)]
+                 if re.search(rf"\b{re.escape(t)}(?:s|es)?\b", text, re.IGNORECASE)]
         assert not found, f"{path.relative_to(ROOT)} names {found}: put it in a list's notes"
 
 
