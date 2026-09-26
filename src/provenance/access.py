@@ -11,9 +11,9 @@ the next run from re-litigating it and from substituting silently.
 
 A credential never enters the registry, and nothing here prints one. That is two checks, one
 each way, and every path goes through them rather than a check of its own:
-- **In:** `check_entry()`. `save()` is the only write under `sources/access/` and
-  `dump_entry()` the only YAML an entry becomes, and both call it. `load_all()` calls it on
-  every file too, since a person with an editor is a writer as well.
+- **In:** `check_entry()`. `save()` is the only write under the registry and `dump_entry()`
+  the only YAML an entry becomes, and both call it. `load_all()` calls it on every file too,
+  since a person with an editor is a writer as well.
 - **Out:** `redact()`. Every exception this module raises is a `Refused`, whose message has been
   through it, and `_refusing` makes one of a library's error at every function the CLI calls.
 """
@@ -673,11 +673,18 @@ def entry_path(host: str) -> Path:
 
 @_refusing
 def save(host: str, entry: dict) -> Path:
-    """Write `entry` as the registry's entry for `host`: the only write under `sources/access/`,
-    and a checked one (`dump_entry()`). Whole or not at all, as `judgments._write()` writes: a
-    temp file on disk, then a rename. A file cut short would stop every read of the registry."""
+    """Write `entry` as the registry's entry for `host`: the only write under the registry, and a
+    checked one (`dump_entry()`). Whole or not at all, as `judgments._write()` writes: a temp
+    file on disk, then a rename. A file cut short would stop every read of the registry.
+
+    Never in an installed copy, where the next install deletes it (`installed_copy()`). The
+    commands print the entry there before they get here, and this refusal is for a writer that
+    doesn't: the one write is where the rule holds for every writer."""
     path = entry_path(host)
     text = dump_entry(entry, host)
+    if installed_copy():
+        raise Refused("not written: this provenance is an installed copy, and the next install "
+                      "would delete the entry. Record it from a checkout of the tool's repo")
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     try:

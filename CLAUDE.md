@@ -1267,8 +1267,10 @@ has an entry, the printed one is the install's copy with the change applied, so 
 to merge it by hand, not replace the repo's newer file. Printing also made `source-note`'s host a
 way to read files: the host is joined into a file name, and one holding `/` or `..` named a YAML
 file outside the registry, printed whole. It is refused before anything is read (a checkout
-rewrote that file). Both writers join a host through `cli._registry_entry()`, which does the
-check, since the import's host is a URL's hostname, and on Windows that can hold a `\`. A
+rewrote that file). Both writers join a host through `access.entry_path()`, which does the
+check, since the import's host is a URL's hostname, and on Windows that can hold a `\`; the
+host must be a host name there too (#161, below). `save()`, the one write, also refuses in an
+installed copy, for a writer that forgets to print instead. A
 symlink placed inside the registry is not checked: placing one takes write access to the
 registry, which already reaches its target. A registry of a project's own, layered over the
 shipped one, is #165.
@@ -1283,8 +1285,8 @@ holes were closed one door at a time (#46, #52, #155, #158, #161, #163 and the i
 first), and each review found the next, because each fix guarded one command. So there is one
 check each way:
 - **In: `check_entry()`.** Every entry passes it, whatever wrote it. `save()` is the only write
-  under `sources/access/`, and `dump_entry()` the only YAML an entry becomes (printed to be
-  pasted, too); both call it. `load_all()` calls it on every file, since a person with an editor
+  under `source_access/`, and `dump_entry()` the only YAML an entry becomes (printed to be
+  pasted, too, and printed instead of written in an installed copy); both call it. `load_all()` calls it on every file, since a person with an editor
   is a writer too: a committed credential stops every command that reads the registry, and the
   suite. It refuses a login in any URL, in any string, in every reading `_readings()` knows
   (NFKC, percent-encoding, HTML and backslash escapes): nested in a query, fragment, form field
@@ -1313,9 +1315,10 @@ check each way:
   going in fails toward refusing.
 - **Pinned, not listed.** `tests/test_access_choke_points.py` fails on a write, a YAML dump or a
   registry path outside those functions, a `raise` of anything but `Refused`, a function the CLI
-  calls without `_refusing`, an access command that exits, raises or catches on its own, and a
-  command that writes the registry with no invocations there carrying a synthetic login in each
-  value it writes.
+  calls without `_refusing`, an access command that exits, raises or catches on its own (the
+  one helper allowed to exit besides `_access_refused()` is `_registry_write_refused()`, which
+  prints an entry `dump_entry()` checked), and a command that writes the registry with no
+  invocations there carrying a synthetic login in each value it writes.
 
 Three things learned building it:
 - **Prose is read for URLs, not words.** A login anywhere is refused, and so is a credential

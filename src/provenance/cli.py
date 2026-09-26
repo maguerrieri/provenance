@@ -2143,7 +2143,7 @@ def source_import_curl(path: Path, name: str = "", write: bool = True):
             return
         dest = access.entry_path(entry["host"])
         if access.installed_copy():
-            _registry_write_refused(dest, text)
+            _registry_write_refused(dest, access.dump_entry(entry))
         if dest.exists():
             text = access.dump_entry(entry)
             con.print(f"[yellow]{escape(_printable(str(dest)))} exists — printing instead of "
