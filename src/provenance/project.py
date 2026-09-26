@@ -142,6 +142,10 @@ def load(root: Path) -> Project:
         elif (d := (root / s).resolve()) == root:
             # A symlink to the root: its run would be the root's, claims and verdicts shared.
             problems.append(f"subject {s!r} is the project root itself")
+        elif os.path.lexists(root / s) and not (root / s).is_dir():
+            # A file, or a link to one or to nothing, can hold no run. An absent directory is
+            # fine: `provenance new-candidate` creates it.
+            problems.append(f"subject {s!r} is not a directory")
         elif os.path.lexists(root / s / FILE):
             # The nearest project file wins, so its commands would never read this one's
             # declaration: two projects claiming one directory, and which is meant is not on disk.

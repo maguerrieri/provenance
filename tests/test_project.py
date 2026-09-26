@@ -120,11 +120,19 @@ def test_two_subjects_are_never_one_directory(tmp_path):
     (tmp_path / "lind").mkdir()
     (tmp_path / "alias").symlink_to(tmp_path / "lind")
     (tmp_path / "self").symlink_to(tmp_path)
-    write_project(tmp_path, subjects=["lind", "alias", "self"])
+    # nor a file, or a link to nothing: neither can hold a run. An absent one can, once
+    # new-candidate creates it.
+    (tmp_path / "notes").write_text("")
+    (tmp_path / "gone").symlink_to(tmp_path / "unmounted")
+    write_project(tmp_path, subjects=["lind", "alias", "self", "notes", "gone", "ng"])
     with pytest.raises(project.ProjectError) as e:
         project.load(tmp_path)
-    assert "subject 'alias' is the same directory as subject 'lind'" in str(e.value)
-    assert "subject 'self' is the project root itself" in str(e.value)
+    msg = str(e.value)
+    assert "subject 'alias' is the same directory as subject 'lind'" in msg
+    assert "subject 'self' is the project root itself" in msg
+    assert "subject 'notes' is not a directory" in msg
+    assert "subject 'gone' is not a directory" in msg
+    assert "'ng'" not in msg, "an absent directory is a subject new-candidate has yet to create"
 
 
 def test_a_cache_naming_a_cache_directory_itself_is_refused(tmp_path):
