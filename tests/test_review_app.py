@@ -572,6 +572,29 @@ def test_a_note_change_is_found_by_what_the_row_shows_not_where(tmp_path):
     assert sorted(stored(settled)["checked"].values()) == [f"q7/{sid}", f"q7/{sid}/2"]
 
 
+def test_a_note_change_on_one_claim_is_not_its_twins(tmp_path):
+    """Two claims can ask and answer the same thing from the same citation (twins), so their
+    rows' fingerprints match up to the notes. A note change on one is that claim's: its twin's
+    row gets no warning, and a tick there doesn't settle it."""
+    answer = "The council approved the levy."
+    one, two = f"q1/{cited().sid}", f"q2/{cited().sid}"
+
+    def build(q1_notes):
+        first, twin = claim("q1", answer), claim("q2", answer)
+        first.notes, twin.notes = q1_notes, "Page 3 is a scan."
+        return [first, twin]
+
+    checked = run(tmp_path, build(NOTE), actions=[{"do": "tick", "row": one, "checked": True}])
+    changed = run(tmp_path, build("The filing cited is superseded."), storage=checked["storage"])
+    assert rows(changed)[one]["noteStale"]
+    assert not (rows(changed)[two]["noteStale"] or rows(changed)[two]["stale"])
+    assert [c["noteChanged"] for c in changed["claims"]] == [True, False]
+
+    ticked = run(tmp_path, build("The filing cited is superseded."), storage=checked["storage"],
+                 actions=[{"do": "tick", "row": two, "checked": True}])
+    assert rows(ticked)[two]["checked"] and rows(ticked)[one]["noteStale"]
+
+
 def test_progress_saved_before_notes_were_hashed_lapses_only_on_noted_claims(tmp_path):
     """Checks saved before this change recorded no note. A claim without notes hashes as it did,
     so its check stands and nothing is cleared wholesale. A claim that has notes now reads as

@@ -198,11 +198,10 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
 // it (every row has its own key: report.ROW_KEY_RE), so a row whose evidence changed can say
 // so. A claim with researcher notes adds them to the fingerprint as a part of its own, after a
 // dot. A check that no row shows, but that matches a row on everything before the dot, is on
-// that row's claim and evidence under other notes, so the row says the note is what changed. It
-// is matched by what the row shows, not by the row it names, so it follows a claim moved to
-// another id. A claim without notes has no such part, as before notes were hashed. A flag or
-// note is a warning about the source, not an attestation, so it stays per source and shows
-// wherever the source is cited.
+// that row's claim and evidence under other notes, so the row says the note is what changed
+// (rowsOf). A claim without notes has no such part, as before notes were hashed. A flag or note
+// is a warning about the source, not an attestation, so it stays per source and shows wherever
+// the source is cited.
 //
 // V2 holds what the page saved before notes were hashed: this shape, with v: 2 and one-part
 // fingerprints. A one-part check means now what it meant then, a check on a claim with no note,
@@ -224,10 +223,21 @@ const FP_V2_RE = /^[0-9a-f]{16}$/;      // before notes were hashed, a fingerpri
 const SID_RE = /^[0-9a-f]{12}$/;
 const srcs = [...document.querySelectorAll('.src')];
 const shown = new Set(srcs.map(el => el.dataset.fp));
+const byKey = new Map(srcs.map(el => [el.dataset.key, el]));
 // A fingerprint without its notes part: the claim and the evidence the row shows.
 function evidence(fp){ return fp.split('.')[0]; }
-const shownEvidence = new Set([...shown].map(evidence));
 function lapsed(){ return Object.keys(state.checked).filter(f => !shown.has(f)); }
+// The rows a check no row shows was on, under other notes: the row it names, while that row
+// shows the same claim and evidence. Only when it doesn't (the claim moved to another id, or its
+// citations were reordered) every row showing them, since the check can't say which. Matching by
+// content alone first sent a note change on one claim to its twin (another claim asking and
+// answering the same thing from the same citation) and let a tick there settle it. None: the
+// claim or evidence changed.
+function rowsOf(f){
+  const named = byKey.get(state.checked[f]);
+  if (named && evidence(named.dataset.fp) === evidence(f)) return [named];
+  return srcs.filter(el => evidence(el.dataset.fp) === evidence(f));
+}
 let cur = 0;
 
 // Progress can come from localStorage or from a file someone hands you, so coerce it into
@@ -323,10 +333,10 @@ function ann(el){
 function isChecked(el){ return el.dataset.fp in state.checked; }
 function setChecked(el, on){
   const row = el.dataset.key, fp = el.dataset.fp;
-  // Either way, a check no row shows any more that this row made, or that was on what this row
-  // shows under other notes, is settled now.
+  // Either way, a check no row shows any more that this row made, or that was on this row under
+  // other notes, is settled now.
   for (const f of lapsed()) {
-    if (state.checked[f] === row || evidence(f) === evidence(fp)) delete state.checked[f];
+    if (state.checked[f] === row || rowsOf(f).includes(el)) delete state.checked[f];
   }
   if (on) state.checked[fp] = row; else delete state.checked[fp];
 }
@@ -335,13 +345,14 @@ function render(){
   // A check follows its claim, so it names the row showing it now: when a claim moves to another
   // question id, a check made under its old row key moves to the new one.
   for (const el of srcs) if (isChecked(el)) state.checked[el.dataset.fp] = el.dataset.key;
-  // Checks no row shows now. One on what a row still shows, under other notes, is a note change
-  // on every row showing that; any other names the row whose claim or evidence changed.
-  const old = lapsed();
-  const noteChanged = new Set(old.map(evidence).filter(e => shownEvidence.has(e)));
-  const changed = new Set(old.filter(f => !shownEvidence.has(evidence(f)))
-                             .map(f => state.checked[f]));
-  const noteStale = el => !isChecked(el) && noteChanged.has(evidence(el.dataset.fp));
+  // Checks no row shows now: a note change on the rows they were on (rowsOf), and otherwise a
+  // change to the claim or evidence of the row they name.
+  const noteRows = new Set(), changed = new Set();
+  for (const f of lapsed()){
+    const on = rowsOf(f);
+    if (on.length) on.forEach(el => noteRows.add(el)); else changed.add(state.checked[f]);
+  }
+  const noteStale = el => !isChecked(el) && noteRows.has(el);
   let done = 0;
   for (const el of srcs){
     const a = ann(el), ok = isChecked(el);
