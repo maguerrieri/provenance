@@ -291,6 +291,14 @@ def test_a_recipe_is_checked_as_it_will_be_sent(registry, monkeypatch):
         run(r, {"year": f'1, "token": "{CANARY}"'})
 
 
+def test_save_refuses_to_write_in_an_installed_copy(registry, monkeypatch):
+    """The commands print the entry there (#7), and a writer that forgets to is stopped here."""
+    monkeypatch.setattr(access, "installed_copy", lambda: True)
+    with pytest.raises(Refused, match="installed copy"):
+        access.save("portal.example", _entry())
+    assert not registry.exists()
+
+
 def test_a_host_argument_with_a_port_names_the_host(registry):
     """The registry is kept by host, and a URL's port was always dropped: so is a bare one."""
     code, out = _invoke("source-note", "portal.example:8443", "a finding")
@@ -408,7 +416,7 @@ def test_only_save_writes_under_the_registry_and_only_dump_entry_makes_its_yaml(
     assert {"entry_path", "dump_entry"} <= _calls(fns["save"])
     assert "check_entry" in _calls(fns["dump_entry"])
     assert "check_entry" in _calls(fns["load_all"])
-    assert "save" in _calls(fns["note"])
+    assert "installed_copy" in _calls(fns["save"])
 
 
 def _access_names(node: ast.AST) -> set[str]:
@@ -546,9 +554,11 @@ def test_every_access_function_the_cli_calls_turns_a_library_error_into_a_refuse
     called = {n.attr for fn in _cli_access_functions().values() for n in ast.walk(fn)
               if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
               and n.value.id in _access_names(fn) and n.attr in fns}
-    assert {"load_all", "find", "run", "note", "parse_curl", "dump_entry", "entry_path",
-            "save"} <= called
-    undecorated = sorted(name for name in called - {"redact"}
+    assert {"load_all", "find", "run", "with_note", "parse_curl", "dump_entry", "entry_path",
+            "save", "installed_copy"} <= called
+    # redact() is what a Refused is made through, and installed_copy() reads only the install's
+    # own metadata, catches every error it has and answers "installed".
+    undecorated = sorted(name for name in called - {"redact", "installed_copy"}
                          if not any(isinstance(d, ast.Name) and d.id == "_refusing"
                                     for d in fns[name].decorator_list))
     assert undecorated == []
@@ -573,6 +583,12 @@ def test_every_access_command_refuses_only_through_the_redactor():
         assert len(body) == 1 and isinstance(body[0], ast.With), name
         (item,) = body[0].items
         assert ast.unparse(item.context_expr) == "_access_refusals()", name
+        # A helper that exits on the command's behalf is a way out too. The one besides
+        # `_access_refused()` prints an entry `dump_entry()` checked, under a checked host.
+        exits = {c for c in _calls(fn) if c in fns
+                 and any(isinstance(n, ast.Raise) for n in ast.walk(fns[c]))}
+        assert exits <= {"_access_refusals", "_access_refused", "_registry_write_refused"}, (
+            name, exits)
         assert not [n for n in ast.walk(body[0]) if isinstance(n, ast.Raise | ast.Try)], name
 
 
