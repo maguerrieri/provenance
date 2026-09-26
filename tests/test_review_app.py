@@ -434,6 +434,14 @@ def test_unreadable_progress_is_kept_and_not_replaced_by_older(tmp_path):
         assert result["storage"][STORE + ":unreadable"] == text
         assert result["storage"][V2] == text, "only read, never rewritten"
 
+    # The same for progress an earlier version saved that can't be read: never carried over
+    # as empty, which would mark it moved and never read again, with nothing said.
+    for text in ('{"' + sid + '": {"flag": tr', "null", "[]", json.dumps({"v": 2, "checked": {}})):
+        result = run(tmp_path, [c], storage={LEGACY: text})
+        assert "could not be read" in result["notice"], text
+        assert result["storage"][STORE + ":unreadable"] == text, text
+        assert LEGACY + ":moved" not in result["storage"], text
+
     # Imported, it is refused, and what the page holds is left alone.
     ticked = run(tmp_path, [c], actions=[{"do": "tick", "row": f"q1/{sid}", "checked": True}])
     for text in (later, "null", "[]"):

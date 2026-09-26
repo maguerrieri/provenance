@@ -213,12 +213,12 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
 // by the page's title, as V2 is. KEY holds what earlier versions of this page saved, per source:
 // {"<source id>": {done, flag, note}}, also keyed by the title. They are only read, never
 // rewritten, so no version's tab overwrites another's progress, and only to carry them over
-// where STORE is absent: the newest store there is (V3, then V2) as it is, if it is what its key
-// holds, else KEY migrated. Several runs' pages could share a title, and a project renamed later
-// has a new STORE, so they are carried over once, to the first STORE that finds them: MOVED
-// names it, and any other STORE starts over and says why. Read again, they would bring back
-// flags and checks cleared since. Their "vgpipe:" prefix predates the rename to provenance (#6)
-// and stays: it names progress already saved, and a new prefix would read every review as empty.
+// where STORE is absent: the newest there is (V3, V2, then KEY), as it is or migrated, if it is
+// what its key holds. Several runs' pages could share a title, and a project renamed later has
+// a new STORE, so they are carried over once, to the first STORE that finds them: MOVED names
+// it, and any other STORE starts over and says why. Read again, they would bring back flags and
+// checks cleared since. Their "vgpipe:" prefix predates the rename to provenance (#6) and
+// stays: it names progress already saved, and a new prefix would read every review as empty.
 const KEY = "vgpipe:{{ run_id }}";
 const V2 = KEY + ":v2";
 const V3 = KEY + ":v3";
@@ -340,9 +340,10 @@ function kind(x){
 function save(){ try { localStorage.setItem(STORE, JSON.stringify(state)); } catch(e){} }
 // Carried over: saved under STORE at once, with MOVED naming it, so it is never read again.
 function carried(){ try { localStorage.setItem(MOVED, STORE); } catch (e) {} save(); }
-// The newest title-keyed store there is, and what it has to be.
+// The newest title-keyed progress there is, and what it has to be: this shape under V3, the one
+// from before notes were hashed under V2, the per-source map earlier versions kept under KEY.
 function titled(){
-  for (const [k, expected] of [[V3, 'v3'], [V2, 'v2']]){
+  for (const [k, expected] of [[V3, 'v3'], [V2, 'v2'], [KEY, 'legacy']]){
     const text = stored(k);
     if (text !== null) return [text, expected];
   }
@@ -351,14 +352,11 @@ function titled(){
 const own = stored(STORE), moved = stored(MOVED);
 const mine = moved === null || moved === STORE;   // the title-keyed progress is this STORE's to read
 const [kept, expected] = own !== null ? [own, 'v3'] : mine ? titled() : [null, null];
-if (kept === null){
-  const old = mine && own === null ? stored(KEY) : null;
-  if (old !== null) { load(parse(old)); carried(); }
-  else load(own === null && !mine ? {v: 3, notice: {moved: true}} : undefined);
-}
+if (kept === null) load(own === null && !mine ? {v: 3, notice: {moved: true}} : undefined);
 else if (kind(parse(kept)) !== expected){
-  // Not a fallback to an older store: that would bring back flags cleared since. The first save
-  // replaces STORE, so the text is kept where a person can recover it.
+  // Not a fallback to an older store: that would bring back flags cleared since. Nor carried
+  // over: marked as moved, it would never be read again. The first save replaces STORE, so the
+  // text is kept where a person can recover it.
   try { localStorage.setItem(UNREADABLE, kept); } catch (e) {}
   load({v: 3, notice: {unreadable: true}});
 }
