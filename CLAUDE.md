@@ -2410,6 +2410,37 @@ tests for the commit alone, and a wrong path fails. A skip that catches every fa
 test's own bug as a missing environment. Test for the missing thing itself, and let everything
 else fail.
 
+## The plugin and the command ship together, and run outside this repo
+
+The agents and the skill are a Claude Code plugin: `.claude-plugin/plugin.json`, `agents/` and
+`skills/` at the repo root, listed in the `maguerrieri-toolbox` marketplace by GitHub source.
+Research projects live anywhere, with the command installed once (`uv tool install
+git+https://github.com/maguerrieri/provenance@v<version>`), so four things follow:
+
+- **What users and agents read says `provenance`, never `uv run provenance`.** That covers
+  the agents and the skill, every CLI message, and the review page's printed commands.
+  `uv run` works only in a clone of this repo, so it is for developing the tool: tests, CI and
+  these docs. `tests/test_plugin.py` fails on `uv run provenance` in anything shipped.
+- **Installed, the agents are `provenance:researcher` and `provenance:verifier`.** The skill
+  spawns them by those names; a bare `researcher` names no agent outside this repo.
+- **What the package reads ships in it.** The review template, the source lists and the access
+  registry are package data under `src/provenance/`, found through `importlib.resources`.
+  They were found beside the checkout (`Path(__file__).parents[2]`), which a wheel doesn't have,
+  and every test passed, because tests run from the checkout. A test builds the wheel and checks
+  the files are in it. Nothing the package reads may be looked up relative to the repo root.
+  A file the package *writes* can't live there either: see "Only a checkout writes to the
+  registry".
+- **One version for the plugin and the command.** Claude Code caches a plugin by the
+  `version` in `plugin.json`, so a change reaches installed plugins only with a bump, and the
+  skill's first step checks `provenance --version` against the plugin's before a run: its
+  agents run one version's commands and flags. A release bumps `version` in `pyproject.toml`
+  and `plugin.json` together, and the version the skill and the README name (a test holds all
+  of them equal), then tags the commit `v<version>` and pushes the tag. The marketplace entry
+  tracks the tag.
+
+`claude plugin validate .` warns that this file is not loaded as the plugin's context. That is
+right: it is for working on the tool, and the plugin carries what an agent needs in its skill.
+
 ## Style
 
 Verdict-first, information-dense, no padding. Distinguish enacted law from proposals and
