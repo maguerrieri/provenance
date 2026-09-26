@@ -204,8 +204,9 @@ Do not summarize the source rules for them — the agent definition carries them
 2. `provenance serve` — opens the app on `127.0.0.1:8765`. Serve rather than opening the
    file directly: browsers disable `localStorage` on `file://` origins, and the checkbox
    state is what makes a long review session survivable.
-3. Report to the operator: counts by status, the conflict list, the `not_found` list, and which
-   rows need the most care (adversarial + paywalled).
+3. Report to the operator: counts by status, the conflict list, the `not_found` list, which
+   rows need the most care (adversarial + paywalled), and every access-registry entry a
+   researcher reported `not written`, whole, for the operator to add to the tool's repo.
 
 Claim files are stored as `data/claims/<qid>.json`. If a researcher writes one under any
 other name, delete the stale file — `provenance` refuses to load two files carrying the same
@@ -233,8 +234,7 @@ A run that skips it produces green rows nobody has actually checked.
 
 **Read `races/<race>.md`** — that file holds everything race-specific: the candidates, the
 known adversarial claims, the powers of the office, the primary-source hosts, and which
-source lists apply (`sources: [us, ca]` → `source_lists/us-sources.yaml` +
-`source_lists/ca-sources.yaml`).
+source lists apply (`sources: [us, ca]` → the tool's `us` and `ca` lists, which ship with it).
 
 Paste its **"Race context"** and **"Primary sources"** sections verbatim into every
 researcher prompt. Do not summarize them — the specifics (exact vote shares, which LegInfo
