@@ -227,7 +227,7 @@ def test_both_paths_write_the_phrase_the_skill_matches(root):
     assert PHRASE in verify_source(s, root).verification.reason
     s.verification = Verification(status="verified")
     assert PHRASE in revalidate_from_cache(s, root).verification.reason
-    skill = Path(__file__).parents[1] / "skills" / "voter-guide-research" / "SKILL.md"
+    skill = Path(__file__).parents[1] / "skills" / "research" / "SKILL.md"
     assert f'"{PHRASE}"' in skill.read_text(), "the skill must match what the code writes"
 
 

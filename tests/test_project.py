@@ -800,7 +800,7 @@ def test_a_researcher_is_told_to_take_its_context_from_the_brief_alone():
     researcher = " ".join((root / "agents" / "researcher.md").read_text().split())
     assert "Take your context from that brief, and only from it." in researcher
     assert "Never read the project's `provenance.toml` yourself." in researcher
-    skill = " ".join((root / "skills" / "voter-guide-research" / "SKILL.md").read_text().split())
+    skill = " ".join((root / "skills" / "research" / "SKILL.md").read_text().split())
     assert "never paste `provenance.toml` itself or tell a researcher to read it" in skill
 
 
