@@ -159,7 +159,7 @@ def test_a_project_file_any_command_would_refuse_is_taken_back_whole(tmp_path):
     created for it, so a retry meets nothing left over."""
     (tmp_path / "f").write_text("a file where the cache would go")
     code, out = _provenance("new", tmp_path / "a" / "b", "--from", _template(tmp_path),
-                            "--source", "us", "--cache", "../../f")
+                            "--source", "us", "--cache", tmp_path / "f")
     assert code == 1 and "`cache` needs" in out and "Nothing was written" in out, out
     assert not (tmp_path / "a").exists()
 
@@ -227,7 +227,7 @@ def test_ask_writes_a_project_holding_the_one_question(tmp_path, home, monkeypat
     code, out = _provenance("ask", QUESTION, "--source", "us", cwd=tmp_path,
                             monkeypatch=monkeypatch)
     assert code == 0, out
-    root = tmp_path / "ask-what-does-the-record-show-about"
+    root = tmp_path / "ask-county-road-repair-bond"
     assert json.loads((root / "questions.json").read_text()) == [
         {"id": "q1", "text": QUESTION, "claim_type": "mechanical", "parent": None,
          "rationale": "asked with provenance ask"}]
@@ -249,6 +249,62 @@ def test_ask_takes_a_directory_a_cache_and_an_adversarial_question(tmp_path, hom
         == "adversarial"
     assert project.load(tmp_path / "mine").cache == (tmp_path / "c").resolve()
     assert "two independent sources" in out, out
+
+
+def test_record_questions_about_different_things_get_different_directories(tmp_path, home,
+                                                                          monkeypatch):
+    """Named by their first words, every question asking what the record shows was one
+    directory, and one project name, so their reviews shared progress."""
+    for q in ("What does the record show about the levy?",
+              "What does the record show about the bond?"):
+        code, out = _provenance("ask", q, "--source", "us", cwd=tmp_path,
+                                monkeypatch=monkeypatch)
+        assert code == 0, out
+    assert sorted(p.name for p in tmp_path.glob("ask-*")) == ["ask-bond", "ask-levy"]
+
+
+@pytest.mark.parametrize("kind", ["new", "ask"])
+def test_a_relative_cache_is_read_from_the_working_directory(tmp_path, home, monkeypatch,
+                                                            kind):
+    """As every command's --cache is, and written relative to the project file, which is how
+    the file reads it. Written as typed, one shared cache named from the directory holding the
+    asks became a cache inside each one."""
+    args = (("new", "p", "--from", _template(tmp_path)) if kind == "new"
+            else ("ask", QUESTION, "--dir", "p"))
+    code, out = _provenance(*args, "--source", "us", "--cache", "shared", cwd=tmp_path,
+                            monkeypatch=monkeypatch)
+    assert code == 0, out
+    assert 'cache = "../shared"' in (tmp_path / "p" / "provenance.toml").read_text()
+    assert project.load(tmp_path / "p").cache == (tmp_path / "shared").resolve()
+
+
+def test_a_path_that_cannot_be_pasted_gets_no_command(tmp_path):
+    """A command printed for a value is printed only when a pasted copy carries the value as it
+    is (`queries.unprintable()`): a tab in the path would paste as another path, or as zsh's
+    completion key."""
+    code, out = _provenance("new", tmp_path / "a\tb" / "p", "--from", _template(tmp_path),
+                            "--source", "us")
+    assert code == 0, out
+    assert "open Claude Code in that directory" in out and f"run {cli.SKILL}" in out, out
+    assert "&& claude" not in out, out
+
+
+def test_ask_takes_back_the_whole_project_when_it_is_refused(tmp_path, home):
+    """The question set is written before the project is read back, so a refused project takes
+    it back too, and a retry does not meet a directory holding half a project."""
+    (tmp_path / "f").write_text("a file where the cache would go")
+    code, out = _provenance("ask", QUESTION, "--source", "us", "--dir", tmp_path / "a" / "b",
+                            "--cache", tmp_path / "f")
+    assert code == 1 and "Nothing was written" in out, out
+    assert not (tmp_path / "a").exists()
+
+
+def test_a_directory_that_cannot_be_made_is_refused_as_such(tmp_path, home):
+    (tmp_path / "f").write_text("a file, not a directory")
+    code, out = _provenance("ask", QUESTION, "--source", "us", "--dir", tmp_path / "f" / "x")
+    assert code == 1 and "could not create" in out, out
+    assert "provenance.toml already" not in out, out
+    assert (tmp_path / "f").read_text() == "a file, not a directory"
 
 
 def test_ask_never_adds_to_a_directory_that_exists(tmp_path, home):

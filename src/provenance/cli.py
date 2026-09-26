@@ -2576,7 +2576,7 @@ _PROJECT_FILE = '''\
 # `provenance new` or `provenance ask` has written it: change it by hand.
 name = {name}
 sources = {sources}
-cache = {cache}   # the directory that holds cache/
+cache = {cache}   # the directory that holds cache/, relative to this file
 
 # title = "<the review page's title>"   # `name` if left out
 # subjects = [{{id = "<its directory>", name = "<what the questions call it>"}}]
@@ -2593,18 +2593,25 @@ completeness_check = """
 """
 '''
 
+# Words every question asking what the record shows has, left out of `provenance ask`'s default
+# directory: named by its first words, every such question was "ask-what-does-the-record-show".
+_ASK_FILLER = frozenset("""a about an and are as at be been by did do does for from had has have
+how in is it its of on or record records say said says show showed shown shows that the their
+this to was were what when where which who whom whose why with""".split())
+
 
 def _toml_string(value: str) -> str:
-    """`value` as a TOML basic string. JSON's escaping is TOML's for text with no control
-    character in it, which `_scaffold_refusal()` has already refused: kept as UTF-8, since
-    ensure_ascii would write an astral character as a surrogate pair, which TOML refuses."""
+    """`value` as a TOML basic string. JSON's escaping is TOML's for text `_unwritable()` passes,
+    which holds no control character: kept as UTF-8, since ensure_ascii would write an astral
+    character as a surrogate pair, which TOML refuses."""
     return json.dumps(value, ensure_ascii=False)
 
 
-def _unprintable(what: str, value: str) -> str:
-    """A refusal for a value holding a character `_printable()` would escape, else "". Such a
-    value can't be written into a project file or a question as the user sees it: a control
-    character is invalid TOML, and an undecodable byte from argv can't be written at all."""
+def _unwritable(what: str, value: str) -> str:
+    """A refusal for a value `new` or `ask` can't write into a file as the user sees it, else "":
+    one holding a character `_printable()` would escape. A control character is invalid TOML,
+    and an undecodable byte from argv (a lone surrogate) can't be written at all. Whether a
+    value can go into a printed command is another question, `queries.unprintable()`'s."""
     if _printable(value) != value:
         return f"{what} holds a character that can't be written as it is: {_printable(value)}"
     return ""
@@ -2627,6 +2634,27 @@ def _sources_or_refuse(source: list[str] | None) -> list[str]:
     return list(dict.fromkeys(source))
 
 
+def _cache_setting(cache: str | None, default: str, root: Path) -> str:
+    """What the project file's `cache` says: `default` when `--cache` isn't given, else the
+    directory `--cache` names. Given, it is read as every command's `--cache` is, from the
+    working directory, and written relative to the project file, which is how the file reads
+    it. Written as typed, `--cache shared` from the directory holding several asks would have
+    named a cache inside each one. Worked out on resolved paths, since `..` from a directory
+    reached through a symlink climbs out of its target. A path from ~ or from / is written as
+    given."""
+    import os
+
+    if cache is None:
+        return default
+    if problem := _unwritable("--cache", cache):
+        _refuse(problem)
+    if not cache.strip():
+        _refuse("--cache must name a directory")
+    if cache.startswith("~") or os.path.isabs(cache):
+        return cache
+    return os.path.relpath(proj.absolute(Path(cache)).resolve(), root.resolve())
+
+
 def _missing_dirs(path: Path) -> list[Path]:
     """`path` and each directory above it that does not exist yet, deepest first: what a
     `mkdir(parents=True)` would create, so a scaffold that fails can take back exactly that."""
@@ -2640,19 +2668,30 @@ def _missing_dirs(path: Path) -> list[Path]:
     return missing
 
 
-def _scaffold(root: Path, name: str, sources: list[str], cache: str) -> proj.Project:
-    """Write `root`/provenance.toml and read it back as `provenance` will, or refuse and leave
-    nothing behind: the file removed, and every directory created for it that is still empty.
-    It is read back through `project.resolve()`, so it is refused for anything any command would
-    refuse it for, a subject of another project's included. Created exclusively: new only
-    creates a project, and never writes over a project file, however one got there."""
+def _already_a_project(root: Path) -> NoReturn:
+    _refuse(f"{root} holds a {proj.FILE} already: `provenance new` and `provenance ask` only "
+            f"create a project, and no command edits one")
+
+
+def _scaffold(root: Path, name: str, sources: list[str], cache: str,
+              files: dict[str, str]) -> proj.Project:
+    """Write `root`/provenance.toml and `files` beside it, and read the project back as every
+    command reads it, or refuse and leave nothing behind: what was written removed, and every
+    directory created for it that is still empty. Read back through `project.resolve()`, so it
+    is refused for anything any command would refuse it for, a subject of another project's
+    included. Each file is created exclusively: `new` and `ask` only create a project, and never
+    write over a file, however one got there."""
     created = _missing_dirs(root)
-    path = root / proj.FILE
+    written: list[Path] = []
     text = _PROJECT_FILE.format(name=_toml_string(name), sources=json.dumps(sources),
                                 cache=_toml_string(cache))
 
     def undo() -> None:
-        path.unlink(missing_ok=True)
+        for f in reversed(written):
+            try:
+                f.unlink()
+            except OSError:
+                pass
         for d in created:
             try:
                 d.rmdir()
@@ -2661,14 +2700,24 @@ def _scaffold(root: Path, name: str, sources: list[str], cache: str) -> proj.Pro
 
     try:
         root.mkdir(parents=True, exist_ok=True)
-        with open(path, "x", encoding="utf-8") as f:
-            f.write(text)
-    except FileExistsError:
-        _refuse(f"{root} holds a {proj.FILE} already: `provenance new` and `provenance ask` only "
-                f"create a project, and no command edits one")
     except OSError as e:
+        # FileExistsError too: a part of the path that exists and is not a directory.
         undo()
-        _refuse(f"could not write {path}: {e}")
+        _refuse(f"could not create {root}: {e}")
+    for rel, body in {proj.FILE: text, **files}.items():
+        path = root / rel
+        try:
+            with open(path, "x", encoding="utf-8") as f:
+                written.append(path)
+                f.write(body)
+        except FileExistsError:
+            undo()
+            if rel == proj.FILE:
+                _already_a_project(root)
+            _refuse(f"{path} exists: `provenance new` and `provenance ask` write over no file")
+        except OSError as e:
+            undo()
+            _refuse(f"could not write {path}: {e}. Nothing was written.")
     try:
         p, _ = proj.resolve(None, root)
     except proj.ProjectError as e:
@@ -2678,8 +2727,14 @@ def _scaffold(root: Path, name: str, sources: list[str], cache: str) -> proj.Pro
 
 
 def _hand_off(root: Path, prompt: str) -> str:
-    """The command that opens Claude Code in `root` with the skill invoked, quoted for a shell,
-    as every printed command is."""
+    """How to open Claude Code in `root` with the skill invoked: as a command, quoted for a
+    shell, when a pasted copy carries the path as it is (`queries.unprintable()`, the rule for
+    every command printed for a value), else in words."""
+    from .queries import unprintable
+
+    if unprintable(str(root)):
+        return (f"open Claude Code in that directory (its path can't be pasted as printed) and "
+                f"run {prompt}")
     return f"cd {shlex.quote(str(root))} && claude {shlex.quote(prompt)}"
 
 
@@ -2694,9 +2749,9 @@ def new(directory: Annotated[Path, typer.Argument(
         name: Annotated[str, typer.Option(
             help="The project's name: its review progress is kept under it. Defaults to the "
                  "directory's name.")] = "",
-        cache: Annotated[str, typer.Option(
-            help="The directory that holds the shared cache/, relative to the project file.")
-        ] = "."):
+        cache: Annotated[str | None, typer.Option(
+            help="The directory that holds the shared cache/, from the working directory as "
+                 "every command's --cache. Defaults to the project's own directory.")] = None):
     """Start a project from a template, for the plugin's skill to research.
 
     Writes the project's provenance.toml and template.md, and prints the command that hands it
@@ -2711,12 +2766,11 @@ def new(directory: Annotated[Path, typer.Argument(
     sources = _sources_or_refuse(source)
     root = proj.absolute(directory)
     name = name.strip() or root.name
-    if problem := _unprintable("the project's name", name) or _unprintable("--cache", cache):
+    if problem := _unwritable("the project's name", name):
         _refuse(problem)
     if not name:
         _refuse(f"{root} has no name to give the project: pass --name")
-    if not cache.strip():
-        _refuse("--cache must name a directory (\".\" for one beside the project file)")
+    setting = _cache_setting(cache, ".", root)
     try:
         template = from_.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as e:
@@ -2726,8 +2780,7 @@ def new(directory: Annotated[Path, typer.Argument(
     if os.path.lexists(root) and not root.is_dir():
         _refuse(f"{root} is not a directory")
     if os.path.lexists(root / proj.FILE):
-        _refuse(f"{root} holds a {proj.FILE} already: `provenance new` only creates a project, "
-                f"and no command edits one")
+        _already_a_project(root)
     if held := sorted(n for n in proj.RESERVED - {proj.FILE} if os.path.lexists(root / n)):
         # A run's own files: a project from before project files, or a cache. Writing a project
         # file beside them would adopt them, which is a reviewed change, not a command's.
@@ -2745,21 +2798,11 @@ def new(directory: Annotated[Path, typer.Argument(
             _refuse(f"{dest} exists and is not --from {from_}: `provenance new` writes over no "
                     f"file. Pass it as --from, or move it.")
 
-    p = _scaffold(root, name, sources, cache)
-    if not keep:
-        try:
-            dest.write_text(template, encoding="utf-8")
-        except OSError as e:
-            con.print(Text(_printable(f"could not copy the template to {dest}: {e}. The project "
-                                      f"is written: copy it there by hand."), style="red"),
-                      soft_wrap=True)
-            raise typer.Exit(1) from None
-
-    lists = ", ".join(sources)
+    p = _scaffold(root, name, sources, setting, {} if keep else {dest.name: template})
     con.print(Text(_printable(
         f"created {p.root}\n"
-        f"  {proj.FILE}  name {name!r}, checked against {lists}, the shared cache in "
-        f"{p.cache / 'cache'}\n"
+        f"  {proj.FILE}  name {name!r}, checked against {', '.join(sources)}, the shared "
+        f"cache in {p.cache / 'cache'}\n"
         f"  template.md      {'already there' if keep else f'copied from {from_}'}\n"
         f"Add where the records are to `context` in {proj.FILE}, and list its subjects if it "
         f"has more than one. Then hand it to the skill, which splits the template into "
@@ -2768,13 +2811,17 @@ def new(directory: Annotated[Path, typer.Argument(
 
 
 def _ask_dir(question: str) -> Path | None:
-    """`ask-<the question's first words>`, in the working directory. Accents are folded and
-    anything else outside [a-z0-9] separates words, so the name is plain on any disk. None for
-    a question with no such word: it has no default, and `provenance ask` asks for `--dir`."""
+    """`ask-<the question's first distinctive words>`, in the working directory: the words
+    every such question shares (`_ASK_FILLER`) are left out. Accents are folded, a possessive
+    `'s` dropped, and anything else outside [a-z0-9] separates words, so the name is plain on
+    any disk. None for a question with no such word: it has no default, and `provenance ask`
+    asks for `--dir`."""
     import unicodedata
 
-    folded = unicodedata.normalize("NFKD", question).encode("ascii", "ignore").decode()
-    slug = "-".join(re.findall(r"[a-z0-9]+", folded.lower())[:6])[:48].rstrip("-")
+    folded = unicodedata.normalize("NFKD", question).encode("ascii", "ignore").decode().lower()
+    words = [w for w in re.findall(r"[a-z0-9]+", re.sub(r"'s\b", "", folded))
+             if w not in _ASK_FILLER]
+    slug = "-".join(words[:6])[:48].rstrip("-")
     return Path(f"ask-{slug}") if slug else None
 
 
@@ -2784,10 +2831,15 @@ def ask(question: Annotated[str, typer.Argument(
         source: Annotated[list[str] | None, typer.Option(
             help="A source list the citations are checked against. Repeat for each.")] = None,
         dir_: Annotated[Path | None, typer.Option(
-            "--dir", help="The new project's directory. Defaults to ask-<the question's first "
-                          "words>, in the working directory.")] = None,
-        cache: Annotated[str, typer.Option(
-            help="The directory that holds the shared cache/.")] = ASK_CACHE,
+            "--dir", help="The new project's directory, which must not exist. Defaults to "
+                          "ask-<the question's first distinctive words>, here.")] = None,
+        name: Annotated[str, typer.Option(
+            help="The project's name: its review progress is kept under it. Defaults to the "
+                 "directory's name.")] = "",
+        cache: Annotated[str | None, typer.Option(
+            help=f"The directory that holds the shared cache/, from the working directory as "
+                 f"every command's --cache. Defaults to {ASK_CACHE}, which every ask shares.")
+        ] = None,
         adversarial: Annotated[bool, typer.Option(
             help="The question is negative or contested: its claim needs two independent "
                  "sources.")] = False):
@@ -2805,35 +2857,26 @@ def ask(question: Annotated[str, typer.Argument(
     question = question.strip()
     if not question:
         _refuse("the question is empty")
-    if problem := _unprintable("the question", question) or _unprintable("--cache", cache):
+    if problem := _unwritable("the question", question):
         _refuse(problem)
-    if not cache.strip():
-        _refuse("--cache must name a directory")
     where = dir_ if dir_ is not None else _ask_dir(question)
     if where is None:
         _refuse("no directory name can be made from the question's words: pass --dir")
     root = proj.absolute(where)
     if os.path.lexists(root):
+        # The filesystem root included, the one directory with no name to give a project.
         _refuse(f"{root} exists: `provenance ask` starts a new project in a directory of its "
                 f"own. Pass another --dir.")
-    if not root.name:
-        _refuse(f"{root} has no name to give the project: pass another --dir")
-    if problem := _unprintable("the directory's name, which names the project", root.name):
+    name = name.strip() or root.name
+    if problem := _unwritable("the project's name", name):
         _refuse(problem)
+    setting = _cache_setting(cache, ASK_CACHE, root)
 
-    p = _scaffold(root, root.name, sources, cache)
     qs = [{"id": "q1", "text": question,
            "claim_type": "adversarial" if adversarial else "mechanical",
            "parent": None, "rationale": "asked with provenance ask"}]
-    try:
-        with open(root / "questions.json", "x", encoding="utf-8") as f:
-            f.write(json.dumps(qs, indent=1, ensure_ascii=False) + "\n")
-    except OSError as e:
-        con.print(Text(_printable(f"could not write {root / 'questions.json'}: {e}. The project "
-                                  f"is written, with no question in it."), style="red"),
-                  soft_wrap=True)
-        raise typer.Exit(1) from None
-
+    p = _scaffold(root, name, sources, setting,
+                  {"questions.json": json.dumps(qs, indent=1, ensure_ascii=False) + "\n"})
     kind = "adversarial: two independent sources" if adversarial else "mechanical"
     con.print(Text(_printable(
         f"created {p.root}\n"
