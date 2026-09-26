@@ -2609,10 +2609,14 @@ def _toml_string(value: str) -> str:
 
 def _unwritable(what: str, value: str) -> str:
     """A refusal for a value `new` or `ask` can't write into a file as the user sees it, else "":
-    one holding a character `_printable()` would escape. A control character is invalid TOML,
-    and an undecodable byte from argv (a lone surrogate) can't be written at all. Whether a
-    value can go into a printed command is another question, `queries.unprintable()`'s."""
-    if _printable(value) != value:
+    one holding a control character, which TOML can't hold, or a lone surrogate (an undecodable
+    byte from argv), which no UTF-8 file can. A format character is written as it is: a
+    zero-width non-joiner belongs in many names, TOML and JSON hold it, and it is printed
+    escaped. Whether a value can go into a printed command is another question,
+    `queries.unprintable()`'s."""
+    import unicodedata
+
+    if any(unicodedata.category(ch) in ("Cc", "Cs") for ch in value):
         return f"{what} holds a character that can't be written as it is: {_printable(value)}"
     return ""
 
@@ -2636,12 +2640,12 @@ def _sources_or_refuse(source: list[str] | None) -> list[str]:
 
 def _cache_setting(cache: str | None, default: str, root: Path) -> str:
     """What the project file's `cache` says: `default` when `--cache` isn't given, else the
-    directory `--cache` names. Given, it is read as every command's `--cache` is, from the
-    working directory, and written relative to the project file, which is how the file reads
+    directory `--cache` names. Given, it is read as every command's `--cache` is, by the OS from
+    the working directory, and written relative to the project file, which is how the file reads
     it. Written as typed, `--cache shared` from the directory holding several asks would have
     named a cache inside each one. Worked out on resolved paths, since `..` from a directory
-    reached through a symlink climbs out of its target. A path from ~ or from / is written as
-    given."""
+    reached through a symlink climbs out of its target, and never folded as text against $PWD,
+    which climbs out of the link instead. A path from ~ or from / is written as given."""
     import os
 
     if cache is None:
@@ -2653,7 +2657,7 @@ def _cache_setting(cache: str | None, default: str, root: Path) -> str:
     if cache.startswith("~") or os.path.isabs(cache):
         return cache
     try:
-        return os.path.relpath(proj.absolute(Path(cache)).resolve(), root.resolve())
+        return os.path.relpath(Path(cache).resolve(), root.resolve())
     except (RuntimeError, OSError) as e:
         # A symlink loop, which resolve() raises on: refused, never a traceback.
         _refuse(f"--cache {cache} can't be resolved from {root}: {e}")
@@ -2693,14 +2697,20 @@ def _install(path: Path, body: str) -> tuple[int, int]:
     so a retry compares it equal, and a CRLF template stays one.
 
     Returns the file's identity (device, inode), taken from the file this run wrote, so a
-    cleanup can tell it from one another process put in its place."""
+    cleanup can tell it from one another process put in its place.
+
+    Given the mode the umask gives any new file: mkstemp makes its file 0600, which, linked into
+    place, left a project only its creator could read."""
     import errno
     import os
     import tempfile
 
     data = body.encode("utf-8")
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    mask = os.umask(0)
+    os.umask(mask)
     try:
+        os.fchmod(fd, 0o666 & ~mask)
         with os.fdopen(fd, "wb") as f:
             f.write(data)
             f.flush()
@@ -2732,6 +2742,24 @@ def _install(path: Path, body: str) -> tuple[int, int]:
     return st.st_dev, st.st_ino
 
 
+def _fsync_dir(d: Path) -> None:
+    """Make `d`'s entries durable, where the platform allows it: a file fsynced is not yet a
+    file linked, and after a power loss an entry linked later could survive one linked
+    earlier."""
+    import os
+
+    try:
+        fd = os.open(d, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
 def _refuse_run_files(root: Path, held: list[str]) -> NoReturn:
     # A run's own files: a project from before project files, or a cache. Writing a project
     # file beside them would adopt them, which is a reviewed change, not a command's.
@@ -2741,12 +2769,22 @@ def _refuse_run_files(root: Path, held: list[str]) -> NoReturn:
             f"old way\").")
 
 
+# What a run leaves that nothing else would: a question set, claims, verdicts, archive records,
+# and a page cache or CAL-ACCESS database (cache/ holding pages/ or calaccess/). Not every name a
+# run keeps: an ordinary repository has an out/ or a cache/ of its own, which is no run to adopt.
+_RUN_FILES = ("archives.json", "claims", "claims-archive", "judgments", "judgments-archive",
+              "judgments-backup", "judgments-backup.partial", "judgments-backup.discard",
+              "questions.json")
+
+
 def _run_files(root: Path, ours=()) -> list[str]:
-    """The names a run keeps its own files under that `root` holds, but for `ours`."""
+    """The run files (`_RUN_FILES`, and a provenance cache) that `root` holds, but for `ours`."""
     import os
 
-    return sorted(n for n in proj.RESERVED - {proj.FILE} - set(ours)
-                  if os.path.lexists(root / n))
+    held = [n for n in _RUN_FILES if n not in ours and os.path.lexists(root / n)]
+    if any(os.path.lexists(root / "cache" / d) for d in ("pages", "calaccess")):
+        held.append("cache")
+    return sorted(held)
 
 
 def _scaffold(root: Path, name: str, sources: list[str], cache: str, files: dict[str, str],
@@ -2810,6 +2848,8 @@ def _scaffold(root: Path, name: str, sources: list[str], cache: str, files: dict
                 _refuse(f"could not create {root}: {e}")
     for rel, body in {**files, proj.FILE: text}.items():
         path = root / rel
+        if rel == proj.FILE:
+            _fsync_dir(root)   # everything else is on disk before the project file is
         try:
             written.append((path, _install(path, body)))
         except FileExistsError:
@@ -2820,6 +2860,7 @@ def _scaffold(root: Path, name: str, sources: list[str], cache: str, files: dict
         except OSError as e:
             undo()
             _refuse(f"could not write {path}: {e}. Nothing was written.")
+    _fsync_dir(root)
     if held := _run_files(root, files):
         undo()
         _refuse_run_files(root, held)
@@ -2879,7 +2920,8 @@ def new(directory: Annotated[Path, typer.Argument(
     try:
         # Decoded from its bytes, not read as text, which folds CRLF into LF: the copy would
         # then differ from --from, and a retry would refuse it as not the template given.
-        template = from_.read_bytes().decode("utf-8")
+        raw = from_.read_bytes()
+        template = raw.decode("utf-8")
     except (OSError, UnicodeDecodeError) as e:
         _refuse(f"--from {from_} can't be read as a template: {e}")
     if not template.strip():
@@ -2900,7 +2942,8 @@ def new(directory: Annotated[Path, typer.Argument(
     keep = False
     if os.path.lexists(dest):
         try:
-            keep = os.path.samefile(dest, from_) or dest.read_bytes() == from_.read_bytes()
+            # Against the bytes read once above, which are what would be installed.
+            keep = os.path.samefile(dest, from_) or dest.read_bytes() == raw
         except OSError:
             keep = False
         if not keep:
@@ -2920,15 +2963,17 @@ def new(directory: Annotated[Path, typer.Argument(
         f"  {_hand_off(p.root, SKILL)}", lines=True)), soft_wrap=True)
 
 
-def _ask_dir(question: str) -> Path | None:
+def _ask_dir(question: str, adversarial: bool = False) -> Path | None:
     """`ask-<the question's first distinctive words>-<a hash of it>`, in the working directory:
     the words every such question shares (`_ASK_FILLER`) are left out. A possessive `'s` is
     dropped, with a straight or a curly apostrophe (before folding, which drops the curly one
     and left "countys"), accents are folded, and anything else outside [a-z0-9] separates
     words, so the name is plain on any disk. The words are cut short, and two questions can
     share them: the hash keeps the directory, and the project's name with it, one question's.
-    The same question asked again gets the same directory, and is refused. None for a question
-    with no such word: it has no default, and `provenance ask` asks for `--dir`."""
+    The same question asked again gets the same directory, and is refused. Asked again as
+    adversarial, it is another project, since the skill hands back just that command when a
+    question should have been. None for a question with no such word: it has no default, and
+    `provenance ask` asks for `--dir`."""
     import hashlib
     import unicodedata
 
@@ -2936,7 +2981,8 @@ def _ask_dir(question: str) -> Path | None:
     folded = unicodedata.normalize("NFKD", unpossessed).encode("ascii", "ignore").decode().lower()
     words = [w for w in re.findall(r"[a-z0-9]+", folded) if w not in _ASK_FILLER]
     slug = "-".join(words[:6])[:48].rstrip("-")
-    digest = hashlib.sha256(question.encode()).hexdigest()[:16]
+    asked = question + ("\0adversarial" if adversarial else "")
+    digest = hashlib.sha256(asked.encode()).hexdigest()[:16]
     return Path(f"ask-{slug}-{digest}") if slug else None
 
 
@@ -2975,7 +3021,7 @@ def ask(question: Annotated[str, typer.Argument(
         _refuse("the question is empty")
     if problem := _unwritable("the question", question):
         _refuse(problem)
-    where = dir_ if dir_ is not None else _ask_dir(question)
+    where = dir_ if dir_ is not None else _ask_dir(question, adversarial)
     if where is None:
         _refuse("no directory name can be made from the question's words: pass --dir")
     root = proj.absolute(where)

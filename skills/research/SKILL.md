@@ -56,9 +56,10 @@ questions, its researchers and verifiers get `provenance brief --subject <id>`, 
 command after that takes `--subject <id>`. With no `subjects`, the root is the only run.
 
 **`provenance ask "<question>" --source <list>`** creates a new project holding one question,
-`q1`, in `questions.json`, with no template. Its hand-off invokes this skill with `ask`. A
-project with a `questions.json` and no `template.md` is one too. For it, skip Phase 0, and
-check two things before any researcher runs:
+`q1`, in `questions.json`, with no template. Its hand-off invokes this skill with `ask`.
+Without that argument, a project whose `questions.json` holds only `q1`, with no
+`template.md`, is one too. For it, skip Phase 0, and check two things before any researcher
+runs:
 - **The question asks what the record shows.** One that names the answer it expects ("confirm
   that…") gets that answer back, and nothing else surfaces. Propose a rewording that asks what
   the record shows.

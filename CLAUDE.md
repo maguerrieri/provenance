@@ -1322,7 +1322,8 @@ Four review rounds on #10 turned up the ways a scaffold breaks that promise, eac
   this run made, and only files that are still the ones it installed (same inode). A parent that
   turns up as a symlink meanwhile is refused, not followed.
 - **An interrupted run must leave no project.** Each file is written beside its name, fsynced
-  and hard-linked into place (`_install()`), and the project file goes last. A partial
+  and hard-linked into place (`_install()`), and the project file goes last, after a directory
+  fsync, so the order survives a power loss too. A partial
   `provenance.toml` would be read as the project, and a partial template refuses the retry.
 - **The path as given, not the one it resolves to.** A symlinked target would write through into
   another project's subject, so it is refused. A symlinked ancestor is fine, because the parent's
