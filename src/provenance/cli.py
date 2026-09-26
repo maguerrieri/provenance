@@ -1920,6 +1920,21 @@ def source_access(host: str = typer.Argument(""), run_recipe: str = "",
         _print_copied(resp.text, 1500)   # fetched, and copied from
 
 
+def _registry_entry(host: str) -> Path:
+    """The registry file for `host`, which comes from an agent's argument or a pasted URL. Both
+    commands that write the registry join it here, and nowhere else: a "/" or ".." in it (a
+    "\\" on Windows, where a URL's hostname can hold one) names a file outside the registry,
+    which would be read, printed and rewritten, so it is refused before anything is read."""
+    from . import access
+
+    path = access.REGISTRY / f"{host}.yaml"
+    if path.parent != access.REGISTRY:
+        con.print(Text(f"refused: {_printable(host)} is not a host name, so it names no "
+                       f"registry entry", style="red"), soft_wrap=True)
+        raise typer.Exit(1)
+    return path
+
+
 def _registry_write_refused(dest: Path, text: str) -> NoReturn:
     """Print the entry instead of writing it, in an installed copy: the registry ships inside
     the package there, and the next install would delete the file (access.installed_copy()).
@@ -1948,13 +1963,7 @@ def source_note(host: str, note: str, access: str = "", verified: str = ""):
     """
     from . import access as access_mod
 
-    entry_path = access_mod.REGISTRY / f"{access_mod._norm_host(host)}.yaml"
-    if entry_path.parent != access_mod.REGISTRY:
-        # A "/" or ".." in the host names a file outside the registry, which would be read,
-        # printed and rewritten. Refused before anything reads it.
-        con.print(Text(f"refused: {_printable(host)} is not a host name, so it names no "
-                       f"registry entry", style="red"), soft_wrap=True)
-        raise typer.Exit(1)
+    entry_path = _registry_entry(access_mod._norm_host(host))
     if entry_path.exists():
         data = yaml.safe_load(entry_path.read_text()) or {}
     else:
@@ -2004,7 +2013,7 @@ def source_import_curl(path: Path, name: str = "", write: bool = True):
                   f"{escape(_printable(', '.join(unknown)))}"
                   f" — if the endpoint needs one and it is not a credential, add it by hand")
 
-    dest = access.REGISTRY / f"{entry['host']}.yaml"
+    dest = _registry_entry(entry["host"])
     text = yaml.safe_dump(entry, sort_keys=False, allow_unicode=True, width=100)
     # The entry is the pasted request, and YAML to be copied into a file: allow_unicode leaves a
     # bidi override or NEL in it as it was pasted.

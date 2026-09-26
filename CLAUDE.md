@@ -1203,7 +1203,11 @@ has an entry, the printed one is the install's copy with the change applied, so 
 to merge it by hand, not replace the repo's newer file. Printing also made `source-note`'s host a
 way to read files: the host is joined into a file name, and one holding `/` or `..` named a YAML
 file outside the registry, printed whole. It is refused before anything is read (a checkout
-rewrote that file). A registry of a project's own, layered over the shipped one, is #165.
+rewrote that file). Both writers join a host through `cli._registry_entry()`, which does the
+check, since the import's host is a URL's hostname, and on Windows that can hold a `\`. A
+symlink placed inside the registry is not checked: placing one takes write access to the
+registry, which already reaches its target. A registry of a project's own, layered over the
+shipped one, is #165.
 
 **Credentials never enter the registry.** The importer drops session headers and `run()`
 refuses a recipe carrying them, because an endpoint that only works with someone's session is

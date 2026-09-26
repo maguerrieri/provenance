@@ -138,6 +138,24 @@ def test_a_host_that_is_a_path_names_no_entry(installed, tmp_path, host):
         assert outside.read_text() == "secret: canary-value\n"
 
 
+@pytest.mark.parametrize("installed_copy", [True, False])
+def test_an_imported_host_that_is_a_path_names_no_entry(installed, tmp_path, monkeypatch,
+                                                        installed_copy):
+    """The import joins the URL's hostname into a file name too. On POSIX a hostname can't hold
+    a "/", but on Windows `urlsplit('https://..\\outside/').hostname` is `..\\outside`, a path.
+    Both commands go through one checked join, so a hostname that is a path is refused there."""
+    monkeypatch.setattr(access, "installed_copy", lambda: installed_copy)
+    monkeypatch.setattr(access, "parse_curl", lambda text: {
+        "entry": {"host": "../outside", "name": "", "recipes": []},
+        "dropped_credentials": [], "dropped_headers": []})
+    paste = tmp_path / "paste.txt"
+    paste.write_text(f"curl '{URL}'\n")
+    r = CliRunner().invoke(cli.app, ["source-import-curl", str(paste)], terminal_width=200)
+    assert r.exit_code == 1, r.output
+    assert "is not a host name" in r.output
+    assert not (tmp_path / "outside.yaml").exists() and not installed.exists()
+
+
 def test_an_installed_copy_prints_an_import_instead_of_writing_it(installed, tmp_path):
     paste = tmp_path / "paste.txt"
     paste.write_text(f"curl '{URL}' -H 'X-CSRF-Token: fake session value' -H 'accept: */*'\n")
