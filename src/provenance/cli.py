@@ -2565,7 +2565,7 @@ def new_candidate():
 # The plugin's orchestration skill, as it is invoked in Claude Code: what `provenance new` and
 # `provenance ask` hand a project to. tests/test_new_and_ask.py holds it to a skill the plugin
 # ships, so renaming the skill fails there until this follows.
-SKILL = "/provenance:voter-guide-research"
+SKILL = "/provenance:research"
 # Where `provenance ask` keeps its pages unless told otherwise: one cache for every scratch
 # project, so asking again does not fetch again. Written into each project file as it is here,
 # so it is declared there, never inferred.
