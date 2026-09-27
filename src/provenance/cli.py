@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
-from typing import Annotated, NoReturn
+from typing import TYPE_CHECKING, Annotated, NoReturn
 
 import typer
 from rich.console import Console
@@ -62,6 +62,9 @@ from .verify import (
     verify_against_archive,
     verify_source,
 )
+
+if TYPE_CHECKING:
+    from .questions import QuestionSet
 
 app = typer.Typer(add_completion=False, help="Cited-research pipeline")
 # No emoji: escape() leaves ":ok:" alone, so claim text, notes and filer names would print with
@@ -870,11 +873,13 @@ def _no_own_set(p: proj.Project, run: Path) -> str:
             f"instead: each is worded for its own subject. {fix[0].upper()}{fix[1:]}.")
 
 
-def _question_ids(data: Path, claims: list[Claim], p: proj.Project) -> set[str] | None:
+def _question_ids(data: Path, claims: list[Claim],
+                  p: proj.Project) -> tuple[set[str], QuestionSet | None] | None:
     """Check every claim against the question its id names in the run's questions.json, and
     print what breaks the stable-id rule (CLAUDE.md, "Question ids are stable and never
-    reused"). Returns the ids of the claims that break it, or None when the question set can't
-    be read, so that no claim could be checked.
+    reused"). Returns the ids of the claims that break it, with the set they were checked
+    against (None where the run has none), or None when the question set can't be read, so
+    that no claim could be checked.
 
     `provenance build` never read questions.json, so a claim on a retired id rendered beside its
     replacement, and one on a reworded or reused id rendered under the new question, while every
@@ -889,9 +894,10 @@ def _question_ids(data: Path, claims: list[Claim], p: proj.Project) -> set[str] 
     if path is None:
         con.print("[yellow]" + escape(_printable(f"no {questions.FILE} in {data}"))
                   + ", so no claim was checked against the question its id names[/]")
-        return set()
+        return set(), None
     try:
-        found = questions.check(claims, questions.load(path))
+        qset = questions.load(path)
+        found = questions.check(claims, qset)
     except questions.UnreadableQuestions as e:
         # Escaped: it quotes the file's own ids.
         con.print(f"[red]{escape(_printable(str(e), lines=True))}[/]")
@@ -938,7 +944,7 @@ def _question_ids(data: Path, claims: list[Claim], p: proj.Project) -> set[str] 
             con.print(Text(f"  {qid}: the claim answers {answered!r}\n"
                            f"  {' ' * len(qid)}  {questions.FILE} asks {asked!r}"),
                       soft_wrap=True)
-    return found.failing
+    return found.failing, qset
 
 
 def _left_out(failing: set[str], where: str) -> None:
@@ -991,11 +997,12 @@ def build(data: Path = None, cache: Path = None, title: str = "", project: Path 
     # reproduced from the cached page, and replaces every support verdict with the recorded
     # one (or `unreviewed`).
     claims = _load_or_exit(data / "claims", trust_machine_fields=True)
-    failing = _question_ids(data, claims, p)
-    if failing is None:
+    checked = _question_ids(data, claims, p)
+    if checked is None:
         con.print("[red]review app not rendered: no claim can be checked against a question set "
                   "that can't be read, or that the run does not have.[/]")
         raise typer.Exit(1)
+    failing, qset = checked
     # Left out before anything reads them: rendered, such a claim reads as an answer to a
     # question the run does not ask, or to one it was never researched for. The rest still
     # render, as load_claims() skips an unreadable claim: one mis-filed claim must not cost the
@@ -1016,8 +1023,9 @@ def build(data: Path = None, cache: Path = None, title: str = "", project: Path 
             con.print("[yellow]judgments are newer than the claim files: run `provenance verify` first, "
                       "or recent verdicts will render as unreviewed[/]")   # verdicts live outside the claim file; merge them in
     _report_older_exports(claims, cache_root, recorded)
+    # The set gives the page its tabs: one per question, in the file's order, grouped by parent.
     html, js = render(claims, data / "out", title=title, cache_root=cache_root, rules=rules,
-                      store=store_id(p.name, sid))
+                      store=store_id(p.name, sid), questions=qset)
     con.print(f"[green]wrote[/] {escape(_printable(str(html)))}\n"
               f"[green]wrote[/] {escape(_printable(str(js)))}")
     if failing:
@@ -3068,9 +3076,10 @@ def status(data: Path = None, cache: Path = None, project: Path = None, subject:
     claims = _load_or_exit(data / "claims", trust_machine_fields=True)
     # Even with no claims: a pending maps_from, or a question set nothing can read, is worth
     # settling before anyone researches on those ids.
-    failing = _question_ids(data, claims, p)
-    if failing is None:
+    checked = _question_ids(data, claims, p)
+    if checked is None:
         raise typer.Exit(1)   # as build renders nothing: no claim could be checked
+    failing, _ = checked
     if not claims:
         con.print("No claims yet.")
         return

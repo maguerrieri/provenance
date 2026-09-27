@@ -6,18 +6,22 @@ import hashlib
 import json
 import os
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from html import escape
 from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 from jinja2 import Environment, FileSystemLoader
 from markupsafe import Markup
 
 from . import queries
 from .models import QID_PATTERN, Claim, Source
+
+if TYPE_CHECKING:
+    from .questions import QuestionSet
 from .sources import ARGUED, TIER_LABEL, bare_host, domain, tier, why_not_nameable
 from .verify import secondary_host, unacked_copy
 
@@ -147,6 +151,79 @@ def review_fingerprint(claim: Claim, source: Source) -> str:
     return fp
 
 
+# How much of an answer the overview shows for a claim with no summary.
+OVERVIEW_CHARS = 200
+
+
+def overview_text(claim) -> tuple[str, bool]:
+    """What the overview's row for a claim says it answers, and whether that is its summary.
+
+    The claim's one-sentence summary where it has one (#204). Otherwise the start of its
+    answer, cut at a word and marked as cut: the overview is one row per question, and an
+    answer can run to several paragraphs. Display only, and autoescaped like the rest."""
+    if summary := " ".join(str(getattr(claim, "summary", None) or "").split()):
+        return summary, True
+    text = " ".join(claim.answer.split())
+    if len(text) <= OVERVIEW_CHARS:
+        return text, False
+    cut = text[:OVERVIEW_CHARS]
+    if " " in cut[OVERVIEW_CHARS // 2:]:
+        cut = cut.rsplit(" ", 1)[0]
+    return cut.rstrip() + "…", False
+
+
+def tab_groups(claims: list, questions: QuestionSet | None) -> list[SimpleNamespace]:
+    """The review page's question tabs, in groups. A group is one question, or the questions
+    one template question was split into (their shared `parent`), where there are several:
+    shown together, where the first of them is. In the question set's order, so the page reads
+    as the run's questions do, and a question with no claim yet still has its tab. A claim the
+    set does not list (render() gets one only where the run has no set) follows, in id order.
+
+    `claims` are the page's claim views; each tab holds those on its id. Only one claim can sit
+    on an id on disk, but nothing here drops a second."""
+    from .cli import qid_sort_key
+
+    by_id: dict[str, list] = defaultdict(list)
+    for c in claims:
+        by_id[c.question_id].append(c)
+    listed = questions.text if questions else {}
+    parents = questions.parent if questions else {}
+
+    def tab(qid: str, asked: str) -> SimpleNamespace:
+        held = by_id.get(qid, [])
+        # The claim's own wording where it has one: the question the researcher answered,
+        # which the gate has checked against the set's.
+        return SimpleNamespace(qid=qid, question=held[0].question if held else asked,
+                               claims=held)
+
+    groups: list[SimpleNamespace] = []
+    by_parent: dict[str, SimpleNamespace] = {}
+    for qid, asked in listed.items():
+        label = parents.get(qid)
+        if label is None:
+            groups.append(SimpleNamespace(label=None, tabs=[tab(qid, asked)]))
+        elif label in by_parent:
+            by_parent[label].tabs.append(tab(qid, asked))
+        else:
+            by_parent[label] = SimpleNamespace(label=label, tabs=[tab(qid, asked)])
+            groups.append(by_parent[label])
+    for qid in sorted(by_id.keys() - listed.keys(), key=qid_sort_key):
+        groups.append(SimpleNamespace(label=None, tabs=[tab(qid, "")]))
+    for g in groups:
+        if len(g.tabs) == 1:
+            g.label = None   # a question split from nothing else is a tab of its own
+    return groups
+
+
+def conflict_views(c: Claim, holders: dict[str, list[str]]) -> list[SimpleNamespace]:
+    """A claim's conflict lines, each with the other claims that list the same line.
+    `conflicts.detect()` gives every claim in a cross-claim conflict the same line, so a line
+    two claims share is between them, and each claim's tab links to the other's. `holders` is
+    every claim's id by the lines it lists, in the page's id order."""
+    return [SimpleNamespace(text=line, also=[q for q in holders[line] if q != c.question_id])
+            for line in c.conflicts]
+
+
 def context_html(claim_source) -> Markup | None:
     v = claim_source.verification
     if not v.context or not v.context_offset:
@@ -176,7 +253,8 @@ def query_provenance(claim_source) -> str:
 def render(claims: list[Claim], out_dir: Path, *, title: str = "citation review",
            cache_root: Path | None = None,
            rules: dict[str, tuple[str, ...]],
-           store: str) -> tuple[Path, Path]:
+           store: str,
+           questions: QuestionSet | None = None) -> tuple[Path, Path]:
     """`cache_root` is the root this build resolved: the `--cache` for a query row that carries
     no stamp of its own (one build did not re-run, whose file stamp revalidation dropped).
     `rules` are the project's (`Project.rules()`: its source lists and its `primary_hosts`),
@@ -184,7 +262,9 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "citation review"
     is each row's tier. Required:
     defaulted to `us`, every regional outlet showed as an unlisted one beside a status that
     counted it as reporting. `store` is the run's `store_id()`:
-    required, since a default would be one store every caller that forgot it shared."""
+    required, since a default would be one store every caller that forgot it shared.
+    `questions` is the set the claims were checked against, which orders and groups the page's
+    tabs (`tab_groups()`); without one, there is a tab per claim, in id order."""
     from .cli import qid_sort_key
 
     claims = sorted(claims, key=lambda c: qid_sort_key(c.question_id))
@@ -227,6 +307,11 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "citation review"
                 query_provenance=query_provenance(s)))
         return views
 
+    holders: dict[str, list[str]] = defaultdict(list)
+    for c in claims:
+        for line in dict.fromkeys(c.conflicts):
+            holders[line].append(c.question_id)
+
     # Build explicit view objects rather than writing render-only attributes onto the
     # models: assigning into a pydantic instance's __dict__ shadows computed properties
     # like Source.sid and leaves the model in a state nothing else can trust.
@@ -235,15 +320,17 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "citation review"
             question_id=c.question_id, question=c.question, answer=c.answer,
             claim_type=c.claim_type, confidence=c.confidence, status=c.status,
             corroboration_ok=c.corroboration_ok, corroboration_note=c.corroboration_note,
-            conflicts=c.conflicts, sources=source_views(c),
+            conflicts=conflict_views(c, holders), sources=source_views(c),
             # The researcher's caveats for the person checking this claim: a scan to read by
             # eye, a filing that may not be the newest, a figure a query would not settle.
             # Agent-authored, so autoescaped like the rest. What is shown is what a check
             # covers (review_fingerprint), so both read it through shown_notes().
             notes=shown_notes(c),
+            overview=overview_text(c),
         )
         for c in claims
     ]
+    groups = tab_groups(view, questions)
 
     # Keyed by the project and subject (store_id), NOT by a hash of the question set. Checks
     # carry stable fingerprints (review_fingerprint) and flags stable source ids, so keying
@@ -257,6 +344,7 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "citation review"
 
     html = tpl.render(
         claims=view,
+        groups=groups,
         title=title,
         run_id=titled,
         store_id=store,
@@ -264,10 +352,7 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "citation review"
         generated=datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC"),
         n_sources=sum(len(c.sources) for c in claims),
         status_counts=dict(Counter(c.status for c in claims).most_common()),
-        conflict_claims=[c for c in claims if c.conflicts],
-        # By settled status, not confidence: a not_found claim carrying a broken citation is
-        # human_review, and must not be listed under "deliberate, not failure".
-        not_found_claims=[c for c in claims if c.status == "not_found"],
+        conflict_claims=[c for c in view if c.conflicts],
     )
 
     json_path = out_dir / CLAIMS_JSON

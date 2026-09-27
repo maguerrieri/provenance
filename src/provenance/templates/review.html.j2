@@ -16,8 +16,36 @@ h1{font-size:20px;margin:0 0 4px}
 .sub{color:var(--mut);font-size:13px;margin-bottom:14px}
 .notice{background:color-mix(in srgb,var(--acc) 12%,transparent);border-left:3px solid var(--acc);
 padding:10px 12px;border-radius:6px;font-size:13.5px;margin-bottom:16px}
-.bar{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);
-padding:10px 0;margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);
+margin-bottom:14px}
+.tabs{display:flex;gap:5px;flex-wrap:wrap;align-items:center;padding-top:10px}
+.tlink{font-size:13px;text-decoration:none;color:var(--fg);background:var(--card);
+border:1px solid var(--line);border-radius:6px;padding:2px 8px;white-space:nowrap}
+.tlink:hover{border-color:var(--acc)}
+.tlink.cur{border-color:var(--acc);box-shadow:inset 0 -2px 0 var(--acc)}
+.tlink.review{border-left:3px solid var(--bad)}
+.tlink.done{color:var(--mut)}
+.tlink.dim{opacity:.45}
+.tcount{color:var(--mut);font-size:11.5px}
+.tgroup{display:inline-flex;gap:4px;flex-wrap:wrap;align-items:center;max-width:100%;
+border:1px dashed var(--line);border-radius:8px;padding:2px 4px}
+.glabel{font-size:11.5px;color:var(--mut);max-width:16em;overflow:hidden;text-overflow:ellipsis;
+white-space:nowrap}
+.bar{padding:10px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.qhead{font-size:16px;font-weight:600;margin:0 0 10px;overflow-wrap:anywhere}
+.qhead .glabel{display:block;max-width:none;white-space:normal;font-weight:400}
+.ov{display:flex;flex-direction:column;gap:6px}
+.ogroup{border:1px dashed var(--line);border-radius:10px;padding:6px 8px;display:flex;
+flex-direction:column;gap:6px}
+.ogroup>.glabel{max-width:none;white-space:normal}
+.orow{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 11px}
+.orow .ohead{display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:13.5px}
+.orow .ohead a{color:var(--info);font-weight:600}
+.orow .oq{color:var(--mut);font-size:12.5px;margin:2px 0;overflow-wrap:anywhere}
+.orow .osum{font-size:14px;overflow-wrap:anywhere}
+.orow .osum.start{color:var(--mut)}
+.oprog{font-size:12.5px;color:var(--mut);margin-left:auto}
+.conf a,.also a{color:inherit;font-weight:600}
 button,select{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);
 border-radius:6px;padding:4px 9px;cursor:pointer}
 button:hover{border-color:var(--acc)}
@@ -70,29 +98,30 @@ rows the live page is paywalled and the quote was confirmed in the snapshot — 
 archive link, not ⌘F on the live page.
 The pipeline already checked every snippet is present <i>exactly once</i>; your job is the judgment half.
 <div style="margin-top:6px;color:var(--mut)">
-<kbd>j</kbd>/<kbd>k</kbd> move · <kbd>space</kbd> check · <kbd>f</kbd> flag · <kbd>o</kbd> open source · <kbd>a</kbd> open archive · <kbd>c</kbd> copy snippet</div>
+<kbd>j</kbd>/<kbd>k</kbd> move · <kbd>space</kbd> check · <kbd>f</kbd> flag · <kbd>o</kbd> open source · <kbd>a</kbd> open archive · <kbd>c</kbd> copy snippet · <kbd>[</kbd>/<kbd>]</kbd> previous/next question</div>
 </div>
 <div id="migrated" class="notice hidden"><span id="migrated-text"></span>
 <button id="dismiss">dismiss</button></div>
+<div id="lost" class="notice hidden"></div>
 
-<div class="counts">
-{% for k, v in status_counts.items() %}<span>{{ k }}: <b>{{ v }}</b></span>{% endfor %}
-</div>
+{#- A claim's status as a badge's colour. -#}
+{% macro status_class(s) -%}
+{{ 'ok' if s in ('verified', 'verified_via_archive')
+   else ('warn' if s in ('could_not_verify_paywall', 'pending')
+         else ('mut' if s == 'not_found' else 'bad')) }}
+{%- endmacro %}
 
-{% if conflict_claims %}
-<details class="section" open><summary style="color:var(--bad)">⚠ Conflicts ({{ conflict_claims|length }}) — most valuable output; resolve these first</summary>
-{% for c in conflict_claims %}<div class="conf"><b>{{ c.question_id }}</b> {{ c.question }}
-{% for x in c.conflicts %}<div>· {{ x }}</div>{% endfor %}</div>{% endfor %}
-</details>
-{% endif %}
-
-{% if not_found_claims %}
-<details class="section"><summary>No source found ({{ not_found_claims|length }}) — deliberate, not failure</summary>
-{% for c in not_found_claims %}<div style="margin:6px 0"><b>{{ c.question_id }}</b> {{ c.question }}
-<div style="color:var(--mut);font-size:13px">{{ c.answer }}</div></div>{% endfor %}
-</details>
-{% endif %}
-
+<div class="top">
+<nav class="tabs">
+  <a class="tlink" href="#overview" data-tab="">Overview</a>
+  {% for g in groups %}
+  {% if g.label is not none %}<span class="tgroup"><span class="glabel" title="{{ g.label }}">{{ g.label }}</span>{% endif %}
+  {% for q in g.tabs %}<a class="tlink{{ ' review' if q.claims and q.claims[0].status in ('human_review', 'pending') }}"
+     href="#q={{ q.qid }}" data-tab="{{ q.qid }}" title="{{ q.question }}">{{ q.qid }} <span class="tcount"></span></a>
+  {% endfor %}
+  {% if g.label is not none %}</span>{% endif %}
+  {% endfor %}
+</nav>
 <div class="bar">
   <select id="filter">
     <option value="all">All claims</option>
@@ -109,24 +138,61 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
   <button id="import">Import</button>
   <input type="file" id="file" class="hidden" accept="application/json">
 </div>
+</div>
 
-{% for c in claims %}
+{#- The overview, then a panel per question. Each is shown whole until the script picks one, so
+    a page read without it is the one list it always was. -#}
+<div class="tab" data-tab="">
+<div class="counts">
+{% for k, v in status_counts.items() %}<span>{{ k }}: <b>{{ v }}</b></span>{% endfor %}
+</div>
+
+{% if conflict_claims %}
+<details class="section" open><summary style="color:var(--bad)">⚠ Conflicts ({{ conflict_claims|length }}) — most valuable output; resolve these first</summary>
+{% for c in conflict_claims %}<div class="conf"><b><a href="#q={{ c.question_id }}">{{ c.question_id }}</a></b> {{ c.question }}
+{% for x in c.conflicts %}<div>· {{ x.text }}</div>{% endfor %}</div>{% endfor %}
+</details>
+{% endif %}
+
+<div class="ov">
+{% for g in groups %}
+{% if g.label is not none %}<div class="ogroup"><div class="glabel">{{ g.label }}</div>{% endif %}
+{% for q in g.tabs %}{% set c = q.claims[0] if q.claims else none %}
+<div class="orow" data-qid="{{ q.qid }}">
+  <div class="ohead"><a href="#q={{ q.qid }}">{{ q.qid }}</a>
+    {% if c %}<span class="b {{ status_class(c.status) }}">{{ c.status }}</span>
+    {% else %}<span class="b mut">no claim</span>{% endif %}
+    <span class="oprog"></span></div>
+  <div class="oq">{{ q.question }}</div>
+  {% if c %}<div class="osum{{ '' if c.overview[1] else ' start' }}">{{ c.overview[0] }}</div>{% endif %}
+</div>
+{% endfor %}
+{% if g.label is not none %}</div>{% endif %}
+{% endfor %}
+</div>
+</div>
+
+{% for g in groups %}{% for q in g.tabs %}
+<div class="tab" data-tab="{{ q.qid }}">
+<div class="qhead">{% if g.label is not none %}<span class="glabel">{{ g.label }}</span>{% endif %}{{ q.qid }} · {{ q.question }}</div>
+{% for c in q.claims %}
+{#- By settled status, not confidence: a not_found claim carrying a broken citation is
+    human_review, and must not read as "deliberate, not failure". -#}
+{% if c.status == 'not_found' %}<div class="notice">No source found — deliberate, not failure.</div>{% endif %}
 <div class="claim" data-qid="{{ c.question_id }}" data-type="{{ c.claim_type }}"
      data-status="{{ c.status }}" data-conflict="{{ 1 if c.conflicts else 0 }}"
      data-notes="{{ 1 if c.notes else 0 }}"
      data-paywall="{{ 1 if c.sources|selectattr('paywall')|list else 0 }}">
-  <div class="q">{{ c.question_id }} · {{ c.question }}</div>
   <div class="ans">{{ c.answer }}</div>
   <div class="badges">
     <span class="b {{ 'bad' if c.claim_type=='adversarial' else 'mut' }}">{{ c.claim_type }}</span>
-    <span class="b {{ 'ok' if c.status in ('verified', 'verified_via_archive')
-                       else ('warn' if c.status in ('could_not_verify_paywall', 'pending')
-                             else ('mut' if c.status == 'not_found' else 'bad')) }}">{{ c.status }}</span>
+    <span class="b {{ status_class(c.status) }}">{{ c.status }}</span>
     <span class="b {{ 'ok' if c.corroboration_ok is true else ('mut' if c.corroboration_ok is none else 'bad') }}">{{ c.corroboration_note or 'corroboration unchecked' }}</span>
     <span class="b mut">{{ c.confidence }}</span>
     {% if c.conflicts %}<span class="b bad">conflict</span>{% endif %}
   </div>
-  {% for x in c.conflicts %}<div class="conf">{{ x }}</div>{% endfor %}
+  {% for x in c.conflicts %}<div class="conf">{{ x.text }}{% if x.also %}
+    <span class="also">Also listed under {% for o in x.also %}<a href="#q={{ o }}">{{ o }}</a>{{ ', ' if not loop.last }}{% endfor %}.</span>{% endif %}</div>{% endfor %}
   <div class="meta nchanged hidden" style="color:var(--warn)">{% if c.notes %}You checked this
     claim's sources when the researcher's note below read differently, or before this page
     recorded notes with checks.{% else %}This claim had a researcher's note when you checked its
@@ -195,7 +261,13 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
   {% endfor %}
   {% if not c.sources %}<div class="meta">No sources.</div>{% endif %}
 </div>
+{% else %}
+<div class="meta">No claim for this question in this build: it has not been researched yet, or
+  <code>provenance build</code> left its claim out, and said why.</div>
 {% endfor %}
+<div class="meta nomatch hidden">Nothing under this question matches the filter.</div>
+</div>
+{% endfor %}{% endfor %}
 </div>
 
 <script>
@@ -272,6 +344,56 @@ function repoint(f){
   return byFp.has(f);
 }
 let cur = 0;
+
+// Tabs: the overview (data-tab "") and one per question, in the order the page lists them. The
+// URL's fragment names the one shown ("#q=<id>", or "#overview"), so a reload or a shared link
+// keeps it. Where it names none, the tab this viewer had open last is shown: a per-viewer
+// convenience under its own key (TAB), never read as progress and never exported with it.
+const TAB = "provenance:{{ store_id }}:tab";
+const panels = [...document.querySelectorAll('.tab')];
+const tabIds = panels.map(p => p.dataset.tab);
+const tlinks = new Map([...document.querySelectorAll('.tlink')].map(l => [l.dataset.tab, l]));
+const orows = new Map([...document.querySelectorAll('.orow')].map(r => [r.dataset.qid, r]));
+let curTab = '';
+function tabOf(el){ return el.closest('.tab').dataset.tab; }
+const claimed = new Set([...document.querySelectorAll('.claim')].map(tabOf));
+// The tab a fragment names, or null where it names none this page has.
+function hashed(){
+  const h = location.hash;
+  if (h === '#overview') return '';
+  if (!h.startsWith('#q=')) return null;
+  let id;
+  try { id = decodeURIComponent(h.slice(3)); } catch (e) { return null; }
+  return id && tabIds.includes(id) ? id : null;
+}
+function remembered(){
+  const id = stored(TAB);
+  return id !== null && tabIds.includes(id) ? id : '';
+}
+function show(id){
+  if (id !== curTab) window.scrollTo(0, 0);   // a tab opens at its top, not where the last one was
+  curTab = id;
+  for (const p of panels) p.classList.toggle('hidden', p.dataset.tab !== id);
+  for (const [t, l] of tlinks) l.classList.toggle('cur', t === id);
+  try { localStorage.setItem(TAB, id); } catch (e) {}
+  focus(false);
+}
+// Shows the tab the fragment names. A link naming a question this page does not have (a
+// question retired since it was shared) opens the overview, and says so, rather than another
+// question.
+function route(){
+  const id = hashed(), lost = id === null && location.hash.startsWith('#q=');
+  const note = document.getElementById('lost');
+  note.textContent = lost ? "This link names a question this page does not have: "
+    + location.hash.slice(3, 80) + ". Showing the overview instead." : "";
+  note.classList.toggle('hidden', !lost);
+  show(id !== null ? id : lost ? '' : remembered());
+}
+function openTab(id){
+  const h = id ? '#q=' + encodeURIComponent(id) : '#overview';
+  if (location.hash === h) route(); else location.hash = h;   // hashchange routes it
+}
+window.addEventListener('hashchange', route);
 
 // Progress can come from localStorage or from a file someone hands you, so coerce it into
 // a known shape rather than trusting it: null-prototype objects (a stored `__proto__` key
@@ -410,8 +532,12 @@ function render(){
   }
   const noteStale = el => !isChecked(el) && noteRows.has(el);
   let done = 0;
+  // Per question: its rows, how many are checked and flagged, and how many were checked
+  // before their claim or evidence changed and want checking again.
+  const tally = new Map(tabIds.map(t => [t, {rows: 0, ok: 0, flagged: 0, again: 0}]));
   for (const el of srcs){
     const a = ann(el), ok = isChecked(el);
+    const again = (!ok && changed.has(el)) || noteStale(el);
     el.querySelector('.cb').checked = ok;
     el.querySelector('.stale').classList.toggle('hidden', ok || !changed.has(el));
     el.querySelector('.nstale').classList.toggle('hidden', !noteStale(el));
@@ -421,6 +547,23 @@ function render(){
     if (document.activeElement !== n) n.value = a.note || "";
     n.classList.toggle('hidden', !a.flag && !a.note);
     if (ok) done++;
+    const t = tally.get(tabOf(el));
+    t.rows++; t.ok += ok; t.flagged += a.flag; t.again += again;
+  }
+  for (const [id, t] of tally){
+    if (!id) continue;
+    // The tab says what's left without opening it, and the overview says it in words.
+    const label = (t.rows ? t.ok + '/' + t.rows : '–') + (t.flagged ? ' ⚑' + t.flagged : '')
+      + (t.again ? ' ↻' + t.again : '');
+    const l = tlinks.get(id);
+    l.querySelector('.tcount').textContent = label;
+    l.classList.toggle('done', t.rows > 0 && t.ok === t.rows);
+    const words = t.rows ? [t.ok + ' of ' + t.rows + ' checked',
+                            t.rows - t.ok ? (t.rows - t.ok) + ' unchecked' : '',
+                            t.flagged ? t.flagged + ' flagged' : '',
+                            t.again ? t.again + ' to check again' : '']
+      : claimed.has(id) ? ['no sources'] : [];   // a question with no claim says so in its badge
+    orows.get(id).querySelector('.oprog').textContent = words.filter(Boolean).join(' · ');
   }
   for (const c of document.querySelectorAll('.claim')){
     const all = [...c.querySelectorAll('.src')];
@@ -457,7 +600,10 @@ document.addEventListener('click', e => {
   }
 });
 
-function visible(){ return srcs.filter(e => e.closest('.claim').style.display !== 'none'); }
+// The rows j/k move through: the shown tab's, as the filter leaves them.
+function visible(){
+  return srcs.filter(e => tabOf(e) === curTab && e.closest('.claim').style.display !== 'none');
+}
 function focus(scroll = true){
   srcs.forEach(e => e.classList.remove('sel'));
   const v = visible(); if (!v.length) return;
@@ -469,6 +615,13 @@ function focus(scroll = true){
 }
 document.addEventListener('keydown', e => {
   if (/input|textarea|select/i.test(e.target.tagName)) return;
+  // [ and ] switch tabs, the overview first. Not with a modifier: ⌘[ is the browser's Back.
+  if ((e.key === '[' || e.key === ']') && !(e.metaKey || e.ctrlKey || e.altKey)){
+    e.preventDefault();
+    const i = tabIds.indexOf(curTab) + (e.key === ']' ? 1 : -1);
+    openTab(tabIds[Math.max(0, Math.min(i, tabIds.length - 1))]);
+    return;
+  }
   const v = visible(); if (!v.length) return;
   const i = v.indexOf(srcs[cur]);
   const go = n => { cur = srcs.indexOf(v[Math.max(0, Math.min(n, v.length-1))]); focus(); };
@@ -494,6 +647,21 @@ document.getElementById('filter').addEventListener('change', e => {
     else if (f === 'notes') show = c.dataset.notes === '1';
     c.style.display = show ? '' : 'none';
   }
+  // Within each tab, and on the overview: a question with nothing the filter shows has its
+  // overview row hidden and its tab dimmed, and its panel says why it is empty. One with no
+  // claim shows only under "All claims".
+  for (const p of panels){
+    const id = p.dataset.tab;
+    if (!id) continue;
+    const cs = [...p.querySelectorAll('.claim')];
+    const any = f === 'all' || cs.some(c => c.style.display !== 'none');
+    p.querySelector('.nomatch').classList.toggle('hidden', any || !cs.length);
+    orows.get(id).classList.toggle('hidden', !any);
+    tlinks.get(id).classList.toggle('dim', !any);
+  }
+  for (const g of document.querySelectorAll('.ogroup')){
+    g.classList.toggle('hidden', [...g.querySelectorAll('.orow')].every(r => r.classList.contains('hidden')));
+  }
   focus(false);
 });
 
@@ -518,7 +686,7 @@ document.getElementById('file').addEventListener('change', async e => {
   catch (err) { alert('Bad progress file'); }
 });
 
-render(); focus(false);
+render(); route();
 </script>
 </body>
 </html>

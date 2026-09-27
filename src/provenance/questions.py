@@ -32,8 +32,11 @@ class UnreadableQuestions(ValueError):
 
 @dataclass
 class QuestionSet:
-    text: dict[str, str]        # id -> the question asked at it
+    text: dict[str, str]        # id -> the question asked at it, in the file's order
     maps_from: dict[str, str]   # id -> another id a `vg remap` migration declared it maps from
+    # id -> the template question it was split from, where it names one: the review page shows
+    # the questions one parent was split into as one group of tabs.
+    parent: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -71,7 +74,9 @@ def load(path: Path) -> QuestionSet:
     problem is named in one message, so a repair is not a loop of re-runs.
 
     Only what the gate reads is checked: each entry's id and text, and ids that can't name a
-    claim. A claim_type or rationale it doesn't read is not its to refuse."""
+    claim. A claim_type or rationale it doesn't read is not its to refuse. Nor is `parent`,
+    which only groups the review page's tabs: one that is not a name (text, or a number) groups
+    nothing, and its question shows as a tab of its own, where anyone can see it."""
     try:
         raw = json.loads(path.read_text())
     except (OSError, ValueError, RecursionError) as e:
@@ -80,6 +85,7 @@ def load(path: Path) -> QuestionSet:
         raise UnreadableQuestions(f"{path} is not a list of questions")
     text: dict[str, str] = {}
     maps_from: dict[str, str] = {}
+    parent: dict[str, str] = {}
     folded: dict[str, str] = {}   # casefolded id -> the id as first given
     problems: list[str] = []
     for i, q in enumerate(raw):
@@ -112,10 +118,15 @@ def load(path: Path) -> QuestionSet:
         # An identity pair only adopted a rewording, and moved nothing.
         if q.get("maps_from") not in (None, "", qid):
             maps_from[qid] = str(q["maps_from"])
+        # A bool is an int to Python, and names no question.
+        if isinstance(p := q.get("parent"), int) and not isinstance(p, bool):
+            p = str(p)
+        if isinstance(p, str) and p.strip():
+            parent[qid] = p.strip()
     if problems:
         raise UnreadableQuestions(f"{path} can't be read as one question per id: "
                                   + "; ".join(problems))
-    return QuestionSet(text, maps_from)
+    return QuestionSet(text, maps_from, parent)
 
 
 def same_question(a: str, b: str) -> bool:
