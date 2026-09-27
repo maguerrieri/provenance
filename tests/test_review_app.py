@@ -795,6 +795,8 @@ def test_the_page_opens_on_the_overview_and_the_fragment_names_the_tab(tmp_path)
 
     shared = run(tmp_path, claims, hash="#q=q2")
     assert shared["tab"] == "q2" and tabs(shared)["q2"]["cur"] and not tabs(shared)[""]["cur"]
+    # Said to a screen reader too, on the open tab alone.
+    assert [t["tab"] for t in shared["tabs"] if t["ariaCurrent"] == "true"] == ["q2"]
     assert [c["tab"] for c in shared["claims"]] == ["q1", "q2"]
 
     back = run(tmp_path, claims, hash="#q=q2", actions=[{"do": "nav", "hash": "#overview"}])

@@ -38,6 +38,7 @@ function matcher(sel) {
 class El {
   constructor(node, parent, doc) {
     this.tagName = node.tag.toUpperCase();
+    this.attrs = {...node.attrs};   // what setAttribute() changes; dataset is read once, below
     this.id = node.attrs.id || "";
     this.classList = new ClassList((node.attrs.class || "").split(/\s+/).filter(Boolean));
     this.dataset = {};
@@ -64,6 +65,8 @@ class El {
     return null;
   }
   addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+  setAttribute(k, v) { this.attrs[k] = String(v); }
+  removeAttribute(k) { delete this.attrs[k]; }
   focus() { this.doc.activeElement = this; }
   click() { this.doc.clicked.push(this); this.doc.dispatch("click", this); }
   scrollIntoView() {}
@@ -196,7 +199,8 @@ async function main() {
     tabs: doc.querySelectorAll(".tlink").map(l => ({
       tab: l.dataset.tab,
       count: (l.querySelector(".tcount") || {textContent: ""}).textContent,
-      cur: l.classList.contains("cur"), done: l.classList.contains("done"),
+      cur: l.classList.contains("cur"), ariaCurrent: l.attrs["aria-current"] || "",
+      done: l.classList.contains("done"),
       dim: l.classList.contains("dim"), review: l.classList.contains("review"),
     })),
     // The overview, a row per question: its progress in words, and whether the filter shows it.
