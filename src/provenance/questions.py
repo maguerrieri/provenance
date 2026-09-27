@@ -75,8 +75,9 @@ def load(path: Path) -> QuestionSet:
 
     Only what the gate reads is checked: each entry's id and text, and ids that can't name a
     claim. A claim_type or rationale it doesn't read is not its to refuse. Nor is `parent`,
-    which only groups the review page's tabs: one that is not a name (text, or a number) groups
-    nothing, and its question shows as a tab of its own, where anyone can see it."""
+    which only groups the review page's tabs: one that is not a name (text, or a whole number,
+    as a template's question numbers are) groups nothing, and its question shows as a tab of its
+    own, where anyone can see it. A float is not one: `3.0` and `3` would be two labels."""
     try:
         raw = json.loads(path.read_text())
     except (OSError, ValueError, RecursionError) as e:
