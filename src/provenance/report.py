@@ -157,17 +157,17 @@ def overview_text(claim) -> tuple[str, bool]:
     """What the overview's row for a claim says it answers, and whether that is its summary.
 
     The claim's one-sentence summary where it has one (#204). Otherwise the start of its
-    answer, cut at a word and marked as cut: the overview is one row per question, and an
-    answer can run to several paragraphs. Display only, and autoescaped like the rest."""
+    answer, cut between words and marked as cut: the overview is one row per question, and an
+    answer can run to several paragraphs. Only a first word longer than the whole cut is cut
+    inside itself. Display only, and autoescaped like the rest."""
     if summary := " ".join(str(getattr(claim, "summary", None) or "").split()):
         return summary, True
     text = " ".join(claim.answer.split())
     if len(text) <= OVERVIEW_CHARS:
         return text, False
-    cut = text[:OVERVIEW_CHARS]
-    if " " in cut[OVERVIEW_CHARS // 2:]:
-        cut = cut.rsplit(" ", 1)[0]
-    return cut.rstrip() + "…", False
+    cut = text[:OVERVIEW_CHARS + 1]   # one past, so a word ending at the limit is kept whole
+    cut = cut.rsplit(" ", 1)[0] if " " in cut else cut[:OVERVIEW_CHARS]
+    return cut + "…", False
 
 
 def tab_groups(claims: list, questions: QuestionSet | None) -> list[SimpleNamespace]:

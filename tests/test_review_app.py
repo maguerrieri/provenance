@@ -1028,6 +1028,14 @@ def test_the_overview_shows_a_summary_or_the_start_of_the_answer():
     text, is_summary = overview_text(long)
     assert not is_summary and text.endswith("…") and len(text) <= OVERVIEW_CHARS + 1
     assert long.answer.startswith(text[:-1] + " "), "cut between words, not inside one"
+    # Wherever the last space falls, even with one long word after a short one.
+    early = claim("q1", "See " + "x" * 300)
+    assert overview_text(early) == ("See…", False)
+    exact = claim("q1", "a" * (OVERVIEW_CHARS - 1) + "b more")
+    assert overview_text(exact) == ("a" * (OVERVIEW_CHARS - 1) + "b…", False), \
+        "a word ending at the limit is kept whole"
+    # Only a first word longer than the whole cut is cut inside itself.
+    assert overview_text(claim("q1", "y" * 300)) == ("y" * OVERVIEW_CHARS + "…", False)
     summed = SimpleNamespace(answer=long.answer, summary="The council approved it, 4-1.")
     assert overview_text(summed) == ("The council approved it, 4-1.", True)
     assert overview_text(SimpleNamespace(answer="A.", summary="  ")) == ("A.", False)
