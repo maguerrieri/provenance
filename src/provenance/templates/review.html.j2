@@ -115,7 +115,7 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
 {%- endmacro %}
 
 <div class="top">
-<nav class="tabs">
+<nav class="tabs" aria-label="Questions">
   {#- The conflicts are listed on the overview, and a reviewer can open another tab first, so
       the overview's label and each conflicted question's say so. -#}
   <a class="tlink" href="#overview" data-tab="">Overview{% if conflict_claims %}
@@ -387,7 +387,11 @@ function show(id, remember = true){
   curTab = id;
   if (selIn.has(id)) cur = selIn.get(id);
   for (const p of panels) p.classList.toggle('hidden', p.dataset.tab !== id);
-  for (const [t, l] of tlinks) l.classList.toggle('cur', t === id);
+  for (const [t, l] of tlinks){
+    l.classList.toggle('cur', t === id);
+    // Said to a screen reader as well as drawn: the open tab is the current one.
+    if (t === id) l.setAttribute('aria-current', 'true'); else l.removeAttribute('aria-current');
+  }
   if (remember) try { localStorage.setItem(TAB, id); } catch (e) {}
   focus(false);
 }
