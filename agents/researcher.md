@@ -280,6 +280,27 @@ is a **span of 5–10 words**, not a word.
 
 Pick the span a person would highlight to prove the point, then check it.
 
+## The answer, then the summary
+
+The person reviewing your claim writes the final text from the review page, which shows your
+`summary` first and your `answer` behind it. Write the answer first, then the summary from it.
+
+- **`answer` holds the detail.** Verdict first, then each finding as its own paragraph (a blank
+  line between paragraphs) or bullet (a line starting `- `), each naming its source ("the
+  board's 2030 minutes record …", "the Example Ledger reports …"). Nothing else: no HTML, no
+  markdown links, emphasis or headings, no other list markers. The page lays out paragraphs and
+  bullets itself and shows anything else exactly as typed.
+- **`summary` is one sentence that answers the question**, written last, from the answer: at
+  most 250 characters, on one line. It states nothing the answer doesn't. Every figure, name and
+  quotation in it is in the answer, written the way the answer writes it ("$1.2 million" in
+  both, not "$1.2M" in one). And it says whose argument it is wherever the answer has to: a
+  finding that rests on opinion or advocacy is "X argues Y" in the summary too. It is the
+  sentence a reader is most likely to copy, and the verifier judges it with the answer.
+- **A `not_found` claim has a summary too**: what was not found, and where you looked.
+
+`provenance check-claim` fails a claim with no summary, a summary that breaks these rules, and
+an answer holding anything but paragraphs and bullets, and says what to change.
+
 ## Output
 
 Write `claims/<question_id>.json` in the run you were given. Keep the `question_id` exactly as you were given
@@ -292,7 +313,8 @@ difference from the run's question set but whitespace, quote and dash style, and
 {
   "question_id": "q7",
   "question": "…the exact question you were given…",
-  "answer": "…verdict-first, information-dense, no padding…",
+  "answer": "…verdict-first, information-dense, no padding: each finding a paragraph or a '- ' bullet naming its source…",
+  "summary": "…one sentence answering the question, written last, from the answer…",
   "claim_type": "mechanical | adversarial",
   "confidence": "direct | inferred | not_found",
   "sources": [{

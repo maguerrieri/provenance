@@ -200,7 +200,8 @@ to review, so the cost was measured on two real runs first:
   and so does evidence with no figure at all. Widening either changes the cost, so measure it
   again first. It reads snippets only, so a figure a query citation reproduces is not
   evidence to it yet (#81), and a researcher's `provenance check-claim` does not run it (#82). (3),
-  near misses across claims, prompts across questions and stays a flag.
+  near misses across claims, prompts across questions and stays a flag. So does (2) asked of a
+  claim's summary, until it is measured (see "A claim's summary is evidence-bearing text").
 - **A misread figure is a false conflict.** Two parsing errors read one number as two. A unit
   came from the next word's first letter, so "$5,000 more" was five billion dollars. And units
   scaled in binary floats, so "$8.2 million" was 8199999.999999999, not "$8,200,000". As flags
@@ -574,7 +575,8 @@ the supporting text — ships a green row nobody checked, by the same mechanism.
 **A verdict also names the claim it judged (#30).** A sid covers the quote, not what the claim
 says about it, so a retry that rewrites the answer and keeps the quote kept the verdict too.
 `provenance judge` now stamps `claim_fingerprint` on every verdict: `Claim.fingerprint`, a short hash of
-the claim's question and answer. A verdict whose stamp no longer matches its claim judged words
+the claim's question and answer, and its summary where it has one (see "A claim's summary is
+evidence-bearing text"). A verdict whose stamp no longer matches its claim judged words
 the claim no longer says, and is stale (#74, "A verdict is about the answer it judged, too").
 Why that identity:
 - **The answer and the question.** A verdict judges one answer to one question, and answers
@@ -1017,6 +1019,108 @@ or read as progress. Three things to keep:
 - **The fragment is state the harness has to carry.** It gives the page a `location` whose `hash`
   setter fires `hashchange`, as a link or a pasted URL does, and a `window` to listen on. Pass the
   fragment a page loads at as `run(..., hash=...)`, and move with a `nav` action.
+
+
+## A claim's summary is evidence-bearing text, not a caption
+
+In the first trial every answer rendered as one paragraph, some several hundred words long, and
+the operator writing from the review page had to read each to find the sentence that answered
+the question. So a claim carries `summary` (#204): one sentence answering the question, written
+last, from the answer. The page shows it first, with the answer behind "details". It is the
+sentence a reader is most likely to copy, so every check that reads what a claim says reads the
+summary too, apart from the answer: joined, "$5" ending one and "million" starting the other
+would read as one figure. #82's check-claim figure check and #196's answer-level verdict should
+read both.
+
+**One rule for the text: exact everywhere it is identity, folded only where a check asks for
+containment.** Three review rounds each found one more place where display, hashing and the
+hand-off read the text differently, so this is the whole of it:
+- **Hashed as written.** `Claim.fingerprint` and `review_fingerprint()` cover the summary, as one
+  JSON list with the question and answer, and only where there is one. A claim without one
+  hashes exactly as before (a test pins it), so no verdict or check recorded earlier lapses. One
+  gaining a summary lapses both, which is right: nobody had judged or checked it. The stale
+  message names the summary beside the question and answer, so an operator looking for what
+  changed looks there too.
+- **Shown as written.** The page shows the summary and the answer's blocks with `white-space:
+  pre-wrap`, so what it shows is what the fingerprints cover. Folded on the page alone, a spacing
+  change cleared a check with nothing shown to say what changed.
+- **Handed off as written.** `Handoff.summary` prints above the answer and is hashed with the
+  rest (adding the field changed every outstanding token once). An answer of several lines prints
+  behind `| `, as a context does, so none of its lines can read as the command's own.
+- **One reading of a line.** The page, the hand-off and check-claim all split lines with
+  `splitlines()`: split on `\n` alone, a U+2028 put a bullet the verifier read on a line of its
+  own inside a paragraph on the page.
+- **One normalization in the model:** a summary of only white space is none (a validator), so
+  the page, both stamps and check-claim agree on "no summary".
+- **Folded only in check-claim**, which asks a different question: whether the summary adds
+  anything the answer lacks. That is containment, not identity, and folding only ever makes it
+  refuse less (below).
+
+**The figure check flags the summary, and gates only the answer.** `unsourced_summary_figures()`
+asks kind (2)'s question of the summary on its own, and `detect()` lists what it finds, so a
+summary whose only figure no snippet carries is named in the conflicts section even beside an
+answer with a sourced one. It doesn't set the status. The first cut gated on it, and review
+caught that this widened a gate whose cost was measured on answers alone, against the rule above
+("measure it again first"). A summary's figures are its answer's, so it fires only where the
+answer passes on another figure, and a sound claim does that too: a summary giving a total its
+snippets state only in parts, or a figure a query citation reproduces (#81). Measure it on a run
+with summaries before it gates.
+- It reads dollar figures however written (`conflicts.dollar_values()`: "$5,000", "5,000
+  dollars", "5,000-dollar"), in the summary and in the snippets, as check-claim does. The
+  answer's gate still reads `money_values()`, `$` forms only, as it was measured.
+- A kind the answer's gate already names is left out: the summary's figures are the answer's,
+  so the line said the same thing twice, and read as two things to fix.
+- The cross-claim near-miss scan (3), a flag, reads both texts with `dollar_values()`.
+
+**Attribution stays on the answer, with one exception.** A summary can rest on any of the
+claim's sources, so requiring it to name every arguer would fail one that states the claim's
+primary finding. Where every document the claim counts is argued, the summary rests on an
+argument for certain, and there `check_corroboration()` fails the claim unless it names an
+arguer, listing the names it takes. Elsewhere it is the verifier's to judge: `verifier.md` says
+a summary may say less than the claim, never more.
+
+**check-claim is the gate on writing it** (`answers.summary_problems()`): present, on one line
+(a break at either end counts), one sentence, at most `SUMMARY_MAX` characters, and nothing in
+it the answer lacks.
+- *One sentence* is a heuristic, wrong at the edges both ways. After a period, a letter or a
+  digit starts a sentence unless the period follows an initial or a listed abbreviation (titles,
+  months, and a record's or a law's parts: "Prop.", "Sec.", "Art."; "etc." ends one only before
+  a capital). After a ? or !, only a capital or a digit does, since a quoted question is
+  likelier. An unlisted abbreviation costs a rewrite, and the verifier still reads what a listed
+  one hides. A jurisdiction's own abbreviations are not listed: nothing about one goes in `src/`.
+- *Nothing the answer lacks* is read three ways, on both texts composed (NFC) first, as
+  `same_question()` does, or an accent written two ways is two words.
+  - Figures: dollar amounts as money however written, and every other number by value, in
+    thousands groups ("1,000" is one number, "1,2" two). The two are kept apart: merged, an
+    answer's "$2,030" let a summary say "in 2030".
+  - Quotations: compared as a question's text is, and as whole words: "ban" is not in "urban".
+  - Names: every capitalized word, compared case-blind, the first too unless it is a word that
+    starts sentences, since the subject usually comes first and a wrong name there is the
+    likeliest.
+- It can't tell whether the sentence is true to the answer, only that it adds none of those.
+  The rest is the verifier's. Build does not require a summary, so a run from before still
+  builds, each such claim badged "no summary".
+
+**The answer's layout is the page's own, never the agent's markup.** An answer may hold
+paragraphs (a blank line between them) and bullets (lines starting `- `), and nothing else.
+`answers.blocks()` parses that subset into plain strings, taking out only the `- ` that starts a
+bullet and the blank lines between blocks, and the template lays them out as `<p>` and `<li>`,
+autoescaping each, so `context_html()` stays the only value marked safe. Anything else shows as
+typed, and check-claim fails an answer holding it (`answers.format_problems()`): HTML, markdown
+links and emphasis (a line break inside a paragraph doesn't hide one), headings, rules and
+underlines, quotes, other list markers, an indented or empty bullet, and a `-` followed by a tab.
+Only a claim with a summary is laid out: one from before shows its answer as one block, as it
+did. A not_found claim's tab shows the same, since its answer is its search trail. The overview
+(#205) shows the summary on the claim's row, and the start of the answer only where there is
+none (`report.overview_text()`).
+
+**Collapsed by default, as the issue asks, but a check covers what is behind it.** The reviewer's
+check attests the answer too (its fingerprint hashes it), and a summary can read the same after
+its answer was reworded. So a claim with a check that lapsed because the claim or its evidence
+changed opens its "details", and the page's notice says the check covers the answer. Space on a
+focused disclosure opens and closes it and ticks nothing: the page's own space key ticked the
+selected row, which could be in another claim. Whether "details" should stay open until a claim
+is checked is a choice about the writing surface, left to whoever reviews it.
 
 ## Project-specific content lives in the project file
 
@@ -2755,7 +2859,8 @@ suffix*. This template is `review.html.j2` — it ends in `.j2`, so the predicat
 False and autoescaping was off for the whole app while the code read as though it were on.
 Use `autoescape=True`. `report.context_html()` returns `Markup` and escapes its own
 interpolations; it is the only value in the template intended as HTML, and nothing else
-should ever be marked safe. (`|tojson` also returns `Markup`, JSON- and HTML-escaped: it is
+should ever be marked safe. An answer's paragraphs and bullets are laid out by the template
+from plain strings (`answers.blocks()`), not rendered from anything the agent wrote as markup. (`|tojson` also returns `Markup`, JSON- and HTML-escaped: it is
 how a value reaches the `<script>`, and only a constant from our code goes through it.)
 
 Same reasoning for `models._http_only`: it validates that a URL is http(s) *and* free of
