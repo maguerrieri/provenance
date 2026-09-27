@@ -134,7 +134,7 @@ def test_a_supports_about_one_answer_does_not_vouch_for_the_opposite_one(tmp_pat
     # the gate lists it for re-judging, so the judgment pass is not done
     code, need, stale, out = _gate(run)
     assert (code, need, stale) == (1, 1, 1), out
-    assert "judged another question or answer than its claim gives now" in out, out
+    assert "judged another question, answer or summary than its claim gives now" in out, out
 
     # and a verifier's verdict on the answer as it reads now is what renders
     _judge(run, "q1", s, "contradicts", "the minutes record a yes vote")
@@ -162,6 +162,33 @@ def test_a_corrected_answer_lifts_an_old_contradicts(tmp_path):
 
     _judge(run, "q1", s, "supports")
     assert _built(run)["q1"]["status"] == "verified"
+
+
+def test_a_verdict_about_one_summary_does_not_vouch_for_another(tmp_path):
+    """#204. The hand-off gives the verifier the summary beside the answer, so a verdict is about
+    both. A retry that rewrote only the summary kept the answer, the url and the snippet, and so
+    the sid: without the summary in the stamp, a `supports` about "voted for" rendered green
+    under a summary saying "voted against". A verdict recorded before the claim had a summary
+    lapses too, once one is added: nobody judged the summary."""
+    s = src()
+    run = _verified_run(tmp_path / "run", claim("q1", s))
+    _judge(run, "q1", s, "supports", "the minutes record a yes vote")
+    assert _built(run)["q1"]["status"] == "verified", "a claim with no summary keeps its verdict"
+
+    with_summary = claim("q1", src())
+    with_summary.summary = "The member voted for Measure Q-7."
+    _write(run, with_summary)
+    _verify(run)
+    assert _built(run)["q1"]["status"] == "pending", "nobody judged the summary added since"
+    _judge(run, "q1", s, "supports", "the minutes record a yes vote")
+    assert _built(run)["q1"]["status"] == "verified"
+
+    with_summary.summary = "The member voted against Measure Q-7."
+    _write(run, with_summary)
+    _verify(run)
+    assert _built(run)["q1"]["status"] == "pending"
+    code, need, stale, out = _gate(run)
+    assert (code, need, stale) == (1, 1, 1), out
 
 
 def test_rewording_the_question_makes_a_verdict_stale(tmp_path):
@@ -235,7 +262,7 @@ def test_verify_reports_a_verdict_about_another_answer_as_not_applied(tmp_path):
     _write(run, claim("q1", src(), answer=AGAINST))
     out = _verify(run)
     assert "1 verdict(s) no longer describe what they judged" in out, out
-    assert f"q1/{s.sid}: judged another question or answer than this claim gives now" in out, out
+    assert f"q1/{s.sid}: judged another question, answer or summary than this claim gives now" in out, out
 
 
 def test_a_verdict_stale_on_both_halves_names_both(tmp_path):
@@ -253,7 +280,7 @@ def test_a_verdict_stale_on_both_halves_names_both(tmp_path):
 
     c = claim("q1", src(), answer=AGAINST)
     [(_s, _j, why)] = judgments.verdicts_for(c, run, cache_root=run)
-    assert "judged another question or answer" in why and "re-fetched since" in why, why
+    assert "judged another question, answer or summary" in why and "re-fetched since" in why, why
 
 
 def test_a_stale_verdict_on_a_redrawn_context_waits_on_verify_not_a_verifier(tmp_path):
@@ -312,5 +339,5 @@ def test_a_stale_row_shows_why_not_the_note_about_the_old_answer(tmp_path):
 
     code, need, stale, out = _gate(run)
     assert (code, need, stale) == (1, 1, 1), out
-    assert "stale (was supports) judged another question or answer" in out, out
+    assert "stale (was supports) judged another question, answer or summary" in out, out
     assert "the minutes record a yes vote" not in out, out

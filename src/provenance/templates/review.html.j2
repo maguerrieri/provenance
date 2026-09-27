@@ -60,6 +60,12 @@ button:hover{border-color:var(--acc)}
 .claim{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px}
 .claim.done{opacity:.55}
 .ans{font-size:15.5px;margin-bottom:9px}
+details.more{margin:-4px 0 9px;font-size:14.5px}
+details.more>summary{font-weight:400;color:var(--mut);font-size:12.5px}
+.said{white-space:pre-wrap;overflow-wrap:anywhere}
+.answer p{margin:6px 0}
+.answer ul{margin:6px 0;padding-left:20px}
+.answer p,.answer li{white-space:pre-wrap;overflow-wrap:anywhere}
 .badges{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
 .b{font-size:11.5px;border-radius:99px;padding:1px 9px;border:1px solid currentColor}
 .b.ok{color:var(--ok)}.b.warn{color:var(--warn)}.b.bad{color:var(--bad)}.b.info{color:var(--info)}.b.mut{color:var(--mut)}
@@ -87,6 +93,19 @@ kbd{background:var(--card);border:1px solid var(--line);border-radius:4px;paddin
 </style>
 </head>
 <body>
+{#- What a claim says: its summary first, and its answer behind it. The answer's paragraphs and
+    bullets are laid out here from answers.blocks(), each piece of text autoescaped like
+    everything else: the page never takes an agent's markup. A claim with no summary shows its
+    answer as it was. The overview row shows the summary alone (`report.overview_text()`). #}
+{% macro said(c, cls) -%}
+{% if c.summary %}<div class="{{ cls }} said">{{ c.summary }}</div>
+<details class="more"><summary class="toggle">details</summary><div class="answer">
+{%- for b in c.answer_blocks %}
+{%- if b.kind == 'ul' %}<ul>{% for item in b.items %}<li>{{ item }}</li>{% endfor %}</ul>
+{%- else %}<p>{{ b.items[0] }}</p>{% endif %}
+{%- endfor %}</div></details>
+{%- else %}<div class="{{ cls }}">{{ c.answer }}</div>{% endif %}
+{%- endmacro %}
 <div class="wrap">
 <h1>Citation review — {{ title }}</h1>
 <div class="sub">{{ claims|length }} claims · {{ n_sources }} sources · generated {{ generated }}</div>
@@ -95,7 +114,8 @@ kbd{background:var(--card);border:1px solid var(--line);border-radius:4px;paddin
 <b>⌘F proves words appear on the page. It does not prove they support the claim.</b>
 Rows marked <span class="b info">query</span> are different: they were checked by re-running a
 data query, so you verify them by running the printed command rather than searching a page.
-Read the highlighted sentence <i>in context</i> against the claim above it — especially on
+Read the highlighted sentence <i>in context</i> against the claim above it (its summary, and
+the answer under "details", which your check covers too) — especially on
 <span class="b bad">adversarial</span> rows. On <span class="b ok">verified_via_archive</span>
 rows the live page is paywalled and the quote was confirmed in the snapshot — use the
 archive link, not ⌘F on the live page.
@@ -190,13 +210,14 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
      data-status="{{ c.status }}" data-conflict="{{ 1 if c.conflicts else 0 }}"
      data-notes="{{ 1 if c.notes else 0 }}"
      data-paywall="{{ 1 if c.sources|selectattr('paywall')|list else 0 }}">
-  <div class="ans">{{ c.answer }}</div>
+  {{ said(c, "ans") }}
   <div class="badges">
     <span class="b {{ 'bad' if c.claim_type=='adversarial' else 'mut' }}">{{ c.claim_type }}</span>
     <span class="b {{ status_class(c.status) }}">{{ c.status }}</span>
     <span class="b {{ 'ok' if c.corroboration_ok is true else ('mut' if c.corroboration_ok is none else 'bad') }}">{{ c.corroboration_note or 'corroboration unchecked' }}</span>
     <span class="b mut">{{ c.confidence }}</span>
     {% if c.conflicts %}<span class="b bad">conflict</span>{% endif %}
+    {% if not c.summary %}<span class="b mut nosum">no summary</span>{% endif %}
   </div>
   {% for x in c.conflicts %}<div class="conf">{{ x.text }}{% if x.also %}
     <span class="also">Also listed under {% for o in x.also %}<a href="#q={{ o }}">{{ o }}</a>{{ ', ' if not loop.last }}{% endfor %}.</span>{% endif %}</div>{% endfor %}
@@ -587,6 +608,10 @@ function render(){
     const all = [...c.querySelectorAll('.src')];
     c.classList.toggle('done', all.length > 0 && all.every(isChecked));
     c.querySelector('.nchanged').classList.toggle('hidden', !all.some(noteStale));
+    // A check covers the answer behind "details" too, so where the claim changed since, show it:
+    // the reviewer re-reading only the summary would re-tick an answer they never saw.
+    const more = c.querySelector('.more');
+    if (more && all.some(el => changed.has(el))) more.open = true;
   }
   const pct = srcs.length ? Math.round(100*done/srcs.length) : 0;
   document.getElementById('pbar').style.width = pct + '%';
@@ -641,7 +666,8 @@ function focus(scroll = true){
   if (scroll) el.scrollIntoView({block:'center', behavior:'smooth'});
 }
 document.addEventListener('keydown', e => {
-  if (/input|textarea|select/i.test(e.target.tagName)) return;
+  // A focused disclosure takes space to open and close it, not to tick the selected row.
+  if (/input|textarea|select|summary/i.test(e.target.tagName)) return;
   if (shortcut(e)) return;
   // [ and ] switch tabs, the overview first, past any the filter leaves nothing in (dimmed).
   if (e.key === '[' || e.key === ']'){

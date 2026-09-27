@@ -1095,3 +1095,147 @@ def test_progress_from_a_single_list_build_carries_over(tmp_path):
         assert (tabs(loaded)["q1"]["count"], tabs(loaded)["q2"]["count"]) == ("1/2", "0/1 ⚑1")
         assert loaded["tab"] == "q1" and stored(loaded)["checked"] == saved["checked"]
         assert stored(loaded)["sources"] | saved["sources"] == stored(loaded)["sources"]
+
+
+SUMMARY = "The council approved the levy four to one."
+ANSWER = ("The council approved the levy by a vote of four to one.\n\n"
+          "What the record shows:\n"
+          "- The Example Ledger reported the vote.\n"
+          "- <script>alert(1)</script><img src=x onerror=\"alert(2)\"> [a](https://x.example)\n\n"
+          "No later vote was found.")
+
+
+def test_a_claims_summary_shows_first_with_its_answer_laid_out_behind_it(tmp_path):
+    """#204. The operator writes from this page, so a claim shows its one-sentence summary where
+    the answer was, and the answer behind a disclosure, laid out as paragraphs and bullets. The
+    layout is the page's own: every piece of text in it is escaped, so an agent's HTML or
+    markdown shows as typed, and nothing new is marked safe."""
+    summed = claim("q1", ANSWER)
+    summed.summary = SUMMARY
+    html = render([summed, claim("q2", "Approved, by a vote of four to one.")], tmp_path,
+                  title="T", rules=RULES, store="test")[0].read_text()
+
+    assert "<script>alert(1)</script>" not in html and "<img src=x" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html, "the bullet renders, escaped"
+    by_qid = {c.attributes["data-qid"]: c for c in HTMLParser(html).css(".claim")}
+    one, two = by_qid["q1"], by_qid["q2"]
+    assert one.css_first(".ans").text() == SUMMARY
+    # Shown as written, as the fingerprint hashes it: collapsed, a spacing change cleared a
+    # check with nothing on the page to say what changed.
+    assert "said" in one.css_first(".ans").attributes["class"].split()
+    assert ".said{white-space:pre-wrap;" in html and \
+        ".answer p,.answer li{white-space:pre-wrap;" in html
+    more = one.css_first("details.more")
+    assert more.css_first("summary").text() == "details"
+    assert [p.text() for p in more.css(".answer p")] == [
+        "The council approved the levy by a vote of four to one.", "What the record shows:",
+        "No later vote was found."]
+    assert [li.text() for li in more.css(".answer li")] == [
+        "The Example Ledger reported the vote.",
+        "<script>alert(1)</script><img src=x onerror=\"alert(2)\"> [a](https://x.example)"]
+    assert more.css("a") == [], "a markdown link is text"
+    assert one.css(".nosum") == []
+
+    # Written before summaries: the whole answer as it was, marked so.
+    assert two.css_first(".ans").text() == "Approved, by a vote of four to one."
+    assert two.css("details.more") == []
+    assert [b.text() for b in two.css(".nosum")] == ["no summary"]
+
+
+def test_the_overview_and_the_tab_show_a_real_claims_summary(tmp_path):
+    """#204 with #205. A claim model's summary reaches the overview row whole (not the start of
+    the answer), and the claim's tab shows it with the answer behind "details". A not_found
+    claim's too: its answer is its search trail, where the researcher says where they looked."""
+    summed = claim("q1", "The council approved the levy by a vote of four to one.")
+    summed.summary = "It approved the levy."
+    absent = claim("q2", "No record of a vote was found.\n\n- The minutes were searched.",
+                   question="Was there a second vote?")
+    absent.confidence, absent.summary = "not_found", "No second vote was found."
+    page = HTMLParser(render([summed, absent], tmp_path, title="T", rules=RULES,
+                             store="test")[0].read_text())
+    rows = {r.attributes["data-qid"]: r.css_first(".osum") for r in page.css(".orow")}
+    assert {q: (r.text(), r.attributes["class"]) for q, r in rows.items()} == {
+        "q1": ("It approved the levy.", "osum"), "q2": ("No second vote was found.", "osum")}
+    tabs = {t.attributes["data-tab"]: t for t in page.css("div.tab") if t.attributes["data-tab"]}
+    assert tabs["q1"].css_first(".claim .ans").text() == "It approved the levy."
+    assert [p.text() for p in tabs["q1"].css("details.more .answer p")] == [
+        "The council approved the levy by a vote of four to one."]
+    assert "No source found" in tabs["q2"].css_first(".notice").text()
+    assert tabs["q2"].css_first(".claim .ans").text() == "No second vote was found."
+    assert [li.text() for li in tabs["q2"].css("details.more .answer li")] == [
+        "The minutes were searched."]
+
+
+def test_the_fingerprint_covers_the_claims_summary():
+    """A check attests the claim as the page shows it, and the summary is what it shows first:
+    a check clears when it changes, as it does for the answer. A claim without one hashes as
+    it did before summaries, so every check saved on one still stands."""
+    c = claim("q1", "The council approved the levy.")
+    base = review_fingerprint(c, c.sources[0])
+    assert base == "284a91bc9c80d54f", "pinned: a claim with no summary hashes as before"
+
+    def with_summary(summary):
+        s = claim("q1", c.answer)
+        s.summary = summary
+        return review_fingerprint(s, s.sources[0])
+
+    assert with_summary(None) == base
+    first = with_summary("It approved the levy.")
+    assert first != base and "." not in first, "part of the claim, not a notes part"
+    assert with_summary("It approved the levy.") == first, "stable across rebuilds"
+    assert with_summary("It passed the levy.") != first
+
+
+def test_space_on_a_claims_disclosure_does_not_tick_the_selected_row(tmp_path):
+    """The disclosure takes focus when clicked, and space opens and closes it. The page's own
+    space key ticks the selected row, so on a focused disclosure it ticked a row the reviewer
+    was not looking at."""
+    summed = claim("q1", "The council approved the levy by a vote of four to one.")
+    summed.summary = "It approved the levy."
+    key = f"q1/{cited().sid}"
+    pressed = run(tmp_path, [summed],
+                  actions=[{"do": "key-on-toggle", "row": key, "on": key, "key": " "}])
+    assert not rows(pressed)[key]["checked"]
+    keyed = run(tmp_path, [summed], actions=[{"do": "key", "row": key, "key": " "}])
+    assert rows(keyed)[key]["checked"], "on the page, space still ticks"
+
+
+def test_a_claim_changed_since_it_was_checked_shows_its_answer(tmp_path):
+    """A check covers the answer behind "details" too. Collapsed, a reworded answer reached the
+    reviewer only as "the claim has changed" above a summary that still read the same, and
+    re-ticking checked an answer nobody opened. So a claim changed since opens its answer."""
+    def build(answer):
+        c = claim("q1", answer)
+        c.summary = "It approved the levy."
+        return c
+
+    key = f"q1/{cited().sid}"
+    checked = run(tmp_path, [build("It approved the levy four to one.")],
+                  actions=[{"do": "tick", "row": key, "checked": True}])
+    assert checked["claims"][0]["answerOpen"] is False, "collapsed by default"
+    reworded = run(tmp_path, [build("It approved the levy three to two.")],
+                   storage=checked["storage"])
+    assert rows(reworded)[key]["stale"] and reworded["claims"][0]["answerOpen"] is True
+    plain = run(tmp_path, [claim("q2", "Approved.")])
+    assert plain["claims"][0]["answerOpen"] is None, "no summary, no disclosure"
+
+
+def test_a_summary_rewritten_after_checking_clears_the_check(tmp_path):
+    """The check covers the summary the reviewer read. A retry that rewrote only the summary
+    left the claim reading done under a sentence nobody signed off on."""
+    def build(summary):
+        c = claim("q1", "The council approved the levy by a vote of four to one.")
+        c.summary = summary
+        return c
+
+    key = f"q1/{cited().sid}"
+    checked = run(tmp_path, [build("It approved the levy.")],
+                  actions=[{"do": "tick", "row": key, "checked": True}])
+    assert checked["claims"][0]["done"]
+    same = run(tmp_path, [build("It approved the levy.")], storage=checked["storage"])
+    assert rows(same)[key]["checked"], "unchanged, it stands"
+
+    rewritten = run(tmp_path, [build("It rejected the levy.")], storage=checked["storage"])
+    row = rows(rewritten)[key]
+    assert not row["checked"] and row["stale"] and not row["noteStale"]
+    assert not rewritten["claims"][0]["done"]

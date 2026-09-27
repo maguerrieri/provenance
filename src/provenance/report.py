@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from jinja2 import Environment, FileSystemLoader
 from markupsafe import Markup
 
-from . import queries
+from . import answers, queries
 from .conflicts import near_misses
 from .models import QID_PATTERN, Claim, Source
 from .questions import QuestionSet, fold
@@ -129,6 +129,11 @@ def review_fingerprint(claim: Claim, source: Source) -> str:
     part of their own, after a dot, so the page can tell a changed note from changed evidence
     and say which. And only when the claim has notes: a claim without them hashes exactly as it
     did before notes were hashed, so checks saved then still stand.
+
+    The claim's summary is part of the claim (#204): it is what the page shows first, and the
+    sentence a reader copies, so a check clears when it changes, as it does when the answer
+    does. It goes in only where there is one, so a claim written before summaries hashes as it
+    did then.
     """
     v = source.verification
     if source.query is not None:
@@ -138,7 +143,9 @@ def review_fingerprint(claim: Claim, source: Source) -> str:
         evidence = [v.context, *map(str, v.context_offset)]
     else:
         evidence = [source.archive_url or ""]
-    parts = [source.sid, claim.question, claim.answer, source.publisher, source.author,
+    parts = [source.sid, claim.question, claim.answer,
+             *([claim.summary] if claim.summary else []),
+             source.publisher, source.author,
              source.date or "", str(source.page or ""), source.secondary_host_ack or "",
              *evidence]
     # JSON, not a join: these fields are agent-authored, and a separator one of them contains
@@ -317,6 +324,12 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "citation review"
     view = [
         SimpleNamespace(
             question_id=c.question_id, question=c.question, answer=c.answer,
+            # What the page shows first, with the answer behind it (#204). A claim written
+            # before summaries has none, and shows its whole answer as it always did, marked
+            # "no summary". Only a claim with one gets its answer laid out as paragraphs and
+            # bullets, as plain text in each (answers.blocks()), never as markup.
+            summary=c.summary or "",
+            answer_blocks=answers.blocks(c.answer) if c.summary else [],
             claim_type=c.claim_type, confidence=c.confidence, status=c.status,
             corroboration_ok=c.corroboration_ok, corroboration_note=c.corroboration_note,
             conflicts=conflict_views(c, between), sources=source_views(c),

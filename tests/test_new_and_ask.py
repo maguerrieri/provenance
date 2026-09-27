@@ -791,6 +791,7 @@ def test_a_started_project_runs_end_to_end(tmp_path, home, kind):
         question_id="q1", question=QUESTION,
         answer="The Harbor Ledger reports the supervisors approved it 4-1, sending it to the "
                "ballot.",
+        summary="The Harbor Ledger reports the supervisors approved it 4-1.",
         sources=[Source(url=URL, publisher="Harbor Ledger", author="R. Reporter",
                         date="2030-05-06", source_type="bylined_journalism", snippet=SNIPPET)],
     ).model_dump_json())

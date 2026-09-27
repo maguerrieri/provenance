@@ -191,6 +191,37 @@ def test_two_advocacy_pieces_are_one_source():
     assert "counted as one" in with_report.corroboration_note
 
 
+def test_a_summary_resting_only_on_argued_sources_names_whose_argument_it_is():
+    """#204. The summary is the sentence a reader copies. Where every document the claim counts
+    is one only its author argues, the summary rests on an argument too, so it has to say whose,
+    as the answer does. Beside a fact document it can rest on that instead, and whether it
+    states the argument as fact is the verifier's to judge."""
+    watch = _source(url=ADVOCACY, snippet=OPINION, source_type="advocacy",
+                    publisher="Levy Watch", author="J. Advocate")
+    answer = "Levy Watch argues the levy is a mistake the council will come to regret."
+
+    def claim(summary, *sources):
+        return check_corroboration(Claim(question_id="q1", question=QUESTION, answer=answer,
+                                         summary=summary, sources=list(sources)), rules=RULES)
+
+    bare = claim("The levy is a mistake the council will regret.", watch)
+    assert bare.corroboration_ok is False, bare.corroboration_note
+    assert "the summary states as fact what only opinion, advocacy or an unlisted outlet " \
+           "argues: name whose argument it is in the summary too, as 'J. Advocate' or " \
+           "'Levy Watch'" in bare.corroboration_note, "the names it takes, as for the answer"
+    assert claim("Levy Watch argues the levy is a mistake.", watch).corroboration_ok is True
+    assert claim(None, watch).corroboration_ok is True, "no summary, nothing to hold"
+
+    record = Source(url="https://records.example/levy-minutes", publisher="Harbor Board",
+                    author="Clerk of the Board", date="2030-05-14",
+                    source_type="primary_document", snippet=FACT,
+                    secondary_host_ack="the board's own portal serves no text; this is its "
+                                       "minutes as filed")
+    record.verification.status, record.verification.support = "verified", "supports"
+    beside = claim("The levy passed, and it is a mistake.", watch, record)
+    assert beside.corroboration_ok is True, beside.corroboration_note
+
+
 def test_an_unlisted_advocacy_host_does_not_count_as_reporting():
     """The issue's case: an advocacy site on no list, labeled reporting, with a byline. It is an
     unlisted outlet, so it carries only what it says, and counts with the advocacy."""
@@ -265,7 +296,7 @@ def _run(root: Path, answer: str, *sources: Source) -> Path:
             text=ARTICLE, fetched_at=datetime.now(UTC) - timedelta(hours=1),
             extractor_version=EXTRACTOR_VERSION).model_dump_json())
     path = root / "claims" / "q1.json"
-    path.write_text(Claim(question_id="q1", question=QUESTION, answer=answer,
+    path.write_text(Claim(question_id="q1", question=QUESTION, answer=answer, summary=answer,
                           sources=list(sources)).model_dump_json(exclude={"sources": {
                               "__all__": {"verification"}}}))
     return path

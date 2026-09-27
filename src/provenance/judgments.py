@@ -818,6 +818,7 @@ class Handoff:
     claim_type: str
     required_sources: int
     question: str
+    summary: str   # "" for a claim written before summaries (#204)
     answer: str
     sources: tuple[HandedSource, ...]
 
@@ -1029,7 +1030,8 @@ def _claim_stale(j: "Judgment", fingerprint: str) -> str:
     if j.claim_fingerprint != fingerprint:
         # Or a misfiled verdict, one another claim earned, which says as little about this
         # claim's answer.
-        return ("judged another question or answer than this claim gives now: a retry or hand "
+        return ("judged another question, answer or summary than this claim gives now: a retry "
+                "or hand "
                 "edit rewrote the claim since, or the verdict is filed under another claim's id")
     return ""
 
@@ -1044,7 +1046,8 @@ def verdicts_for(claim, root: Path, judged: dict[str, Judgment] | None = None, *
     pages they judged live. Required, and keyword-only, because defaulting it to `root` is
     exactly the bug that hid every stale verdict in a subject's run.
 
-    A verdict is stale when it judged another question or answer (`_claim_stale()`, checked
+    A verdict is stale when it judged another question, answer or summary (`_claim_stale()`,
+    checked
     here because this is where the claim is in hand) or another copy of the page or query
     (`is_stale()`). Both halves are reported: re-judging needs the page half settled too, and
     `provenance judge` refuses a page it cannot stamp.

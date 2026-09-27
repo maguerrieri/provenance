@@ -322,6 +322,12 @@ class Claim(BaseModel):
     question_id: str = Field(pattern=QID_PATTERN)
     question: str
     answer: str
+    # One sentence answering the question, written last, from the answer: what the review page
+    # shows first, with the answer behind it. It is the sentence a reader is most likely to
+    # copy, so it is evidence-bearing text like the answer, never a caption: every check that
+    # reads what a claim says reads it too, apart from the answer. None on a claim written
+    # before summaries existed, which renders as it did.
+    summary: str | None = None
     claim_type: ClaimType = "mechanical"
     sources: list[Source] = Field(default_factory=list)
     confidence: Confidence = "direct"
@@ -339,13 +345,21 @@ class Claim(BaseModel):
     # A contradiction a retry dropped still counts: see `status`.
     dropped_contradictions: list[DroppedContradiction] = Field(default_factory=list)
 
+    @field_validator("summary")
+    @classmethod
+    def _blank_is_none(cls, v: str | None) -> str | None:
+        """A summary of nothing but white space shows nothing, so it is no summary: one value
+        for "none", so the fingerprints and the page cannot disagree about it."""
+        return v if v is None or v.strip() else None
+
     @property
     def required_sources(self) -> int:
         return 2 if self.claim_type == "adversarial" else 1
 
     @property
     def fingerprint(self) -> str:
-        """What a verifier judged a source against: the claim's question and its answer.
+        """What a verifier judged a source against: the claim's question, its answer and its
+        summary.
 
         `provenance judge` stamps it on each verdict (`Judgment.claim_fingerprint`). A verdict is keyed
         by sid, which covers the quote and not what the claim says about it, so a retry that
@@ -356,10 +370,17 @@ class Claim(BaseModel):
         re-judgment, never a false green. Left out: the sources, since a verdict judges one of
         them and adding another must not lapse it; and the id, which the verdict's shard
         already carries. See CLAUDE.md, "A verdict is about a source as cached at judgment time".
+
+        The summary goes in only where there is one (#204): the hand-off gives it to the
+        verifier beside the answer, so a verdict covers both, and a rewritten summary lapses it.
+        A claim without one hashes exactly as it did before summaries existed, so its verdicts
+        still apply.
         """
-        # As one JSON list, not two parts: both are free agent-written text, and NUL-joining
-        # them would let a rewrite that moves a NUL between them keep the fingerprint.
-        return short_id(json.dumps([self.question, self.answer]))
+        # As one JSON list, not joined: these are free agent-written text, and NUL-joining them
+        # would let a rewrite that moves a NUL between them keep the fingerprint. A list of three
+        # can never equal a list of two, so a claim gaining a summary always moves.
+        said = [self.question, self.answer] + ([self.summary] if self.summary else [])
+        return short_id(json.dumps(said))
 
     @property
     def status(self) -> str:

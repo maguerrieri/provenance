@@ -41,6 +41,7 @@ from .sources import (
     domain,
     host_key,
     publishes_legal_text,
+    speakers,
     tier,
 )
 
@@ -1116,7 +1117,8 @@ def check_corroboration(claim: Claim, *, rules: dict[str, tuple[str, ...]]) -> C
     Tiers are counted deliberately. A source that carries only what its author argues
     (`sources.ARGUED`) is evidence only where the answer names whose argument it is: one the
     answer states bare fails the claim's corroboration however many others back it, so
-    `provenance build` sends it to review as `provenance check-claim` refuses it. And all of a
+    `provenance build` sends it to review as `provenance check-claim` refuses it. A summary
+    resting on nothing but such documents has to name the arguer too (#204). And all of a
     claim's such documents count as one: two advocacy pieces are each one side's say-so, not
     two independent sources. A primary text or analysis from a host that doesn't issue it is
     evidence only as a declared copy, with `secondary_host_ack`. `rules` is required, because
@@ -1162,6 +1164,19 @@ def check_corroboration(claim: Claim, *, rules: dict[str, tuple[str, ...]]) -> C
             f"{n_bare} source(s) cited for a claim they cannot carry: opinion, advocacy and an "
             f"unlisted outlet count only for 'X argues Y', with the answer naming X, the "
             f"source's author or publisher")
+    # The summary is the sentence a reader copies (#204). Where every document the claim counts
+    # is one only its author argues, the summary rests on an argument too, so it has to say
+    # whose, as the answer does. Beside a primary text or a report it can rest on those instead,
+    # and whether it states an argument as fact is the verifier's to judge, who is handed it.
+    if (claim.summary and docs and argued_docs == docs
+            and not any(attributes(claim.summary, s) for s in usable)):
+        # The names it takes, as `provenance check-claim` lists them for the answer: whole
+        # names, case counting, so a guess at a shorter one fails again.
+        names = list(dict.fromkeys(n for s in usable for n in speakers(s)))
+        problems.append(
+            "the summary states as fact what only opinion, advocacy or an unlisted outlet "
+            "argues: name whose argument it is in the summary too, as "
+            + (" or ".join(repr(n) for n in names) if names else "the answer does"))
     if n_copy:
         problems.append(
             f"{n_copy} primary text(s) or official analysis cited from a host that does not "
