@@ -17,6 +17,7 @@ import pytest
 from selectolax.parser import HTMLParser
 
 from provenance.models import Claim, QueryCitation, QueryRun, Source
+from provenance.questions import QuestionSet
 from provenance.report import render, review_fingerprint, store_id
 from provenance.sources import load_rules
 
@@ -32,9 +33,11 @@ CONTEXT = "At its March meeting the council approved the levy by a vote of four 
 SNIPPET = "the council approved the levy"
 
 
-def cited(context: str | None = CONTEXT, **kw) -> Source:
-    """One synthetic source, identical wherever it is cited, so every claim gets the same sid."""
-    s = Source(url="https://ledger.example/levy-vote", publisher="Example Ledger",
+def cited(context: str | None = CONTEXT, url: str = "https://ledger.example/levy-vote",
+          **kw) -> Source:
+    """One synthetic source, identical wherever it is cited, so every claim gets the same sid.
+    Another `url` gives one with a sid of its own."""
+    s = Source(url=url, publisher="Example Ledger",
                author="A. Writer", source_type="bylined_journalism", snippet=SNIPPET, **kw)
     s.verification.status = "verified"
     s.verification.support = "supports"
@@ -59,19 +62,23 @@ def _tree(node) -> dict:
 
 def run(tmp_path: Path, claims: list[Claim], *, storage: dict | None = None,
         actions: list | None = None, store: str = store_id("example", None),
-        title: str = "T", full: list | None = None) -> dict:
-    """Render `claims`, load the page with `storage` as its localStorage, perform `actions`,
-    and return what the page shows and stores. A write to a key starting with one of `full`
-    fails, as it does in a full localStorage."""
+        title: str = "T", full: list | None = None, hash: str = "",
+        questions: QuestionSet | None = None) -> dict:
+    """Render `claims` (with the run's question set, if given), load the page at the URL
+    fragment `hash` with `storage` as its localStorage, perform `actions`, and return what the
+    page shows and stores. A write to a key starting with one of `full` fails, as it does in a
+    full localStorage."""
     # Only the tests that run the page need node, so the fingerprint tests run anywhere. And CI
     # must run these: a skip there would read as a pass.
     if not NODE and os.environ.get("CI"):
         pytest.fail("node is not installed, and CI must run the review app tests")
     if not NODE:
         pytest.skip("the review app tests run its script under node")
-    page = HTMLParser(render(claims, tmp_path, title=title, rules=RULES, store=store)[0].read_text())
+    page = HTMLParser(render(claims, tmp_path, title=title, rules=RULES, store=store,
+                             questions=questions)[0].read_text())
     payload = {"tree": _tree(page.body), "script": page.css_first("script").text(),
-               "storage": storage or {}, "actions": actions or [], "full": full or []}
+               "storage": storage or {}, "actions": actions or [], "full": full or [],
+               "hash": hash}
     out = subprocess.run([NODE, str(HARNESS)], input=json.dumps(payload),
                          capture_output=True, text=True, timeout=60)
     assert out.returncode == 0, out.stderr
@@ -740,3 +747,254 @@ def test_progress_saved_before_notes_were_hashed_lapses_only_on_noted_claims(tmp
                                                                          (False, True)]
     assert result["notice"] == "", "nothing was migrated, so there is nothing to announce"
     assert all(r["flagged"] and r["note"] == "check the vote count" for r in result["rows"])
+
+
+# --- a tab per question ------------------------------------------------------------------------
+
+TAB = f"provenance:{store_id('example', None)}:tab"   # the tab the viewer had open last
+
+
+def elsewhere(n: int) -> Source:
+    """A source like cited()'s on another page, so it has a sid, and a flag, of its own."""
+    return cited(url=f"https://ledger.example/levy-vote-{n}")
+
+
+def two_questions() -> list[Claim]:
+    """q1 cites two pages, q2 a third: no source is shared, so no flag is either."""
+    return [claim("q1", "The council approved the levy.", elsewhere(1), elsewhere(2)),
+            claim("q2", "The levy passed by four votes to one.", elsewhere(3),
+                  question="By what vote did the levy pass?")]
+
+
+def key(c: Claim, i: int = 0) -> str:
+    return f"{c.question_id}/{c.sources[i].sid}"
+
+
+def tabs(result: dict) -> dict:
+    return {t["tab"]: t for t in result["tabs"]}
+
+
+def overview(result: dict) -> dict:
+    return {r["qid"]: r for r in result["overview"]}
+
+
+def panel(page: HTMLParser, tab: str):
+    """A tab's panel in a rendered page: "" is the overview. By hand, since selectolax reads
+    an empty attribute as None and matches no selector on it."""
+    [found] = [p for p in page.css(".tab") if (p.attributes.get("data-tab") or "") == tab]
+    return found
+
+
+def test_the_page_opens_on_the_overview_and_the_fragment_names_the_tab(tmp_path):
+    """A reload or a shared link keeps the tab: the fragment names it. A link naming a question
+    the page does not have opens the overview, and says so, rather than another question."""
+    claims = two_questions()
+    landing = run(tmp_path, claims)
+    assert landing["tab"] == "" and tabs(landing)[""]["cur"], "the overview is the landing view"
+    assert [t["tab"] for t in landing["tabs"]] == ["", "q1", "q2"]
+
+    shared = run(tmp_path, claims, hash="#q=q2")
+    assert shared["tab"] == "q2" and tabs(shared)["q2"]["cur"] and not tabs(shared)[""]["cur"]
+    assert [c["tab"] for c in shared["claims"]] == ["q1", "q2"]
+
+    back = run(tmp_path, claims, hash="#q=q2", actions=[{"do": "nav", "hash": "#overview"}])
+    assert back["tab"] == "" and back["lost"] == ""
+
+    retired = run(tmp_path, claims, hash="#q=q9")
+    assert retired["tab"] == ""
+    assert "names a question this page does not have: q9" in retired["lost"]
+    moved = run(tmp_path, claims, hash="#q=q9", actions=[{"do": "nav", "hash": "#q=q1"}])
+    assert moved["tab"] == "q1" and moved["lost"] == "", "the notice goes with the bad link"
+
+
+def test_the_last_tab_is_remembered_for_this_viewer_only(tmp_path):
+    """With no fragment, the tab the viewer had open last. It is a convenience kept apart from
+    progress: never in STORE, so never exported or imported, and a full localStorage costs only
+    the memory of it."""
+    claims = two_questions()
+    visited = run(tmp_path, claims, actions=[{"do": "nav", "hash": "#q=q2"}])
+    assert visited["storage"][TAB] == "q2"
+    assert "tab" not in stored(visited) and "q2" not in visited["storage"][STORE]
+
+    reopened = run(tmp_path, claims, storage=visited["storage"])
+    assert reopened["tab"] == "q2"
+    # The fragment wins over the memory, and a remembered tab the page no longer has is ignored.
+    assert run(tmp_path, claims, storage=visited["storage"], hash="#overview")["tab"] == ""
+    assert run(tmp_path, claims[:1], storage=visited["storage"])["tab"] == ""
+
+    full = run(tmp_path, claims, full=["provenance:"], actions=[{"do": "nav", "hash": "#q=q1"}])
+    assert full["tab"] == "q1" and TAB not in full["storage"]
+
+
+def test_brackets_switch_tabs_and_j_k_stay_within_one(tmp_path):
+    claims = two_questions()
+    order = run(tmp_path, claims, actions=[{"do": "key", "key": "["}])
+    assert order["tab"] == "", "the overview is first, and [ stops there"
+    walked = run(tmp_path, claims, actions=[{"do": "key", "key": "]"}] * 3)
+    assert walked["tab"] == "q2" and walked["hash"] == "#q=q2", "and ] stops at the last"
+    stepped = run(tmp_path, claims, hash="#q=q2", actions=[{"do": "key", "key": "["}])
+    assert stepped["tab"] == "q1"
+    assert run(tmp_path, claims, hash="#q=q2",
+               actions=[{"do": "key", "key": "[", "meta": True}])["tab"] == "q2", \
+        "⌘[ is the browser's Back, not a tab switch"
+
+    # j and k move through the open tab's rows only: past its last row is still its last.
+    down = run(tmp_path, claims, actions=[{"do": "key", "row": key(claims[0]), "key": "j"},
+                                          {"do": "key", "key": "j"}, {"do": "key", "key": "j"}])
+    assert down["tab"] == "q1" and down["selected"] == [key(claims[0], 1)]
+    # A tab opens on its first row, and space checks the row selected in it.
+    ticked = run(tmp_path, claims, actions=[{"do": "key", "key": "]"}, {"do": "key", "key": "]"},
+                                            {"do": "key", "key": " "}])
+    assert ticked["selected"] == [key(claims[1])] and rows(ticked)[key(claims[1])]["checked"]
+    # On the overview there are no rows, so no key acts on a row in a tab out of sight.
+    none = run(tmp_path, claims, actions=[{"do": "key", "key": " "}, {"do": "key", "key": "f"}])
+    assert not any(r["checked"] or r["flagged"] for r in none["rows"])
+
+
+def test_each_tab_and_its_overview_row_carry_its_progress(tmp_path):
+    """What is left is visible without opening the tab: checked of total, flagged, and rows
+    whose check lapsed since, on the tab's label and in words on the overview."""
+    claims = two_questions()
+    fresh = run(tmp_path, claims)
+    assert (tabs(fresh)["q1"]["count"], tabs(fresh)["q2"]["count"]) == ("0/2", "0/1")
+    assert overview(fresh)["q1"]["progress"] == "0 of 2 checked · 2 unchecked"
+
+    worked = run(tmp_path, claims, actions=[{"do": "tick", "row": key(claims[0]), "checked": True},
+                                            {"do": "tick", "row": key(claims[1]), "checked": True},
+                                            {"do": "flag", "row": key(claims[0], 1)}])
+    assert tabs(worked)["q1"]["count"] == "1/2 ⚑1" and not tabs(worked)["q1"]["done"]
+    assert overview(worked)["q1"]["progress"] == "1 of 2 checked · 1 unchecked · 1 flagged"
+    assert tabs(worked)["q2"]["count"] == "1/1" and tabs(worked)["q2"]["done"]
+    assert overview(worked)["q2"]["progress"] == "1 of 1 checked"
+
+    # A reworded answer lapses the check made on it, which the tab and the overview count.
+    claims[1].answer = "The levy passed by four votes to one, with one absent."
+    lapsed = run(tmp_path, claims, storage=worked["storage"])
+    assert tabs(lapsed)["q2"]["count"] == "0/1 ↻1" and not tabs(lapsed)["q2"]["done"]
+    assert overview(lapsed)["q2"]["progress"] == "0 of 1 checked · 1 unchecked · 1 to check again"
+
+
+def test_the_filters_work_within_each_tab_and_on_the_overview(tmp_path):
+    claims = two_questions()
+    claims[1].claim_type = "adversarial"
+    filtered = run(tmp_path, claims, hash="#q=q1",
+                   actions=[{"do": "filter", "value": "adversarial"}])
+    assert [c["shown"] for c in filtered["claims"]] == [False, True]
+    assert filtered["empty"] == ["q1"], "the open tab says why it is empty"
+    assert tabs(filtered)["q1"]["dim"] and not tabs(filtered)["q2"]["dim"]
+    assert [r["shown"] for r in filtered["overview"]] == [False, True]
+    assert filtered["selected"] == [], "j/k have nothing to move to in an empty tab"
+    cleared = run(tmp_path, claims, actions=[{"do": "filter", "value": "adversarial"},
+                                             {"do": "filter", "value": "all"}])
+    assert cleared["empty"] == [] and all(r["shown"] for r in cleared["overview"])
+
+
+def test_tabs_follow_the_question_set_and_group_a_split_question(tmp_path):
+    """In questions.json order, not id order, with the questions one template question was
+    split into as one group, and a question with no claim yet still listed. A parent only one
+    question names is no group. Group labels and question text are agent-authored, so they
+    render escaped."""
+    split = "<b>How did the council fund the levy?</b>"
+    qs = QuestionSet(text={"q3": "Who proposed the levy?", "q2a": "What did the council decide?",
+                           "q1": "What did the council decide?",
+                           "q2b": "By what vote did the levy pass?", "q4": "<i>Who opposed it?</i>",
+                           "q5": "Who seconded it?"},
+                     maps_from={}, parent={"q2a": split, "q2b": split, "q5": "Only child"})
+    claims = [claim("q1", "The council approved the levy.", elsewhere(1)),
+              claim("q2b", "Four to one.", elsewhere(2), question="By what vote did the levy pass?"),
+              claim("q2a", "It approved it.", elsewhere(3)),
+              claim("q3", "<img src=x onerror=alert(1)> The mayor.", elsewhere(4),
+                    question="Who proposed the levy?")]
+    result = run(tmp_path, claims, questions=qs)
+    assert [t["tab"] for t in result["tabs"]] == ["", "q3", "q2a", "q2b", "q1", "q4", "q5"]
+    assert [c["qid"] for c in result["claims"]] == ["q3", "q2a", "q2b", "q1"]
+    assert overview(result)["q4"]["progress"] == "", "a question with no claim says so in its badge"
+
+    page = HTMLParser((tmp_path / "review.html").read_text())
+    [group] = page.css("nav .tgroup")
+    assert group.css_first(".glabel").text() == split, "shown as text, not as markup"
+    assert [a.attributes["data-tab"] for a in group.css(".tlink")] == ["q2a", "q2b"]
+    assert not page.css(".glabel b") and not page.css("img")
+    assert not page.css(".oq i") and not page.css(".qhead i") and not page.css(".tlink i")
+    assert "No claim for this question" in panel(page, "q4").text()
+    assert "Only child" not in page.body.text(), "a parent of one question groups nothing"
+
+
+def test_a_conflict_between_two_claims_shows_on_both_tabs_each_linking_to_the_other(tmp_path):
+    """Cross-question things stay visible: `detect()` gives both claims the line, so each tab
+    shows it with a link to the other. A conflict inside one claim links nowhere."""
+    from provenance.conflicts import detect
+
+    claims = [claim("q1", "The levy raises $110,000 a year.", elsewhere(1)),
+              claim("q2", "The levy was estimated at $120,000.", elsewhere(2),
+                    question="What was the levy estimated to raise?")]
+    detect(claims)
+    [line] = claims[0].conflicts
+    assert claims[1].conflicts == [line], "the test needs the one line on both claims"
+    claims[1].conflicts.append("sources disagree on a year: A (2024) vs B (2025)")
+    render(claims, tmp_path, rules=RULES, store=store_id("example", None))
+    page = HTMLParser((tmp_path / "review.html").read_text())
+
+    def links(qid: str) -> list[list[str]]:
+        return [[a.attributes["href"] for a in c.css(".also a")]
+                for c in panel(page, qid).css(".conf")]
+
+    assert links("q1") == [["#q=q2"]]
+    assert links("q2") == [["#q=q1"], []]
+    overview_links = [a.attributes["href"] for a in panel(page, "").css(".conf b a")]
+    assert overview_links == ["#q=q1", "#q=q2"], "the overview's conflicts open their tabs"
+
+    followed = run(tmp_path, claims, hash="#q=q1",
+                   actions=[{"do": "nav", "hash": links("q1")[0][0]}])
+    assert followed["tab"] == "q2"
+
+
+def test_the_overview_shows_a_summary_or_the_start_of_the_answer():
+    """One row per question, so an answer running to paragraphs is cut, at a word and marked.
+    A claim's summary, where it has one (#204), is shown whole instead."""
+    from types import SimpleNamespace
+
+    from provenance.report import OVERVIEW_CHARS, overview_text
+
+    short = claim("q1", "The council\n\napproved   the levy.")
+    assert overview_text(short) == ("The council approved the levy.", False)
+    long = claim("q1", "The council approved the levy. " * 20)
+    text, is_summary = overview_text(long)
+    assert not is_summary and text.endswith("…") and len(text) <= OVERVIEW_CHARS + 1
+    assert long.answer.startswith(text[:-1] + " "), "cut between words, not inside one"
+    summed = SimpleNamespace(answer=long.answer, summary="The council approved it, 4-1.")
+    assert overview_text(summed) == ("The council approved it, 4-1.", True)
+    assert overview_text(SimpleNamespace(answer="A.", summary="  ")) == ("A.", False)
+
+
+def test_no_source_found_shows_under_its_own_question(tmp_path):
+    found = claim("q1", "The council approved the levy.", elsewhere(1))
+    absent = Claim(question_id="q2", question="Was the levy challenged in court?",
+                   answer="No challenge appears in the court's docket.", confidence="not_found")
+    assert absent.status == "not_found"
+    render([found, absent], tmp_path, rules=RULES, store=store_id("example", None))
+    page = HTMLParser((tmp_path / "review.html").read_text())
+    assert "No source found" in panel(page, "q2").text()
+    assert "No source found" not in panel(page, "q1").text()
+    assert "No source found" not in panel(page, "").text()
+
+
+def test_progress_from_a_single_list_build_carries_over(tmp_path):
+    """Nothing about checks changed: the fingerprints, row keys and storage are a single-list
+    build's, so its progress, stored or exported, reads the same in the tabs, and navigating
+    them never touches it."""
+    claims = two_questions()
+    # What a single-list build saved: one row checked, one source flagged with a note.
+    fp = review_fingerprint(claims[0], claims[0].sources[0])
+    saved = {"v": 3, "checked": {fp: key(claims[0])},
+             "sources": {claims[1].sources[0].sid: {"flag": True, "note": "check the vote"}}}
+    for loaded in (run(tmp_path, claims, storage={STORE: json.dumps(saved)},
+                       actions=[{"do": "nav", "hash": "#q=q2"}, {"do": "key", "key": "["}]),
+                   run(tmp_path, claims, actions=[{"do": "import", "text": json.dumps(saved)},
+                                                  {"do": "nav", "hash": "#q=q1"}])):
+        assert rows(loaded)[key(claims[0])]["checked"]
+        flagged = rows(loaded)[key(claims[1])]
+        assert flagged["flagged"] and flagged["note"] == "check the vote"
+        assert (tabs(loaded)["q1"]["count"], tabs(loaded)["q2"]["count"]) == ("1/2", "0/1 ⚑1")
+        assert loaded["tab"] == "q1" and stored(loaded)["checked"] == saved["checked"]
+        assert stored(loaded)["sources"] | saved["sources"] == stored(loaded)["sources"]

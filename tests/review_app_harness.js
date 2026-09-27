@@ -199,6 +199,9 @@ async function main() {
       shown: !r.classList.contains("hidden"),
     })),
     selected: doc.querySelectorAll(".sel").map(el => el.dataset.key),
+    // Each question's panel says when the filter leaves nothing in it.
+    empty: doc.querySelectorAll(".nomatch").filter(n => !n.classList.contains("hidden"))
+      .map(tabOf),
     storage: Object.fromEntries(store),
     rows: doc.querySelectorAll(".src").map(el => ({
       key: el.dataset.key,

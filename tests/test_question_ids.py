@@ -299,6 +299,32 @@ def test_status_with_no_claims_still_reads_the_question_set(tmp_path):
     assert code == 1 and "unreadable question set" in out, out
 
 
+def test_the_review_page_has_a_tab_per_question_in_the_sets_order(tmp_path):
+    """Build hands the page the set it checked against: its order, not id order, and each
+    question's parent, which groups the tabs of a template question split in several. A parent
+    that is not a name (a list, a bool, blank) groups nothing: the set still loads, since only
+    the page reads it."""
+    from selectolax.parser import HTMLParser
+
+    from provenance import questions
+
+    run = _run(tmp_path / "data",
+               [{"id": "q2", "text": FUNDS, "parent": 7}, {"id": "q1", "text": VOTE, "parent": 7},
+                {"id": "q3", "text": "What did they say?", "parent": ["x"]},
+                {"id": "q4", "text": "Who opposed it?", "parent": True},
+                {"id": "q5", "text": "Who seconded it?", "parent": "  "}],
+               [("q1", VOTE), ("q2", FUNDS)])
+    assert questions.load(run / "questions.json").parent == {"q2": "7", "q1": "7"}
+    code, out = _provenance("build", "--data", run)
+    assert code == 0, out
+    page = HTMLParser((run / "out" / "review.html").read_text())
+    assert [a.attributes["data-tab"] or "" for a in page.css("nav .tlink")] == \
+        ["", "q2", "q1", "q3", "q4", "q5"]
+    [group] = page.css("nav .tgroup")
+    assert group.css_first(".glabel").text() == "7"
+    assert [a.attributes["data-tab"] for a in group.css(".tlink")] == ["q2", "q1"]
+
+
 def test_question_text_prints_as_text_not_markup(tmp_path):
     """Both questions are agent-authored, and the difference may be exactly what markup eats:
     a bracketed aside, an emoji code, or a closing tag that raises."""
