@@ -3957,18 +3957,19 @@ def test_every_verify_status_is_usable_failed_or_pending():
 
 
 def test_a_broken_absence_claim_is_not_listed_as_deliberate(tmp_path):
-    """The review app lists not_found claims under "deliberate, not failure". A not_found claim
-    carrying a broken citation is human_review now, so selecting that section by confidence
-    put a failure under a heading telling the reviewer it isn't one."""
+    """The review app marks a not_found claim's tab "deliberate, not failure". A not_found claim
+    carrying a broken citation is human_review now, so selecting it by confidence put a
+    failure under a heading telling the reviewer it isn't one."""
+    from selectolax.parser import HTMLParser
+
     from provenance.report import render
 
     broken = _claim("q7", src(), confidence="not_found")
     broken.sources[0].verification.status = "snippet_not_found"
     clean = _claim("q8", confidence="not_found")
     html = render([broken, clean], tmp_path, title="T", rules=RULES, store="test")[0].read_text()
-    section = html.split("deliberate, not failure</summary>")[1].split("</details>")[0]
-    assert "<b>q8</b>" in section and "<b>q7</b>" not in section
-    assert "No source found (1)" in html
+    tabs = {p.attributes.get("data-tab"): p.text() for p in HTMLParser(html).css(".tab")}
+    assert "deliberate, not failure" in tabs["q8"] and "deliberate, not failure" not in tabs["q7"]
 
 
 # --- staleness is checked in the cache the verdict was stamped from ------------------
