@@ -142,6 +142,12 @@ conflicts, needs-review, researcher notes. Under a filter, `[`/`]` skip the ques
 empty. A conflict between two claims shows on
 both their tabs, each linking to the other, and the overview lists every conflict.
 
+Each claim shows its summary first: one sentence answering the question, which the researcher
+writes from the answer. The answer is behind "details", laid out as paragraphs and bullet lists,
+each finding naming its source. The page lays out only those two and shows anything else as
+typed, since everything on it is agent-written and escaped. A claim written before summaries
+shows its whole answer, badged "no summary".
+
 A claim whose researcher left notes shows them above its sources: the caveats written for the
 person checking it, such as a scan to read by eye, a filing that may not be the newest, or a
 figure a query would not settle. The pipeline doesn't check them, so they are marked
@@ -149,7 +155,7 @@ unverified.
 
 A check belongs to one claim: a source cited by two questions is checked under each
 separately. It also clears itself when what you checked changes, and the row says so: the
-claim (a reworded answer), the excerpt you read (a re-fetch that changes its text or
+claim (a reworded answer or summary), the excerpt you read (a re-fetch that changes its text or
 highlight), or, on a row with no excerpt, the snapshot offered instead (a new one from
 `provenance archive`). A researcher's note added, changed or removed after you checked a
 claim clears your checks on it too: each row you had checked says the note is why, and so
@@ -215,6 +221,8 @@ its id names, is left out of the review app, and the command exits 1.
 | Snapshot holds the cited page | a capture of another URL, a bot check, or one missing the snippet is `archive_unusable` (badged, no link); one that won't load, has nothing to compare against, or misses the snippet but has scanned or blank pages it could be on is `archive_unconfirmed` — warnings, never failures |
 | Corroboration: 1 mechanical, 2 independent publishers adversarial | `human_review` |
 | Claim answers the question its id names in `questions.json` | left out of the review app, and `provenance build` and `provenance status` exit 1; `provenance check-claim` fails the one claim |
+| Summary: one sentence, at most 250 characters, stating no figure, name or quotation the answer doesn't; answer: paragraphs and `- ` bullets only | `provenance check-claim` fails the claim, saying what to change; build renders a claim with no summary as before, badged "no summary" |
+| The answer states a dollar figure or year its snippets carry, where both state some | `human_review`, with the figures in the conflicts section; the summary is asked the same apart, and flagged there without changing the status |
 
 `uv run pytest` covers all of them offline, including the four failure modes that matter:
 fabricated quote, repeated snippet, smart-quote drift, excluded aggregator. The review-app

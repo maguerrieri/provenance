@@ -167,7 +167,7 @@ Do not summarize the source rules for them — the agent definition carries them
    the pass is finished when `N` is 0. **Read the number; don't count rows off the table.**
    The table wraps, and `grep -c unreviewed` has under-reported twice. A stale verdict
    predates the page it judged (or, for a query citation, the query definition), or judged
-   another question or answer than the claim gives now (a retry rewrote it), or was recorded
+   another question, answer or summary than the claim gives now (a retry rewrote it), or was recorded
    before verdicts named their claim (a one-time re-judge of every such verdict), and
    `provenance build` won't apply it, so it counts in `N` until the source is judged again. A source a verifier has nothing to judge on is not in `N`. That
    means its citation failed, is paywalled, was never verified, or changed since the last
@@ -235,7 +235,10 @@ Do not summarize the source rules for them — the agent definition carries them
    is `human_review` with every source green, and its conflict line names the dollar figures
    or years the answer states that none of its snippets do. Hand that line back to a
    researcher: quote the span that carries the figure, or correct the answer. `provenance
-   check-claim` does not catch this yet (#82), so a clean exit there does not rule it out.
+   check-claim` does not catch this yet (#82), so a clean exit there does not rule it out. A
+   line naming the summary's figures instead is a flag on a claim that can still be green:
+   report it with the other conflicts, and hand it back the same way if the summary picked a
+   figure its sources don't give.
    A claim held by a contradiction a retry dropped is also `human_review` with every source
    green, but its conflict line names a source id and a verifier's verdict, not figures: that
    one is the human's (above), not a retry.
