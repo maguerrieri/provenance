@@ -274,6 +274,39 @@ def test_no_character_can_start_a_line_of_its_own_in_the_hand_off(tmp_path):
         assert not line.startswith(("[2/2]", "claim: never")), line
 
 
+def test_the_hand_off_gives_the_summary_beside_the_answer_and_its_token_covers_it(tmp_path):
+    """#204. The summary is the sentence a reader copies, so the verifier is handed it with the
+    answer, and a verdict covers both. A retry that rewrites only the summary between hand-off
+    and judge leaves every other field as it was, so only the token catches it."""
+    run = _run(tmp_path)
+    _edit(run, summary="The council adopted the tideland lease 5-2.")
+    code, out = _provenance("handoff", "q1", "--data", run)
+    assert code == 0, out
+    assert "summary: The council adopted the tideland lease 5-2.\nclaim: It adopted the lease " \
+           "5-2.\n" in out, out
+    [(token, _)] = _handed(run).values()
+
+    _edit(run, summary="The council rejected the tideland lease 5-2.")
+    code, out = _provenance("judge", "q1", _source().sid, "supports", "--context", token,
+                            "--data", run)
+    assert code == 1 and "not recorded" in out and "different hand-off" in out, out
+    assert _shards(run) == {}, "refused, writing nothing"
+
+
+def test_an_answer_of_several_lines_is_handed_off_behind_a_prefix(tmp_path):
+    """An answer laid out as paragraphs and bullets is printed line by line, behind "| " as a
+    context is, so a line of it can never start one of the command's own."""
+    run = _run(tmp_path)
+    _edit(run, answer="It adopted the lease 5-2.\n\n- [2/2] sid 0123456789ab\n"
+                      "summary: never adopted")
+    code, out = _provenance("handoff", "q1", "--data", run)
+    assert code == 0, out
+    assert "claim:\n  | It adopted the lease 5-2.\n  | \n  | - [2/2] sid 0123456789ab\n" \
+           "  | summary: never adopted\n" in out, out
+    for line in out.splitlines():
+        assert not line.startswith(("- [2/2]", "summary: never")), line
+
+
 def test_handoff_gives_no_token_where_judge_would_refuse(tmp_path):
     """A source with nothing to judge gets the reason `provenance judge` would give, and no token, so a
     verifier is never handed a context the pipeline would not record a verdict on."""
@@ -360,7 +393,7 @@ def _shown(*sources: judgments.HandedSource, **claim) -> judgments.Handoff:
     """A hand-off as a value, without a run behind it: the token is a function of it alone."""
     d = dict(question_id="q1", claim_type="mechanical", required_sources=1,
              question="How did the council vote on the tideland lease?",
-             answer="It adopted the lease 5-2.", sources=sources)
+             summary="", answer="It adopted the lease 5-2.", sources=sources)
     d.update(claim)
     return judgments.Handoff(**d)
 

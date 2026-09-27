@@ -231,7 +231,8 @@ def _claim_citing(root: Path, url: str, snippet: str = SNIPPET) -> Path:
     source = _official(url)
     source.snippet = snippet
     path.write_text(Claim(question_id="q1", question="What fee schedule did the board adopt?",
-                          answer="The revised one.", sources=[source]).model_dump_json())
+                          answer="The revised one.", summary="The revised one.",
+                          sources=[source]).model_dump_json())
     return path
 
 
@@ -335,7 +336,7 @@ def test_a_kept_scan_is_handed_on_beside_an_unnamed_authority(tmp_path, monkeypa
     path = root / "claims" / "q1.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(Claim(question_id="q1", question="What fee schedule did the board adopt?",
-                          answer="The revised one.",
+                          answer="The revised one.", summary="The revised one.",
                           sources=[source, _official(MIRROR)]).model_dump_json())
     code, out = _provenance(monkeypatch, "check-claim", path, "--data", root)
     assert code == 1 and "PDF has no text layer" in out, out

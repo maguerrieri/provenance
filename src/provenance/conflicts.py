@@ -40,6 +40,24 @@ def money_values(text: str) -> set[float]:
     return vals
 
 
+# Money written out, "5,000 dollars" or "8.2 million dollars": the same figure as "$5,000" or
+# "$8,200,000". Read by the summary's checks only (`dollar_values()`). The answer's gate reads
+# `money_values()`, as its cost was measured.
+DOLLARS = re.compile(r"(\d[\d,]*(?:\.\d+)?)(?:\s*|-)(?:(" + "|".join(_MULT)
+                     + r")(?:\s+|-))?dollars?\b", re.I)
+
+
+def dollar_values(text: str) -> set[float]:
+    """Every dollar figure in `text`, written with a $ (`money_values()`) or with "dollars"."""
+    vals = money_values(text)
+    for amt, unit in DOLLARS.findall(text):
+        try:
+            vals.add(float(Decimal(amt.replace(",", "")) * _MULT.get((unit or "").lower(), 1)))
+        except ArithmeticError:
+            continue
+    return vals
+
+
 def money(v: float) -> str:
     """A dollar figure as a reader should see it: whole dollars from $10 up, cents below $10
     and on any fractional amount. Whole dollars everywhere printed $0.40 and $0.25 both as
@@ -64,6 +82,22 @@ def year_values(text: str) -> set[str]:
     return {m.group(0) for m in YEAR.finditer(text)}
 
 
+def _unsourced(text: str, name: str, snip: str, money_in=money_values) -> dict[str, str]:
+    """`text` states a dollar figure or a year, `snip` states some, and none of `text`'s is among
+    them: one line per kind ("money", "year"), naming `text` as `name`, with dollar figures read
+    by `money_in`."""
+    found = {}
+    t_money, s_money = money_in(text), money_in(snip)
+    if t_money and s_money and not (t_money & s_money):
+        found["money"] = (f"dollar figure in the {name} ({_amounts(t_money)}) does not appear in "
+                          f"any cited snippet ({_amounts(s_money)})")
+    t_year, s_year = year_values(text), year_values(snip)
+    if t_year and s_year and not (t_year & s_year):
+        found["year"] = (f"year in the {name} ({', '.join(sorted(t_year))}) does not appear in "
+                         f"any cited snippet ({', '.join(sorted(s_year))})")
+    return found
+
+
 def unsourced_figures(c: Claim) -> list[str]:
     """Conflict kind (2): the answer states a dollar figure or a year, its snippets state some,
     and none of the answer's is among them. The answer asserts what none of its evidence says.
@@ -71,23 +105,35 @@ def unsourced_figures(c: Claim) -> list[str]:
     `Claim.status` sends such a claim to review, and `detect()` lists it, both from this one
     function, so the status and the conflicts section cannot disagree about it. Why this kind
     gates and (1) does not: CLAUDE.md, "The judgment pass is not advisory"."""
+    return list(_unsourced(c.answer, "answer", " ".join(s.snippet for s in c.sources)).values())
+
+
+def unsourced_summary_figures(c: Claim) -> list[str]:
+    """Kind (2) asked of the summary apart from the answer (#204): the sentence a reader copies,
+    whose only figure is one no snippet carries, even beside an answer with a sourced one.
+
+    A flag, not a gate. Its figures are the answer's (check-claim holds it to that), so it fires
+    where the answer passes on another figure, and a sound claim can do that: a summary giving a
+    total the snippets state only in parts, or a figure a query citation reproduces (#81). The
+    gate's cost was measured on answers alone, so it gates on this only once that is measured
+    too: CLAUDE.md, "A claim's summary is evidence-bearing text"."""
+    if not c.summary:
+        return []
     snip = " ".join(s.snippet for s in c.sources)
-    found = []
-    a_money, s_money = money_values(c.answer), money_values(snip)
-    if a_money and s_money and not (a_money & s_money):
-        found.append(f"dollar figure in the answer ({_amounts(a_money)}) does not appear in any "
-                     f"cited snippet ({_amounts(s_money)})")
-    a_year, s_year = year_values(c.answer), year_values(snip)
-    if a_year and s_year and not (a_year & s_year):
-        found.append(f"year in the answer ({', '.join(sorted(a_year))}) does not appear in any "
-                     f"cited snippet ({', '.join(sorted(s_year))})")
-    return found
+    # Dollar figures however written, as check-claim reads the summary (`answers`): a summary may
+    # say "5,000 dollars", and a snippet's "5,000 dollars" is the same figure. A kind the
+    # answer's gate already names is left out: the summary's figures are the answer's, so the
+    # line would say the same thing twice, and read as two things to fix.
+    gated = _unsourced(c.answer, "answer", snip)
+    return [line for kind, line in _unsourced(c.summary, "summary", snip,
+                                              money_in=dollar_values).items()
+            if kind not in gated]
 
 
 def detect(claims: list[Claim]) -> list[Claim]:
     """Flag four kinds of conflict:
     1. sources within one claim disagreeing with each other;
-    2. the answer's figures/dates vs. those in its own snippets;
+    2. the answer's figures/dates, and the summary's, vs. those in its own snippets;
     3. two claims asserting near-miss amounts;
     4. a source a verifier judged to contradict its claim, still cited or since dropped.
 
@@ -96,8 +142,8 @@ def detect(claims: list[Claim]) -> list[Claim]:
     invisible to (2), which passes as long as the answer matches *one* of them. (4) is the
     same finding made by the judgment pass rather than by comparing figures.
 
-    (2) and (4) also send the claim to review (`Claim.status`); (1) and (3) are flags for the
-    reviewer. Why the line falls there: CLAUDE.md, "The judgment pass is not advisory".
+    (2) and (4) also send the claim to review (`Claim.status`); (1), (3) and (2) asked of the
+    summary are flags for the reviewer. Why the line falls there: CLAUDE.md, "The judgment pass is not advisory".
 
     (4) reads the support verdicts, so run this after they are settled (`cli._settle()` does):
     on a claim file as loaded, `support` is whatever the file says, recorded or not.
@@ -146,8 +192,8 @@ def detect(claims: list[Claim]) -> list[Claim]:
                             f"sources disagree on a year: {pub_a} ({', '.join(sorted(vals_a))}) "
                             f"vs {pub_b} ({', '.join(sorted(vals_b))})")
 
-        # (2) the answer against its own citations
-        c.conflicts += unsourced_figures(c)
+        # (2) the answer against its own citations, and the summary apart, as a flag
+        c.conflicts += unsourced_figures(c) + unsourced_summary_figures(c)
 
     for line, ids in near_misses(claims):
         for c in claims:
@@ -164,7 +210,8 @@ def near_misses(claims: list[Claim]) -> list[tuple[str, set[str]]]:
     can carry the same one without it being between them."""
     by_money: dict[float, set[str]] = defaultdict(set)
     for c in claims:
-        for v in money_values(c.answer):
+        # One reading for both, however written: a flag, so no measured gate is widened.
+        for v in dollar_values(c.answer) | dollar_values(c.summary or ""):
             by_money[v].add(c.question_id)
     found = []
     amounts = sorted(by_money)

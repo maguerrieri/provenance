@@ -20,6 +20,7 @@ from rich.markup import escape
 from rich.table import Table
 from rich.text import Text
 
+from . import answers
 from . import archive as arch
 from . import project as proj
 from .fetch import fetch as fetch_url
@@ -624,8 +625,8 @@ def _report_stale(stale: list[str]) -> None:
     con.print(f"[yellow]{len(stale)} verdict(s) no longer describe what they judged, and were NOT "
               f"applied. Each predates its page, or has no cached page to check against, or "
               f"judged a copy its context no longer comes from (a replaced snapshot), or was "
-              f"formed under another query definition, or judged another question or answer "
-              f"than its claim gives now (or names none) — re-judge those sources (after `provenance "
+              f"formed under another query definition, or judged another question, answer "
+              f"or summary than its claim gives now (or names none) — re-judge those sources (after `provenance "
               f"verify`, where the page is missing):[/]")
     for x in stale[:8]:
         # Escaped: a reason can name a snapshot, whose URL embeds the agent-authored one.
@@ -1526,7 +1527,7 @@ def _handed(claim, cache_root: Path, *, rules: dict[str, tuple[str, ...]], judge
             s.sid, v.status, s.publisher, s.author, s.date, s.source_type,
             TIER_LABEL[tier(s, rules)], s.url, s.page, s.snippet, context, why))
     return judgments.Handoff(claim.question_id, claim.claim_type, claim.required_sources,
-                             claim.question, claim.answer, tuple(sources))
+                             claim.question, claim.summary or "", claim.answer, tuple(sources))
 
 
 def _cut(text: str, n: int) -> str:
@@ -1596,7 +1597,18 @@ def _print_handoff(h, run_args: str) -> None:
 
     line(f"{h.question_id} ({h.claim_type}, needs {h.required_sources} "
          f"source(s)): {_printable(h.question)}", "bold")
-    line(f"claim: {_printable(h.answer)}")
+    # The summary is part of what is judged (#204): the claim's first sentence, which a reader
+    # copies. One line, as check-claim requires, so any break in it shows as an escape.
+    if h.summary:
+        line(f"summary: {_printable(h.summary)}")
+    # An answer of paragraphs and bullets prints line by line, behind `| ` as a context does,
+    # so none of its lines can start one of this command's own.
+    if len(said := h.answer.splitlines()) > 1:
+        line("claim:")
+        for text in said:
+            line(f"  | {_printable(text)}")
+    else:
+        line(f"claim: {_printable(h.answer)}")
     for n, s in enumerate(h.sources, 1):
         token = judgments.context_token(h, s.sid) if s.context is not None else ""
         line("")
@@ -1653,9 +1665,9 @@ def judge(question_id: str, sid: str, verdict: str, note: str = "", context: str
     query run changed since the verifier was handed it, or beside other sources than it was
     handed, describes what the verifier never read.
 
-    The verdict also records the claim's fingerprint (its question and answer as the claim file
-    reads now), so a retry that rewrites the claim after this can be told apart from one that
-    did not: `provenance build` applies the verdict only while the claim still asks and answers that.
+    The verdict also records the claim's fingerprint (its question, answer and summary as the
+    claim file reads now), so a retry that rewrites the claim after this can be told apart from
+    one that did not: `provenance build` applies the verdict only while the claim still says that.
     """
     from . import judgments
 
@@ -1923,7 +1935,7 @@ def show_judgments(data: Path = None, question_id: str = "",
                   f"will not apply them. Each predates its page, or has no cached page to check "
                   f"against, or judged a copy its context no longer comes from (a replaced "
                   f"snapshot), or was formed under another query definition, or judged another "
-                  f"question or answer than its claim gives now (or names none). "
+                  f"question, answer or summary than its claim gives now (or names none). "
                   + (f"{stale_waiting} are in the count below and need judging again. "
                      if stale_waiting else "")
                   + (f"{stale - stale_waiting} have nothing a verifier can judge yet (above)."
@@ -2349,6 +2361,17 @@ def check_claim(path: Path, data: Path = None, cache: Path = None, project: Path
             con.print(f"  [red]question[/] is not the one {where} asks at {qid}\n"
                       f"      Copy it exactly as you were given it, into `question`:")
             con.print(Text(f"      yours: {answered!r}\n      asked: {text!r}"), soft_wrap=True)
+        # The summary is what the review page shows first and what a reader copies, so it may
+        # state nothing the answer doesn't (#204). Build renders a claim without one, as it did
+        # before summaries; a claim handed on now has one.
+        if problems := answers.summary_problems(claim.summary, claim.answer):
+            failed.add("fix")
+            con.print("  [red]summary[/] " + escape(_printable(
+                "; ".join(problems) + f"\n      {answers.HOW_TO_WRITE}", lines=True)))
+        if problems := answers.format_problems(claim.answer):
+            failed.add("fix")
+            con.print("  [red]answer format[/] " + escape(_printable(
+                "; ".join(problems) + f"\n      {answers.FORMAT_RULE}", lines=True)))
         for src_ in claim.sources:
             verify_source(src_, cache_root, rules=rules)
             st = src_.verification.status

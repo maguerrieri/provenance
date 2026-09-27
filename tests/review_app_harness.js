@@ -165,6 +165,13 @@ async function main() {
       }
       doc.dispatch("keydown", doc.body, {key: a.key, metaKey: !!a.meta, ctrlKey: !!a.ctrl,
                                          altKey: !!a.alt, shiftKey: !!a.shift});
+    } else if (a.do === "key-on-toggle") {
+      // Open the row's tab and select the row, as "key" does, then press a key with a
+      // claim's disclosure focused.
+      location.hash = hashFor(tabOf(row(doc, a.row)));
+      doc.dispatch("click", row(doc, a.row));
+      const toggle = row(doc, a.on).closest(".claim").querySelector(".toggle");
+      doc.dispatch("keydown", toggle, {key: a.key});
     } else if (a.do === "nav") {
       location.hash = a.hash;                     // as a tab's link, or a pasted URL, does
     } else if (a.do === "flag") {
@@ -228,6 +235,8 @@ async function main() {
       // Whether the claim says its researcher's note is new, changed or removed since its rows
       // were checked.
       noteChanged: !c.querySelector(".nchanged").classList.contains("hidden"),
+      // Whether the answer behind "details" is open; null for a claim with no summary.
+      answerOpen: c.querySelector(".more") ? !!c.querySelector(".more").open : null,
     })),
     progress: doc.getElementById("pct").textContent,
     notice: notice.classList.contains("hidden") ? ""

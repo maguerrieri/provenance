@@ -417,7 +417,8 @@ def _run(tmp_path, s: Source):
     for run in (data, cand):
         (run / "questions.json").write_text(json.dumps([{"id": "q1", "text": "?"}]))
     (cand / "claims" / "q1.json").write_text(
-        Claim(question_id="q1", question="?", answer="a", sources=[s]).model_dump_json())
+        Claim(question_id="q1", question="?", answer="a", summary="a",
+              sources=[s]).model_dump_json())
     return cand
 
 
@@ -442,6 +443,22 @@ def test_agent_written_claims_and_verdicts_print_through_printable(tmp_path):
 
     code, out = _provenance("check-claim", cand / "claims" / "q1.json", "--data", cand)
     assert code == 0 and f"verified Gazette{SHOWN}: " in out, out
+
+
+def test_a_summary_prints_through_printable(tmp_path):
+    """#204. The summary is agent-written: check-claim quotes what in it the answer lacks, and
+    the hand-off prints it to the verifier."""
+    cand = _run(tmp_path, _source())
+    path = cand / "claims" / "q1.json"
+    raw = json.loads(path.read_text())
+    raw["summary"] = f'Quoted "x{CTRL}" as Roe{CTRL} said.'
+    path.write_text(json.dumps(raw))
+
+    code, out = _provenance("check-claim", path, "--data", cand)
+    assert code == 1 and "it runs over more than one line" in out, out
+    assert f"quotation(s) the answer doesn't hold: 'x{SHOWN}'" in out, out
+    code, out = _provenance("handoff", "q1", "--data", cand)
+    assert code == 0 and f'summary: Quoted "x{SHOWN}" as Roe{SHOWN} said.' in out, out
 
 
 def test_an_unattributed_citation_names_its_arguer_through_printable(tmp_path):

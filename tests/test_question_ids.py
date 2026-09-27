@@ -45,7 +45,7 @@ def _run(root, questions, claims, *, subject=False):
         (root / "questions.json").write_text(text)
     for qid, question in claims:
         (root / "claims" / f"{qid}.json").write_text(
-            Claim(question_id=qid, question=question, answer="a").model_dump_json())
+            Claim(question_id=qid, question=question, answer="a", summary="a").model_dump_json())
     return root
 
 
@@ -355,7 +355,7 @@ def _cited(root, run, qid, question):
                     source_type="bylined_journalism", snippet=SNIPPET)
     path = run / "claims" / f"{qid}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(Claim(question_id=qid, question=question, answer="Against.",
+    path.write_text(Claim(question_id=qid, question=question, answer="Against.", summary="Against.",
                           sources=[source]).model_dump_json())
     return path
 

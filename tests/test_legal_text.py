@@ -224,7 +224,8 @@ def test_check_claim_fails_legal_text_with_no_effective_date_or_version(tmp_path
     def check(date):
         cited = _source(url=url, date=date, author="Code office", secondary_host_ack=ack)
         claim = Claim(question_id="q1", question="What does the code say about setbacks?",
-                      answer="It bars a permit within the setback.", sources=[cited])
+                      answer="It bars a permit within the setback.",
+                      summary="It bars a permit within the setback.", sources=[cited])
         path.write_text(claim.model_dump_json())
         return _provenance(monkeypatch, "check-claim", path, "--data", root)
 

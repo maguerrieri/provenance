@@ -404,7 +404,8 @@ def test_a_cache_the_project_puts_elsewhere_is_the_one_every_command_uses(tmp_pa
     s = Source(url=URL, publisher="Example Gazette", author="A. Reporter", date="2030-05-14",
                source_type="bylined_journalism", snippet=SNIPPET)
     (cand / "claims" / "q1.json").write_text(
-        Claim(question_id="q1", question="?", answer="a", sources=[s]).model_dump_json())
+        Claim(question_id="q1", question="?", answer="a", summary="a",
+              sources=[s]).model_dump_json())
     code, out = _provenance("verify", "--data", cand)
     assert code == 0 and "q1 verified" in out, out
     for args in (["judgments"], ["status"], ["build"]):
@@ -553,7 +554,7 @@ def _symlinked_subject(tmp_path) -> tuple[Path, Path]:
     (root / "ng").symlink_to(real)
     (real / "questions.json").write_text(json.dumps([{"id": "q1", "text": "?"}]))
     (real / "claims" / "q1.json").write_text(
-        Claim(question_id="q1", question="?", answer="a").model_dump_json())
+        Claim(question_id="q1", question="?", answer="a", summary="a").model_dump_json())
     return root, root / "ng"
 
 
