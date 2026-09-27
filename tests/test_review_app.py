@@ -851,6 +851,27 @@ def test_brackets_switch_tabs_and_j_k_stay_within_one(tmp_path):
     assert not any(r["checked"] or r["flagged"] for r in none["rows"])
 
 
+@pytest.mark.parametrize("held", [{"meta": True}, {"ctrl": True}, {"alt": True}],
+                         ids=["cmd", "ctrl", "alt"])
+def test_a_key_with_a_modifier_held_is_the_browsers(tmp_path, held):
+    """The page's keys are bare ones. With ⌘, Ctrl or Alt held the browser's shortcut runs,
+    and the page must do nothing: ⌘F (find, the reviewer's whole method) flagged the selected
+    row, ⌘C overwrote what was just copied with its snippet, and ⌘A opened its archive (#206)."""
+    claims = two_questions()
+    row = key(claims[0])
+    actions = [{"do": "key", "row": row, "key": k, **held} for k in "fcaoj k"]
+    pressed = run(tmp_path, claims, actions=actions + [{"do": "key", "key": "]", **held}])
+    assert not any(r["flagged"] or r["checked"] for r in pressed["rows"])
+    assert pressed["copied"] == [] and pressed["opened"] == []
+    assert pressed["selected"] == [row] and pressed["tab"] == "q1"
+
+    # The same keys bare act, and Shift is not a modifier here: it makes another character.
+    bare = run(tmp_path, claims, actions=[{"do": "key", "row": row, "key": k} for k in "fco"]
+               + [{"do": "key", "row": row, "key": " ", "shift": True}])
+    assert rows(bare)[row]["flagged"] and rows(bare)[row]["checked"]
+    assert bare["copied"] == [SNIPPET] and bare["opened"] == ["source"]
+
+
 def test_each_tab_and_its_overview_row_carry_its_progress(tmp_path):
     """What is left is visible without opening the tab: checked of total, flagged, and rows
     whose check lapsed since, on the tab's label and in words on the overview."""

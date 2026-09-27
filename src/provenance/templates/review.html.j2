@@ -615,8 +615,12 @@ function focus(scroll = true){
 }
 document.addEventListener('keydown', e => {
   if (/input|textarea|select/i.test(e.target.tagName)) return;
-  // [ and ] switch tabs, the overview first. Not with a modifier: ⌘[ is the browser's Back.
-  if ((e.key === '[' || e.key === ']') && !(e.metaKey || e.ctrlKey || e.altKey)){
+  // Every key here is a bare one. With ⌘, Ctrl or Alt held it is the browser's: ⌘F is find,
+  // and flagged the selected row; ⌘C is copy, and overwrote what was copied with the snippet;
+  // ⌘[ is Back. Shift is left alone: it makes another character, not a shortcut.
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  // [ and ] switch tabs, the overview first.
+  if (e.key === '[' || e.key === ']'){
     e.preventDefault();
     const i = tabIds.indexOf(curTab) + (e.key === ']' ? 1 : -1);
     openTab(tabIds[Math.max(0, Math.min(i, tabIds.length - 1))]);

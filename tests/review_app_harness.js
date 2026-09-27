@@ -9,7 +9,8 @@
 // A write to a key starting with one of "full" throws, as a full localStorage does.
 //
 // and gets back {"storage": ..., "rows": [...], "claims": [...], "notice": ..., "alerts": [...],
-// "tab": ..., "tabs": [...], "overview": [...], "hash": ..., "lost": ...}.
+// "tab": ..., "tabs": [...], "overview": [...], "hash": ..., "lost": ..., "copied": [...],
+// "opened": [...]}.
 //
 // The DOM supports only what the page uses. A selector it doesn't know throws, so a template
 // change that needs more fails the test loudly rather than passing against a stub that
@@ -64,7 +65,7 @@ class El {
   }
   addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
   focus() { this.doc.activeElement = this; }
-  click() { this.doc.dispatch("click", this); }
+  click() { this.doc.clicked.push(this); this.doc.dispatch("click", this); }
   scrollIntoView() {}
 }
 
@@ -72,6 +73,7 @@ class Doc {
   constructor(tree) {
     this.activeElement = null;
     this.listeners = {};
+    this.clicked = [];          // every element the page clicked itself, as el.click() does
     this.body = new El(tree, null, this);
   }
   querySelectorAll(sel) { return this.body.querySelectorAll(sel); }
@@ -106,6 +108,7 @@ async function main() {
   const doc = new Doc(input.tree);
   const store = new Map(Object.entries(input.storage || {}));
   const alerts = [];
+  const copied = [];            // what the page wrote to the clipboard
   // A browser fires hashchange when the fragment changes, and not when it is set to what it
   // already is. It fires it later, as a task; here it fires at once, which the page can't tell
   // apart, since every action is awaited.
@@ -137,7 +140,7 @@ async function main() {
         store.set(k, String(v));
       },
     },
-    navigator: {clipboard: {writeText() {}}},
+    navigator: {clipboard: {writeText: text => copied.push(String(text))}},
     alert: msg => alerts.push(String(msg)),
     Blob: class {},
     URL: {createObjectURL: () => "blob:"},
@@ -156,7 +159,8 @@ async function main() {
         location.hash = hashFor(tabOf(row(doc, a.row)));
         doc.dispatch("click", row(doc, a.row));
       }
-      doc.dispatch("keydown", doc.body, {key: a.key, metaKey: !!a.meta});
+      doc.dispatch("keydown", doc.body, {key: a.key, metaKey: !!a.meta, ctrlKey: !!a.ctrl,
+                                         altKey: !!a.alt, shiftKey: !!a.shift});
     } else if (a.do === "nav") {
       location.hash = a.hash;                     // as a tab's link, or a pasted URL, does
     } else if (a.do === "flag") {
@@ -224,6 +228,10 @@ async function main() {
       : doc.getElementById("migrated-text").textContent,
     fileInput: doc.getElementById("file").value,
     alerts,
+    copied,
+    // The links the page followed by clicking them itself (o opens the source, a the archive).
+    opened: doc.clicked.filter(el => el.tagName === "A").map(el => el.classList.contains("arch")
+                                                              ? "archive" : "source"),
   }));
 }
 
