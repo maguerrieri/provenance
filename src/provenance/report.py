@@ -19,7 +19,7 @@ from markupsafe import Markup
 from . import queries
 from .conflicts import near_misses
 from .models import QID_PATTERN, Claim, Source
-from .questions import QuestionSet
+from .questions import QuestionSet, fold
 from .sources import ARGUED, TIER_LABEL, bare_host, domain, tier, why_not_nameable
 from .verify import secondary_host, unacked_copy
 
@@ -195,16 +195,17 @@ def tab_groups(claims: list, questions: QuestionSet | None) -> list[SimpleNamesp
                                claims=held)
 
     groups: list[SimpleNamespace] = []
-    by_parent: dict[str, SimpleNamespace] = {}
+    by_parent: dict[str, SimpleNamespace] = {}   # by the parent folded, as questions compare
     for qid, asked in listed.items():
         label = parents.get(qid)
         if label is None:
             groups.append(SimpleNamespace(label=None, tabs=[tab(qid, asked)]))
-        elif label in by_parent:
-            by_parent[label].tabs.append(tab(qid, asked))
+        elif (key := fold(label)) in by_parent:
+            by_parent[key].tabs.append(tab(qid, asked))
         else:
-            by_parent[label] = SimpleNamespace(label=label, tabs=[tab(qid, asked)])
-            groups.append(by_parent[label])
+            # Labelled as its first question gives it.
+            by_parent[key] = SimpleNamespace(label=label, tabs=[tab(qid, asked)])
+            groups.append(by_parent[key])
     for qid in sorted(by_id.keys() - listed.keys(), key=qid_sort_key):
         groups.append(SimpleNamespace(label=None, tabs=[tab(qid, "")]))
     for g in groups:
@@ -306,9 +307,9 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "citation review"
                 query_provenance=query_provenance(s)))
         return views
 
-    # Worked out again, as `detect()` works them out, rather than read from the lines: which
-    # claims a line is between is not in its text.
-    between = {line: sorted(ids, key=qid_sort_key) for line, ids in near_misses(claims)}
+    # Worked out again with the function `detect()` appends from, never parsed out of a line's
+    # text, as `Claim.status` works out `unsourced_figures()`. In the order the line names them.
+    between = {line: sorted(ids) for line, ids in near_misses(claims)}
 
     # Build explicit view objects rather than writing render-only attributes onto the
     # models: assigning into a pydantic instance's __dict__ shadows computed properties

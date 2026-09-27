@@ -995,7 +995,8 @@ skip without node only outside CI, and the fingerprint tests, which need no node
 
 **Tabs are navigation, never progress (#205).** The page has an overview and a tab per question,
 in the run's `questions.json` order (`report.tab_groups()`; build hands `render()` the set its
-gate checked against), grouped by `parent`. Nothing about a check changed with them: the
+gate checked against), grouped by `parent`, compared as question text is (`questions.fold()`).
+Nothing about a check changed with them: the
 fingerprints, row keys and storage are a single-list build's, so its progress carries over, and a
 test holds an export from one to the tabs. The tab the viewer had open last is remembered under a
 key of its own (`provenance:<store>:tab`), never inside STORE, so it is never exported, imported

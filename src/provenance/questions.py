@@ -139,10 +139,14 @@ def same_question(a: str, b: str) -> bool:
 
     Composed first: `normalize()` folds one character at a time, so it never joins an "e" and
     a combining accent into the "é" they print as."""
-    def folded(s: str) -> str:
-        return normalize(unicodedata.normalize("NFC", s))[0]
+    return fold(a) == fold(b)
 
-    return folded(a) == folded(b)
+
+def fold(s: str) -> str:
+    """`s` as `same_question()` compares it: composed, then through `normalize()`. The review
+    page groups tabs by a parent folded the same way, so two copies of one template question
+    that drifted on quotes or spacing are one group."""
+    return normalize(unicodedata.normalize("NFC", s))[0]
 
 
 def check(claims: list[Claim], questions: QuestionSet) -> Findings:
