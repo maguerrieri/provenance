@@ -18,7 +18,11 @@ h1{font-size:20px;margin:0 0 4px}
 padding:10px 12px;border-radius:6px;font-size:13.5px;margin-bottom:16px}
 .top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);
 margin-bottom:14px}
-.tabs{display:flex;gap:5px;flex-wrap:wrap;align-items:center;padding-top:10px}
+/* Three rows at most, scrolled past that: the strip is pinned, and a run of many questions
+   would otherwise cover the page it is for. */
+.tabs{display:flex;gap:5px;flex-wrap:wrap;align-items:center;padding-top:10px;max-height:6.4em;
+overflow-y:auto}
+.tconf{color:var(--bad);font-size:11.5px}
 .tlink{font-size:13px;text-decoration:none;color:var(--fg);background:var(--card);
 border:1px solid var(--line);border-radius:6px;padding:2px 8px;white-space:nowrap}
 .tlink:hover{border-color:var(--acc)}
@@ -112,11 +116,15 @@ The pipeline already checked every snippet is present <i>exactly once</i>; your 
 
 <div class="top">
 <nav class="tabs">
-  <a class="tlink" href="#overview" data-tab="">Overview</a>
+  {#- The conflicts are listed on the overview, and a reviewer can open another tab first, so
+      the overview's label and each conflicted question's say so. -#}
+  <a class="tlink" href="#overview" data-tab="">Overview{% if conflict_claims %}
+    <span class="tconf" title="conflicts to resolve first">⚠{{ conflict_claims|length }}</span>{% endif %}</a>
   {% for g in groups %}
   {% if g.label is not none %}<span class="tgroup"><span class="glabel" title="{{ g.label }}">{{ g.label }}</span>{% endif %}
   {% for q in g.tabs %}<a class="tlink{{ ' review' if q.claims and q.claims[0].status in ('human_review', 'pending') }}"
-     href="#q={{ q.qid }}" data-tab="{{ q.qid }}" title="{{ q.question }}">{{ q.qid }} <span class="tcount"></span></a>
+     href="#q={{ q.qid }}" data-tab="{{ q.qid }}" title="{{ q.question }}">{{ q.qid }} <span class="tcount"></span>
+     {%- if q.claims|selectattr('conflicts')|list %} <span class="tconf" title="conflict">⚠</span>{% endif %}</a>
   {% endfor %}
   {% if g.label is not none %}</span>{% endif %}
   {% endfor %}
@@ -370,14 +378,17 @@ function remembered(){
   const id = stored(TAB);
   return id !== null && tabIds.includes(id) ? id : '';
 }
-function show(id){
+// The row selected in each tab, so going back to one finds the reviewer's place in it.
+const selIn = new Map();
+function show(id, remember = true){
   // A tab opens at its top, not where the last one was. Not the first one shown: after a
   // reload, the browser puts the reviewer back where they were.
-  if (curTab !== null && id !== curTab) window.scrollTo(0, 0);
+  if (curTab !== null && id !== curTab) { window.scrollTo(0, 0); selIn.set(curTab, cur); }
   curTab = id;
+  if (selIn.has(id)) cur = selIn.get(id);
   for (const p of panels) p.classList.toggle('hidden', p.dataset.tab !== id);
   for (const [t, l] of tlinks) l.classList.toggle('cur', t === id);
-  try { localStorage.setItem(TAB, id); } catch (e) {}
+  if (remember) try { localStorage.setItem(TAB, id); } catch (e) {}
   focus(false);
 }
 // Shows the tab the fragment names. A link naming a question this page does not have (a
@@ -389,7 +400,8 @@ function route(){
   note.textContent = lost ? "This link names a question this page does not have: "
     + location.hash.slice(3, 80) + ". Showing the overview instead." : "";
   note.classList.toggle('hidden', !lost);
-  show(id !== null ? id : lost ? '' : remembered());
+  // The overview a bad link falls back to is not the viewer's choice, so it is not remembered.
+  show(id !== null ? id : lost ? '' : remembered(), !lost);
 }
 function openTab(id){
   const h = id ? '#q=' + encodeURIComponent(id) : '#overview';

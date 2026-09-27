@@ -825,6 +825,11 @@ def test_the_last_tab_is_remembered_for_this_viewer_only(tmp_path):
     full = run(tmp_path, claims, full=["provenance:"], actions=[{"do": "nav", "hash": "#q=q1"}])
     assert full["tab"] == "q1" and TAB not in full["storage"]
 
+    # A link to a question the page doesn't have opens the overview, which the viewer didn't
+    # choose, so the tab they had open is still the one remembered.
+    stale = run(tmp_path, claims, storage=visited["storage"], hash="#q=q9")
+    assert stale["tab"] == "" and stale["storage"][TAB] == "q2"
+
 
 def test_brackets_switch_tabs_and_j_k_stay_within_one(tmp_path):
     claims = two_questions()
@@ -842,6 +847,13 @@ def test_brackets_switch_tabs_and_j_k_stay_within_one(tmp_path):
     down = run(tmp_path, claims, actions=[{"do": "key", "row": key(claims[0]), "key": "j"},
                                           {"do": "key", "key": "j"}, {"do": "key", "key": "j"}])
     assert down["tab"] == "q1" and down["selected"] == [key(claims[0], 1)]
+    # Going back to a tab finds the row selected in it, so space checks the one the reviewer
+    # was on, not the tab's first.
+    back = run(tmp_path, claims, actions=[{"do": "key", "row": key(claims[0]), "key": "j"},
+                                          {"do": "key", "key": "]"}, {"do": "key", "key": "["},
+                                          {"do": "key", "key": " "}])
+    assert back["tab"] == "q1" and back["selected"] == [key(claims[0], 1)]
+    assert rows(back)[key(claims[0], 1)]["checked"] and not rows(back)[key(claims[0])]["checked"]
     # A tab opens on its first row, and space checks the row selected in it.
     ticked = run(tmp_path, claims, actions=[{"do": "key", "key": "]"}, {"do": "key", "key": "]"},
                                             {"do": "key", "key": " "}])
@@ -957,11 +969,15 @@ def test_tabs_follow_the_question_set_and_group_a_split_question(tmp_path):
     question names is no group. Group labels and question text are agent-authored, so they
     render escaped."""
     split = "<b>How did the council fund the levy?</b>"
+    # A copy of it that drifted as copy-paste does (spacing, a curly quote, case) is the same
+    # parent, as a question that drifted so is the same question.
+    drifted = "<b>How did the  Council fund the levy?</b>".replace("?", "’?")
+    split = split.replace("?", "'?")
     qs = QuestionSet(text={"q3": "Who proposed the levy?", "q2a": "What did the council decide?",
                            "q1": "What did the council decide?",
                            "q2b": "By what vote did the levy pass?", "q4": "<i>Who opposed it?</i>",
                            "q5": "Who seconded it?"},
-                     maps_from={}, parent={"q2a": split, "q2b": split, "q5": "Only child"})
+                     maps_from={}, parent={"q2a": split, "q2b": drifted, "q5": "Only child"})
     claims = [claim("q1", "The council approved the levy.", elsewhere(1)),
               claim("q2b", "Four to one.", elsewhere(2), question="By what vote did the levy pass?"),
               claim("q2a", "It approved it.", elsewhere(3)),
@@ -1009,6 +1025,11 @@ def test_a_conflict_between_two_claims_shows_on_both_tabs_each_linking_to_the_ot
     assert links("q2") == [["#q=q1"], []]
     overview_links = [a.attributes["href"] for a in panel(page, "").css(".conf b a")]
     assert overview_links == ["#q=q1", "#q=q2"], "the overview's conflicts open their tabs"
+    # The list is on the overview, and a reviewer may open another tab first, so the tabs say
+    # there are conflicts: the overview's with how many claims have one, each claim's with a mark.
+    marks = {a.attributes.get("data-tab") or "": a.css_first(".tconf").text()
+             for a in page.css("nav .tlink") if a.css_first(".tconf")}
+    assert marks == {"": "⚠2", "q1": "⚠", "q2": "⚠"}
 
     followed = run(tmp_path, claims, hash="#q=q1",
                    actions=[{"do": "nav", "hash": links("q1")[0][0]}])
