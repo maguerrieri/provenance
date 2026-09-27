@@ -1003,7 +1003,9 @@ or read as progress. Two consequences for tests:
 - **A reviewer can only act on a row they can see.** Keys act on the open tab's rows (`j`/`k`,
   space, `f`), and on the overview on none. So the harness's `key` action on a row opens that
   row's tab first, as a person would; a test that presses a key with no row presses it on
-  whatever tab is open.
+  whatever tab is open. And no key acts with ⌘, Ctrl or Alt held: those are the browser's
+  shortcuts, and ⌘F, the reviewer's whole method, flagged the selected row (#206). A key added
+  later gets that from the one guard at the top of the handler.
 - **The fragment is state the harness has to carry.** It gives the page a `location` whose `hash`
   setter fires `hashchange`, as a link or a pasted URL does, and a `window` to listen on. Pass the
   fragment a page loads at as `run(..., hash=...)`, and move with a `nav` action.
