@@ -851,16 +851,18 @@ def test_brackets_switch_tabs_and_j_k_stay_within_one(tmp_path):
     assert not any(r["checked"] or r["flagged"] for r in none["rows"])
 
 
-@pytest.mark.parametrize("held", [{"meta": True}, {"ctrl": True}, {"alt": True}],
-                         ids=["cmd", "ctrl", "alt"])
+@pytest.mark.parametrize("held", [{"meta": True}, {"ctrl": True}, {"alt": True},
+                                  {"ctrl": True, "alt": True}],
+                         ids=["cmd", "ctrl", "alt", "altgr"])
 def test_a_key_with_a_modifier_held_is_the_browsers(tmp_path, held):
     """The page's keys are bare ones. With ⌘, Ctrl or Alt held the browser's shortcut runs,
     and the page must do nothing: ⌘F (find, the reviewer's whole method) flagged the selected
-    row, ⌘C overwrote what was just copied with its snippet, and ⌘A opened its archive (#206)."""
+    row, ⌘C overwrote what was just copied with its snippet, and ⌘A opened its archive (#206).
+    AltGr sends Ctrl and Alt both."""
     claims = two_questions()
     row = key(claims[0])
-    actions = [{"do": "key", "row": row, "key": k, **held} for k in "fcaoj k"]
-    pressed = run(tmp_path, claims, actions=actions + [{"do": "key", "key": "]", **held}])
+    actions = [{"do": "key", "row": row, "key": k, **held} for k in "fFcaoj k"]
+    pressed = run(tmp_path, claims, actions=actions)
     assert not any(r["flagged"] or r["checked"] for r in pressed["rows"])
     assert pressed["copied"] == [] and pressed["opened"] == []
     assert pressed["selected"] == [row] and pressed["tab"] == "q1"
@@ -870,6 +872,19 @@ def test_a_key_with_a_modifier_held_is_the_browsers(tmp_path, held):
                + [{"do": "key", "row": row, "key": " ", "shift": True}])
     assert rows(bare)[row]["flagged"] and rows(bare)[row]["checked"]
     assert bare["copied"] == [SNIPPET] and bare["opened"] == ["source"]
+
+
+@pytest.mark.parametrize("held", [{"alt": True}, {"ctrl": True, "alt": True}],
+                         ids=["option", "altgr"])
+def test_a_bracket_typed_with_option_or_altgr_still_switches_tabs(tmp_path, held):
+    """On many layouts [ and ] take Option (macOS) or AltGr, which sends Ctrl and Alt. The
+    character is typed, not a shortcut, so the page reads it. ⌘[ and Ctrl+[ are the browser's."""
+    claims = two_questions()
+    typed = run(tmp_path, claims, actions=[{"do": "key", "key": "]", **held}] * 2
+                + [{"do": "key", "key": "[", **held}])
+    assert typed["tab"] == "q1"
+    for shortcut in ({"meta": True}, {"ctrl": True}):
+        assert run(tmp_path, claims, actions=[{"do": "key", "key": "]", **shortcut}])["tab"] == ""
 
 
 def test_each_tab_and_its_overview_row_carry_its_progress(tmp_path):
@@ -908,6 +923,32 @@ def test_the_filters_work_within_each_tab_and_on_the_overview(tmp_path):
     cleared = run(tmp_path, claims, actions=[{"do": "filter", "value": "adversarial"},
                                              {"do": "filter", "value": "all"}])
     assert cleared["empty"] == [] and all(r["shown"] for r in cleared["overview"])
+
+    # [ and ] pass the tabs the filter leaves nothing in, and stop at the ends as before.
+    claims.append(claim("q3", "The levy took effect in July.", elsewhere(4),
+                        question="When did the levy take effect?"))
+    claims[2].claim_type = "adversarial"
+    stepped = run(tmp_path, claims, actions=[{"do": "filter", "value": "adversarial"},
+                                             {"do": "key", "key": "]"}, {"do": "key", "key": "]"},
+                                             {"do": "key", "key": "]"}])
+    assert stepped["tab"] == "q3"
+    back = run(tmp_path, claims, hash="#q=q3",
+               actions=[{"do": "filter", "value": "adversarial"}, {"do": "key", "key": "["},
+                        {"do": "key", "key": "["}, {"do": "key", "key": "["}])
+    assert back["tab"] == "", "past q2, and past q1, which is dimmed, to the overview"
+    claims[1].claim_type = claims[2].claim_type = "mechanical"
+    stuck = run(tmp_path, claims, actions=[{"do": "filter", "value": "adversarial"},
+                                           {"do": "key", "key": "]"}])
+    assert stuck["tab"] == "", "with every tab dimmed, ] leaves the overview open"
+
+
+def test_a_tab_opens_at_its_top_but_a_reload_keeps_the_place(tmp_path):
+    """Opening another tab scrolls to its top. The first tab a load shows is not scrolled: after
+    a reload, the browser puts the reviewer back where they were."""
+    claims = two_questions()
+    assert run(tmp_path, claims, hash="#q=q2")["scrolled"] == 0
+    moved = run(tmp_path, claims, hash="#q=q2", actions=[{"do": "nav", "hash": "#q=q1"}])
+    assert moved["scrolled"] == 1
 
 
 def test_tabs_follow_the_question_set_and_group_a_split_question(tmp_path):
@@ -952,7 +993,11 @@ def test_a_conflict_between_two_claims_shows_on_both_tabs_each_linking_to_the_ot
     detect(claims)
     [line] = claims[0].conflicts
     assert claims[1].conflicts == [line], "the test needs the one line on both claims"
-    claims[1].conflicts.append("sources disagree on a year: A (2024) vs B (2025)")
+    # A line about one claim can be the same on two: two claims citing one pair of sources that
+    # disagree. It is about each of them alone, so it links nowhere.
+    alone = "sources disagree on a year: Example Ledger (2024) vs Example Gazette (2025)"
+    claims[0].conflicts.append(alone)
+    claims[1].conflicts.append(alone)
     render(claims, tmp_path, rules=RULES, store=store_id("example", None))
     page = HTMLParser((tmp_path / "review.html").read_text())
 
@@ -960,7 +1005,7 @@ def test_a_conflict_between_two_claims_shows_on_both_tabs_each_linking_to_the_ot
         return [[a.attributes["href"] for a in c.css(".also a")]
                 for c in panel(page, qid).css(".conf")]
 
-    assert links("q1") == [["#q=q2"]]
+    assert links("q1") == [["#q=q2"], []]
     assert links("q2") == [["#q=q1"], []]
     overview_links = [a.attributes["href"] for a in panel(page, "").css(".conf b a")]
     assert overview_links == ["#q=q1", "#q=q2"], "the overview's conflicts open their tabs"

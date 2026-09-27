@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, NoReturn
+from typing import Annotated, NoReturn
 
 import typer
 from rich.console import Console
@@ -32,6 +32,7 @@ from .models import (
     check_archive_url,
     strip_machine_fields,
 )
+from .questions import QuestionSet
 from .report import clear_render, render, store_id
 from .sources import (
     TIER_LABEL,
@@ -62,9 +63,6 @@ from .verify import (
     verify_against_archive,
     verify_source,
 )
-
-if TYPE_CHECKING:
-    from .questions import QuestionSet
 
 app = typer.Typer(add_completion=False, help="Cited-research pipeline")
 # No emoji: escape() leaves ":ok:" alone, so claim text, notes and filer names would print with
@@ -2529,6 +2527,10 @@ def new_subject(subject: str, data: Path = None, questions: Path = None,
             # The question set is written about a subject; retarget it rather than making
             # the researcher infer which subject it is about.
             q["text"] = _retarget(q["text"], p.subjects, s)
+            # So is a parent, often the template question itself: the review page labels the
+            # group of tabs split from it with it.
+            if isinstance(q.get("parent"), str):
+                q["parent"] = _retarget(q["parent"], p.subjects, s)
             q["subject"] = s.id
         dest_q.write_text(json.dumps(qs, indent=1))
         con.print("[green]wrote[/] "

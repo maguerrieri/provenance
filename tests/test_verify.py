@@ -989,12 +989,17 @@ def test_new_subject_retargets_the_question_set(tmp_path):
 
     write_project(tmp_path, subjects=["lind", "ng"])   # retargeted from the others' names
     (tmp_path / "questions.json").write_text(json.dumps([
-        {"id": "q1", "text": "What did Avery Lind say about housing?", "claim_type": "mechanical"}]))
+        {"id": "q1", "text": "What did Avery Lind say about housing?", "claim_type": "mechanical",
+         "parent": "Avery Lind on housing and transit"},
+        {"id": "q2", "text": "What did Avery Lind say about transit?", "claim_type": "mechanical",
+         "parent": 3}]))
     cli.new_subject("ng", data=tmp_path)
 
     out = json.loads((tmp_path / "ng" / "questions.json").read_text())
     assert out[0]["text"] == "What did Jordan Ng say about housing?"
     assert out[0]["subject"] == "ng"
+    # A parent labels a group of tabs on the review page, so it names the subject too.
+    assert [q["parent"] for q in out] == ["Jordan Ng on housing and transit", 3]
     assert (tmp_path / "ng" / "claims").is_dir()
     # the page cache is shared, not per subject: the project's, where it names it
     assert not (tmp_path / "ng" / "cache").exists()

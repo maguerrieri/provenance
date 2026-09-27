@@ -149,19 +149,30 @@ def detect(claims: list[Claim]) -> list[Claim]:
         # (2) the answer against its own citations
         c.conflicts += unsourced_figures(c)
 
+    for line, ids in near_misses(claims):
+        for c in claims:
+            if c.question_id in ids:
+                c.conflicts.append(line)
+    return claims
+
+
+def near_misses(claims: list[Claim]) -> list[tuple[str, set[str]]]:
+    """(3): near-miss amounts across claims (e.g. $120K vs $102K), which are worth a human look.
+    Each conflict line, with the ids of the claims it is between. `detect()` gives each of those
+    claims the line, and the review page links each claim's tab to the others' from the ids
+    this returns, never from the text: other kinds of line are about one claim, and two claims
+    can carry the same one without it being between them."""
     by_money: dict[float, set[str]] = defaultdict(set)
     for c in claims:
         for v in money_values(c.answer):
             by_money[v].add(c.question_id)
-    # Near-miss amounts across claims (e.g. $120K vs $102K) are worth a human look.
+    found = []
     amounts = sorted(by_money)
     for i, a in enumerate(amounts):
         for b in amounts[i + 1:]:
             if a and 1.0 < b / a < 1.15:
                 ids = by_money[a] | by_money[b]
-                for c in claims:
-                    if c.question_id in ids:
-                        c.conflicts.append(
-                            f"near-miss dollar figures across claims: {money(a)} vs {money(b)} "
-                            f"({', '.join(sorted(ids))}) — confirm which is right")
-    return claims
+                found.append((f"near-miss dollar figures across claims: {money(a)} vs "
+                              f"{money(b)} ({', '.join(sorted(ids))}) — confirm which is right",
+                              ids))
+    return found

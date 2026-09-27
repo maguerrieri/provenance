@@ -127,16 +127,19 @@ and this README name to both), then tags the commit `v<version>` and pushes the 
 `provenance serve` opens a local checklist. It opens on an overview, one row per question: its
 id, the question, the claim's status, the start of its answer, and your progress on it (checked,
 unchecked, flagged, and rows to check again). Each question has a tab of its own, in
-`questions.json` order, and the questions split from one template question (the same `parent`)
-sit together as one group of tabs. A tab's label carries its counts, so what's left shows
-without opening it. The URL's fragment names the tab (`#q=<id>`), so a reload or a shared link
+`questions.json` order, except that the questions split from one template question (the same
+`parent`) sit together as one group of tabs, where the first of them is. A tab's label carries
+its counts, so what's left shows without opening it. The URL's fragment names the tab (`#q=<id>`), so a reload or a shared link
 keeps it; with none, the page opens the tab you had open last.
 
 Per source: the cached page context with your snippet **highlighted in place**, plus the live
 link, the archive link, a copy-snippet button, and a persistent checkbox. Keyboard: `j`/`k`
 move within the tab, `space` check, `f` flag, `o` open, `a` archive, `c` copy, `[`/`]` previous
-and next question. Filters, within each tab and on the overview: unchecked, adversarial,
-paywalled, conflicts, needs-review, researcher notes. A conflict between two claims shows on
+and next question. With ⌘, Ctrl or Alt held a key is the browser's shortcut, not the page's, so
+⌘F searches without flagging anything; a `[` or `]` your layout types with Option or AltGr still
+switches tabs. Filters, within each tab and on the overview: unchecked, adversarial, paywalled,
+conflicts, needs-review, researcher notes. Under a filter, `[`/`]` skip the questions it leaves
+empty. A conflict between two claims shows on
 both their tabs, each linking to the other, and the overview lists every conflict.
 
 A claim whose researcher left notes shows them above its sources: the caveats written for the

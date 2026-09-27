@@ -999,13 +999,20 @@ gate checked against), grouped by `parent`. Nothing about a check changed with t
 fingerprints, row keys and storage are a single-list build's, so its progress carries over, and a
 test holds an export from one to the tabs. The tab the viewer had open last is remembered under a
 key of its own (`provenance:<store>:tab`), never inside STORE, so it is never exported, imported
-or read as progress. Two consequences for tests:
+or read as progress. Three things to keep:
 - **A reviewer can only act on a row they can see.** Keys act on the open tab's rows (`j`/`k`,
   space, `f`), and on the overview on none. So the harness's `key` action on a row opens that
   row's tab first, as a person would; a test that presses a key with no row presses it on
-  whatever tab is open. And no key acts with ⌘, Ctrl or Alt held: those are the browser's
-  shortcuts, and ⌘F, the reviewer's whole method, flagged the selected row (#206). A key added
-  later gets that from the one guard at the top of the handler.
+  whatever tab is open. And no key acts as a shortcut, with ⌘ or Ctrl held, or Alt with a
+  letter: those are the browser's, and ⌘F, the reviewer's whole method, flagged the selected row
+  (#206). A character a modifier typed is not a shortcut, though. On many layouts `[` and `]`
+  take Option, or AltGr, which sends Ctrl and Alt both, so blocking every Alt and Ctrl cost those
+  reviewers tab switching. A key added later gets the rule from `shortcut()` at the top of the
+  handler.
+- **Which claims a conflict is between is worked out, not read from its text.** Most conflict
+  lines are about one claim, and two claims citing one pair of disagreeing sources carry the same
+  line. So the links between tabs come from `conflicts.near_misses()`, which `detect()` also
+  appends from: the one kind of conflict that is between claims.
 - **The fragment is state the harness has to carry.** It gives the page a `location` whose `hash`
   setter fires `hashchange`, as a link or a pasted URL does, and a `window` to listen on. Pass the
   fragment a page loads at as `run(..., hash=...)`, and move with a `nav` action.

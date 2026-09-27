@@ -12,16 +12,14 @@ from html import escape
 from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING
 
 from jinja2 import Environment, FileSystemLoader
 from markupsafe import Markup
 
 from . import queries
+from .conflicts import near_misses
 from .models import QID_PATTERN, Claim, Source
-
-if TYPE_CHECKING:
-    from .questions import QuestionSet
+from .questions import QuestionSet
 from .sources import ARGUED, TIER_LABEL, bare_host, domain, tier, why_not_nameable
 from .verify import secondary_host, unacked_copy
 
@@ -215,12 +213,13 @@ def tab_groups(claims: list, questions: QuestionSet | None) -> list[SimpleNamesp
     return groups
 
 
-def conflict_views(c: Claim, holders: dict[str, list[str]]) -> list[SimpleNamespace]:
-    """A claim's conflict lines, each with the other claims that list the same line.
-    `conflicts.detect()` gives every claim in a cross-claim conflict the same line, so a line
-    two claims share is between them, and each claim's tab links to the other's. `holders` is
-    every claim's id by the lines it lists, in the page's id order."""
-    return [SimpleNamespace(text=line, also=[q for q in holders[line] if q != c.question_id])
+def conflict_views(c: Claim, between: dict[str, list[str]]) -> list[SimpleNamespace]:
+    """A claim's conflict lines, each with the other claims it is between, so each claim's tab
+    links to theirs. `between` is `conflicts.near_misses()` by line: the one kind of conflict
+    between claims. Not the claims that list the same line: two claims citing one pair of
+    sources get the same "sources disagree" line, and it is about each of them alone."""
+    return [SimpleNamespace(text=line,
+                            also=[q for q in between.get(line, ()) if q != c.question_id])
             for line in c.conflicts]
 
 
@@ -307,10 +306,9 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "citation review"
                 query_provenance=query_provenance(s)))
         return views
 
-    holders: dict[str, list[str]] = defaultdict(list)
-    for c in claims:
-        for line in dict.fromkeys(c.conflicts):
-            holders[line].append(c.question_id)
+    # Worked out again, as `detect()` works them out, rather than read from the lines: which
+    # claims a line is between is not in its text.
+    between = {line: sorted(ids, key=qid_sort_key) for line, ids in near_misses(claims)}
 
     # Build explicit view objects rather than writing render-only attributes onto the
     # models: assigning into a pydantic instance's __dict__ shadows computed properties
@@ -320,7 +318,7 @@ def render(claims: list[Claim], out_dir: Path, *, title: str = "citation review"
             question_id=c.question_id, question=c.question, answer=c.answer,
             claim_type=c.claim_type, confidence=c.confidence, status=c.status,
             corroboration_ok=c.corroboration_ok, corroboration_note=c.corroboration_note,
-            conflicts=conflict_views(c, holders), sources=source_views(c),
+            conflicts=conflict_views(c, between), sources=source_views(c),
             # The researcher's caveats for the person checking this claim: a scan to read by
             # eye, a filing that may not be the newest, a figure a query would not settle.
             # Agent-authored, so autoescaped like the rest. What is shown is what a check

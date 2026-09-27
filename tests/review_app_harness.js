@@ -115,7 +115,8 @@ async function main() {
   const win = {
     listeners: {},
     addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); },
-    scrollTo() {},
+    scrolled: 0,                // how often the page scrolled itself back to the top
+    scrollTo() { this.scrolled++; },
   };
   let hash = input.hash || "";
   const location = {
@@ -189,6 +190,7 @@ async function main() {
   process.stdout.write(JSON.stringify({
     tab: shown[0].dataset.tab,
     hash,
+    scrolled: win.scrolled,
     lost: lost.classList.contains("hidden") ? "" : lost.textContent,
     // Each tab's link: the counts it carries, whether it is the one open, and how it is marked.
     tabs: doc.querySelectorAll(".tlink").map(l => ({
