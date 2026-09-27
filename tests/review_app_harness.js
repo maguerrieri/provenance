@@ -3,11 +3,13 @@
 // what it stored. tests/test_review_app.py parses the rendered page and pipes it in as JSON:
 //
 //   {"tree": <body element tree>, "script": "<the page's script>",
-//    "storage": {"<key>": "<value>"}, "actions": [...], "full": ["<key prefix>"]}
+//    "storage": {"<key>": "<value>"}, "actions": [...], "full": ["<key prefix>"],
+//    "hash": "<the URL's fragment as the page loads>"}
 //
 // A write to a key starting with one of "full" throws, as a full localStorage does.
 //
-// and gets back {"storage": ..., "rows": [...], "claims": [...], "notice": ..., "alerts": [...]}.
+// and gets back {"storage": ..., "rows": [...], "claims": [...], "notice": ..., "alerts": [...],
+// "tab": ..., "tabs": [...], "overview": [...], "hash": ..., "lost": ...}.
 //
 // The DOM supports only what the page uses. A selector it doesn't know throws, so a template
 // change that needs more fails the test loudly rather than passing against a stub that
@@ -95,13 +97,39 @@ function row(doc, key) {
   return found[0];
 }
 
+// The panel a row sits in, and the fragment that opens it, as its tab's link names it.
+function tabOf(el) { return el.closest(".tab").dataset.tab; }
+function hashFor(tab) { return tab ? "#q=" + encodeURIComponent(tab) : "#overview"; }
+
 async function main() {
   const input = JSON.parse(require("fs").readFileSync(0, "utf8"));
   const doc = new Doc(input.tree);
   const store = new Map(Object.entries(input.storage || {}));
   const alerts = [];
+  // A browser fires hashchange when the fragment changes, and not when it is set to what it
+  // already is. It fires it later, as a task; here it fires at once, which the page can't tell
+  // apart, since every action is awaited.
+  const win = {
+    listeners: {},
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); },
+    scrollTo() {},
+  };
+  let hash = input.hash || "";
+  const location = {
+    get hash() { return hash; },
+    set hash(v) {
+      v = String(v);
+      if (v && !v.startsWith("#")) v = "#" + v;
+      if (v === "#") v = "";
+      if (v === hash) return;
+      hash = v;
+      for (const fn of win.listeners.hashchange || []) fn({type: "hashchange"});
+    },
+  };
   const sandbox = {
     document: doc,
+    window: win,
+    location,
     localStorage: {
       getItem: k => (store.has(k) ? store.get(k) : null),
       setItem: (k, v) => {
@@ -123,8 +151,14 @@ async function main() {
       cb.checked = a.checked;
       doc.dispatch("change", cb);
     } else if (a.do === "key") {
-      doc.dispatch("click", row(doc, a.row));  // select the row, as a click does
-      doc.dispatch("keydown", doc.body, {key: a.key});
+      if (a.row) {
+        // A reviewer can only click a row they can see: open its tab, then select the row.
+        location.hash = hashFor(tabOf(row(doc, a.row)));
+        doc.dispatch("click", row(doc, a.row));
+      }
+      doc.dispatch("keydown", doc.body, {key: a.key, metaKey: !!a.meta});
+    } else if (a.do === "nav") {
+      location.hash = a.hash;                     // as a tab's link, or a pasted URL, does
     } else if (a.do === "flag") {
       doc.dispatch("click", row(doc, a.row).querySelector(".flag"));
     } else if (a.do === "filter") {
@@ -145,7 +179,26 @@ async function main() {
   }
 
   const notice = doc.getElementById("migrated");
+  const lost = doc.getElementById("lost");
+  const shown = doc.querySelectorAll(".tab").filter(p => !p.classList.contains("hidden"));
+  if (shown.length !== 1) throw new Error("harness: " + shown.length + " tabs shown");
   process.stdout.write(JSON.stringify({
+    tab: shown[0].dataset.tab,
+    hash,
+    lost: lost.classList.contains("hidden") ? "" : lost.textContent,
+    // Each tab's link: the counts it carries, whether it is the one open, and how it is marked.
+    tabs: doc.querySelectorAll(".tlink").map(l => ({
+      tab: l.dataset.tab,
+      count: (l.querySelector(".tcount") || {textContent: ""}).textContent,
+      cur: l.classList.contains("cur"), done: l.classList.contains("done"),
+      dim: l.classList.contains("dim"), review: l.classList.contains("review"),
+    })),
+    // The overview, a row per question: its progress in words, and whether the filter shows it.
+    overview: doc.querySelectorAll(".orow").map(r => ({
+      qid: r.dataset.qid, progress: r.querySelector(".oprog").textContent,
+      shown: !r.classList.contains("hidden"),
+    })),
+    selected: doc.querySelectorAll(".sel").map(el => el.dataset.key),
     storage: Object.fromEntries(store),
     rows: doc.querySelectorAll(".src").map(el => ({
       key: el.dataset.key,
@@ -158,6 +211,7 @@ async function main() {
     })),
     claims: doc.querySelectorAll(".claim").map(c => ({
       qid: c.dataset.qid, done: c.classList.contains("done"), shown: c.style.display !== "none",
+      tab: tabOf(c),
       // Whether the claim says its researcher's note is new, changed or removed since its rows
       // were checked.
       noteChanged: !c.querySelector(".nchanged").classList.contains("hidden"),
