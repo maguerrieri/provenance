@@ -16,6 +16,7 @@ dependencies = [
     "jinja2>=3.1",
     "pyyaml>=6.0",
     "idna>=3.7",   # sources._ascii(): hosts compared as UTS 46 resolves them (already httpx's)
+    "certifi>=2026.10.19",   # httpx's CA bundle; uv tool install reads this, not uv.lock
 ]
 
 [project.scripts]
